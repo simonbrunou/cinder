@@ -93,8 +93,11 @@
 - Run a list of one-edit mutants with `scripts/mutation-check <file> <mutants.json> <test>...`.
   Its header gives the JSON shape, the checks it makes before the first mutant runs, the
   verdicts and the exit codes. Read the lines it prints under each verdict: the lines the edit
-  removed and added, then the failed tests of a kill, each with the first line of its
-  assertion's message and the `code:` lines ExUnit prints, or the errors of a run with no result.
+  removed and added, then the failed tests of a kill, each with its message, up to 10 lines, and
+  the `code:` lines ExUnit prints, or the errors of a run with no result. A kill's lines come
+  from the failure record that `Cinder.MutationFailures` writes, so a line a passing test prints
+  never reaches them (#1532). A test that runs another `mix test` adds that run's failures to the
+  record.
   On #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
 - Select each test a mutant must kill by name: after the test file, give one

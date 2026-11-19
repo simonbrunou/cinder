@@ -11,13 +11,31 @@ unchanged file as a control, which must pass at least one test. Then, for each m
 <file> as the original text with `old` replaced by `new` and runs the same command. It restores
 <file> after the last mutant, or when a SIGINT or SIGTERM stops the run. It prints one line per
 mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
-matches the wrong text proves nothing, so read them. Under a killed mutant it then prints each
-failure's numbered header line from ExUnit (`failed: 1) test ...`). Under each header it prints,
-for each failure ExUnit reports there, its `Failure #N` line when the test failed more than once,
-its message's first line, such as `match (=) failed`, and its `code:` lines when ExUnit prints
-them: they tell which assertion of a test went red. Under NO RESULT it prints the run's first 5
-error lines, those that start with `error:` or `** (` after any blanks, or, when it has none, its
-last 5 non-blank lines (`output: ...`).
+matches the wrong text proves nothing, so read them.
+
+Under a killed mutant it then prints the failures from the run's failure record, not from its
+output, where a line a passing test prints can look like a failure header. Before each run the
+script empties a file in a folder of its own and names it in the CINDER_MUTATION_FAILURES env var.
+It makes that folder in MUTATION_CHECK_TMPDIR, /var/tmp when unset or empty, and not in the dev
+shell's temp folder, the /tmp tmpfs every session shares
+(test/code_health/script_temp_dir_test.exs).
+The `Cinder.MutationFailures` formatter, which test/test_helper.exs lists, appends to it the
+block ExUnit formats for each failed test or `setup_all`. For each block the script prints its
+numbered header (`failed: 1) test ...`). Under it, for each failure ExUnit reports there, it
+prints its `Failure #N` line when the test failed more than once, each non-blank line of its
+message, such as `match (=) failed`, and its `code:` lines when ExUnit prints them: they tell
+which assertion of a test went red. A message ends at the first line that starts with a label
+ExUnit prints after one (`code:`, `doctest:`, `arguments:`, `left:`, `right:`, `mailbox:` or
+`stacktrace:`), so a message line of the test's own that starts that way ends it early. The
+script prints at most MESSAGE_CAP (10) non-blank lines of a message, then one line that says how
+many it left out. When the record holds no block, because the formatter did not run (as under a
+`--formatter` switch) or could not write, it prints one `no failure record: ...` line instead. A
+test that runs another `mix test` adds that run's failures to the record. When it ends, the
+script removes the folder, and ignores an error doing so.
+
+Under NO RESULT it prints the run's first 5 error lines from its output, those that start with
+`error:` or `** (` after any blanks, or, when it has none, its last 5 non-blank lines
+(`output: ...`).
 
   killed     the run ends on a `Result:` line that ExUnit prints when a test failed
              (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
@@ -28,17 +46,25 @@ last 5 non-blank lines (`output: ...`).
 
 Exit 0: every mutant killed. 1: a mutant survived or had no result. 2: wrong arguments, a file
 or mutant list it cannot read, an `old` that does not occur exactly once, no `mix` on PATH (run
-it through `nix develop`), a control run that does not pass, a <file> it cannot write or
-restore, or a stdout closed early (as by `| head`). 130: a signal stopped the run.
+it through `nix develop`), a record folder it cannot make, a control run that does not pass,
+a <file> it cannot write or restore, a failure record it cannot empty, or a stdout closed early
+(as by `| head`). 130: a signal stopped the run.
 """
 import difflib
 import json
 import os
 import re
+import secrets
+import shutil
 import signal
 import subprocess
 import sys
 from pathlib import Path
+
+# The env var `Cinder.MutationFailures` (test/support/mutation_failures.ex) reads.
+RECORD_ENV = "CINDER_MUTATION_FAILURES"
+MESSAGE_CAP = 10
+NO_RECORD = "no failure record: Cinder.MutationFailures wrote no failure block"
 
 # ExUnit prints `N/M passed` only when a test failed, `N passed` when every test passed, and
 # `0 tests` when none ran; it appends `, N invalid` when a `setup_all` failed.
@@ -49,13 +75,17 @@ PASSED = re.compile(r"^Result: \d+ passed")
 FAILURE = re.compile(r"^(  \d| \d\d|\d{3,})\) .*( \(\S+\)|: failure on setup_all callback, .*)$")
 SETUP_ALL = re.compile(r"^\s*\d+\) \S+: failure on setup_all callback, ")
 # ExUnit indents the lines under a header by 5. A test's block opens with an optional
-# `Parameters: ...` line and the test's `file:line`; a `setup_all` block has neither. Each failure
+# `Parameters: ...` line and the test's `file:line`; a `setup_all` block with the optional
+# `Parameters: ...` line only. Each failure
 # in the block then opens with a `Failure #N` line when there are several, its message
-# (`match (=) failed`) and labels such as `code:` and `left:`, whose values go deeper.
+# (`match (=) failed`), whose lines can go deeper, and labels such as `code:` and `left:`, whose
+# values go deeper. LABEL lists the labels `ExUnit.Formatter` (Elixir 1.20.5) prints after a
+# message.
 PARAMETERS = re.compile(r"^ {5}Parameters: ")
 SECTION = re.compile(r"^ {5}Failure #\d+$")
 TOP = re.compile(r"^ {5}\S")
 CODE = re.compile(r"^ {5}code:")
+LABEL = re.compile(r"^ {5}(code|doctest|arguments|left|right|mailbox|stacktrace):")
 ERROR = re.compile(r"^\s*(error:|\*\* \()")
 
 
@@ -80,48 +110,80 @@ def load(argv):
     return path, mutants, tests, path.read_bytes()
 
 
-def run_tests(tests):
-    run = subprocess.run(["mix", "test.unchecked", *tests], capture_output=True, text=True)
+def run_tests(tests, record):
+    """Empties `record`, then runs the tests with RECORD_ENV naming it."""
+    record.write_bytes(b"")
+    env = {**os.environ, RECORD_ENV: str(record)}
+    run = subprocess.run(
+        ["mix", "test.unchecked", *tests], capture_output=True, text=True, env=env
+    )
     output = (run.stdout + run.stderr).splitlines()
     results = [line for line in output if line.startswith("Result:")]
     return run.returncode, (results[-1] if results else None), output
 
 
-def failures(output):
+def read_record(record):
+    """The record's lines: none when the run removed it or left something unreadable there."""
+    try:
+        return record.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def failures(record):
     """Each header, then each failure's `Failure #N`, message and `code:` lines, indented."""
-    # `state` is None outside a block, else which of the block's lines comes next.
-    lines, state = [], None
-    for line in output:
+    # `state` is None outside a block, else which of the block's lines comes next. `message`
+    # holds the lines of the last message read, until a `code:` line, a `Failure #N` line, the
+    # next header or the end prints them.
+    lines, state, message = [], None, []
+
+    def end_message():
+        lines.extend(f"  {line}" for line in message[:MESSAGE_CAP])
+        left = len(message) - MESSAGE_CAP
+        if left > 0:
+            lines.append(f"  ({left} more message {'line' if left == 1 else 'lines'} left out)")
+        message.clear()
+
+    for line in record:
+        if state == "setup" and line.strip():
+            state = "message"
+            if PARAMETERS.match(line):
+                continue  # a `setup_all` block's only line before its first failure
         if FAILURE.match(line):
+            end_message()
             lines.append(f"failed: {line.strip()}")
-            state = "message" if SETUP_ALL.match(line) else "meta"
+            state = "setup" if SETUP_ALL.match(line) else "meta"
         elif state is None or not line.strip():
             continue
         elif not line.startswith("     "):
-            state = None  # a line ExUnit does not indent, such as `Result:`, ends the block
+            state = None  # a line ExUnit does not indent ends the block
         elif state == "meta":
             if not PARAMETERS.match(line):
                 state = "message"  # the test's `file:line`
         elif SECTION.match(line):
+            end_message()
             lines.append(f"  {line.strip()}")
             state = "message"
         elif state == "code" and not TOP.match(line):
             lines.append(f"  {line[5:].rstrip()}")  # the code goes on, indented as ExUnit has it
-        elif state == "message":
-            lines.append(f"  {line.strip()}")
-            state = "body"
-        elif state == "body" and CODE.match(line):
+        elif state == "message" and not LABEL.match(line):
+            message.append(line[5:].rstrip())  # a deeper line keeps its depth past the first 5
+        elif state in ("message", "labels") and CODE.match(line):
+            end_message()
             lines.append(f"  {line.strip()}")
             state = "code"
+        elif state == "message":
+            state = "labels"  # a label before any `code:`, such as `doctest:`
         elif state == "code":
             state = "done"
+    end_message()
     return lines
 
 
-def reasons(outcome, output):
-    """The lines that say why: each failure's header for a kill, the errors for no result."""
+def reasons(outcome, output, record):
+    """The lines that say why: each recorded failure for a kill, the errors for no result."""
     if outcome == "killed":
-        return failures(output)
+        return failures(read_record(record)) or [NO_RECORD]
     if outcome == "NO RESULT":
         errors = [line.strip() for line in output if ERROR.match(line)]
         lines = errors[:5] or [line for line in output if line.strip()][-5:]
@@ -170,9 +232,24 @@ def main(argv):
         signal.signal(sig, stop)
 
     try:
-        code, result, _output = run_tests(tests)
+        base = Path(os.environ.get("MUTATION_CHECK_TMPDIR") or "/var/tmp")
+        folder = base / f"mutation-check.{os.getpid()}.{secrets.token_hex(4)}"
+        folder.mkdir(mode=0o700)
     except OSError as error:
-        print(f"cannot run mix: {error}", file=sys.stderr)
+        print(f"cannot make a folder for the failure record: {error}", file=sys.stderr)
+        return 2
+    try:
+        return check(path, mutants, tests, text, original, folder / "failures.txt")
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def check(path, mutants, tests, text, original, record):
+    """The control run, then each mutant's run and its lines; returns the exit status."""
+    try:
+        code, result, _output = run_tests(tests, record)
+    except OSError as error:
+        print(f"cannot run mix or empty its failure record: {error}", file=sys.stderr)
         return 2
     if code != 0 or not PASSED.match(result or ""):
         print(f"control run on the unchanged file did not pass: {result or f'exit {code}'}",
@@ -185,13 +262,13 @@ def main(argv):
         for m in mutants:
             mutated = text.replace(m["old"], m["new"])
             path.write_bytes(mutated.encode("utf-8"))
-            code, result, output = run_tests(tests)
+            code, result, output = run_tests(tests, record)
             outcome = verdict(code, result)
             missed += outcome != "killed"
             diff = difflib.unified_diff(text.splitlines(), mutated.splitlines(), lineterm="", n=0)
             changed = [line for line in list(diff)[2:] if not line.startswith("@@")]
             print(f"{m['label']}: {outcome}, {result or f'exit {code}'}", flush=True)
-            for line in changed + reasons(outcome, output):
+            for line in changed + reasons(outcome, output, record):
                 print(f"    {line}", flush=True)
         print(f"{len(mutants) - missed} of {len(mutants)} killed", flush=True)
     except BrokenPipeError:
@@ -200,7 +277,7 @@ def main(argv):
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         failure = "stdout closed early"
     except OSError as error:
-        failure = f"cannot run mix or write {path}: {error}"
+        failure = f"cannot run mix or write {path} or the failure record: {error}"
     finally:
         restored = restore(path, original)
 

@@ -1,18 +1,33 @@
 defmodule Cinder.MutationCheckScriptTest do
   # Runs `scripts/mutation-check` against a stub `mix` on PATH, so each verdict and exit path
-  # stays covered without a nested `mix test` run. The stub logs each call and reads the target
-  # file: a marker word in it picks the output a real run would print. The unchanged target holds
-  # no marker, so the control run passes unless a case puts one there. PATH holds only the stub
-  # and links to the tools the stub and the shell cases call, so the real `mix` is never found.
+  # stays covered without a nested `mix test` run. The stub logs each call with the failure
+  # record path the script gave it, writes that record folder's mode to a second log, and reads
+  # the target file: a marker word in it picks the output a real run would print, and the failure
+  # blocks it appends to that record, as `Cinder.MutationFailures` does. The unchanged target
+  # holds no marker, so the control run passes unless a case puts one there. PATH holds only the
+  # stub and links to the tools the stub and the shell cases call, so the real `mix` is never
+  # found. MUTATION_CHECK_TMPDIR is a folder of the test's own, so a case can check that the
+  # script removes its record.
   use ExUnit.Case, async: true
 
-  @tools ~w(bash cat cp rm mkdir sleep seq python3)
+  @tools ~w(bash cat cp rm mkdir sleep seq stat python3)
 
   @script Path.expand("scripts/mutation-check")
 
+  @record "$" <> Cinder.MutationFailures.env_var()
+
   @stub """
   #!/usr/bin/env bash
-  echo call >> "$MUT_LOG"
+  echo "call #{@record}" >> "$MUT_LOG"
+  stat -c %a "${#{Cinder.MutationFailures.env_var()}%/*}" >> "$MUT_MODES" 2> /dev/null
+  rec() { cat >> "#{@record}"; }
+  # A block with `$1` message lines, and its `code:` line.
+  msg() {
+    printf '  1) test m (Cinder.XTest)\\n     test/x_test.exs:4\\n'
+    for i in $(seq "$1"); do printf '     line %s\\n' "$i"; done
+    printf '     code: assert m()\\n     stacktrace:\\n       test/x_test.exs:5: (test)\\n'
+  }
+  killed() { printf '\\nResult: 1/2 passed\\nFailed: 1 test\\n'; exit 2; }
   body=$(cat "$MUT_TARGET")
   case "$body" in
     *SLEEP*) cp "$MUT_TARGET" "$MUT_SEEN"; exec sleep 30 ;;
@@ -24,7 +39,12 @@ defmodule Cinder.MutationCheckScriptTest do
     *SWAPDIR*) rm "$MUT_TARGET"; mkdir "$MUT_TARGET"; printf '\\nResult: 2 passed\\n' ;;
     *CTRLSWAP*) rm "$MUT_TARGET"; mkdir "$MUT_TARGET"; printf '\\nResult: 1/2 passed\\n'; exit 2 ;;
     *INVALID*)
-      printf '\\n  1) Cinder.XTest: failure on setup_all callback, all tests have been invalidated'
+      rec <<'OUT'
+    1) Cinder.XTest: failure on setup_all callback, all tests have been invalidated
+       ** (RuntimeError) oops
+       stacktrace:
+         test/x_test.exs:3: Cinder.XTest.__ex_unit_setup_all_0/1
+  OUT
       printf '\\nResult: 1 passed, 2 invalid\\n'
       exit 2 ;;
     *COMPILE*)
@@ -32,11 +52,60 @@ defmodule Cinder.MutationCheckScriptTest do
       for i in $(seq 6); do printf '    error: e%s\\n' "$i"; done
       printf '** (CompileError) x\\n'; exit 1 ;;
     *TAIL*) for i in $(seq 7); do printf 'l%s\\n\\n' "$i"; done; exit 1 ;;
-    *BROKEN*) printf '\\n  1) test x (Cinder.XTest)\\nResult: 1/2 passed\\nFailed: 1 test\\n'; exit 2 ;;
-    *MATCHFAIL*)
+    *BROKEN*)
+      printf '  1) test x (Cinder.XTest)\\n     test/x_test.exs:3\\n     boom\\n' | rec
+      killed ;;
+    *FAKEHEAD*)
+      # A passing test prints a header-shaped block; ExUnit prints the real one too.
       cat <<'OUT'
-         indented output before any failure
-
+    9) test fake (Fake.Mod)
+       test/fake.exs:1
+       Assertion with == failed
+  .
+    1) test real (Cinder.XTest)
+       test/x_test.exs:4
+       Assertion with == failed
+       code:  assert 1 == 2
+  OUT
+      rec <<'OUT'
+    1) test real (Cinder.XTest)
+       test/x_test.exs:4
+       Assertion with == failed
+       code:  assert 1 == 2
+       left:  1
+       right: 2
+       stacktrace:
+         test/x_test.exs:5: (test)
+  OUT
+      killed ;;
+    *NOREC*) killed ;;
+    *RMREC*) rm "#{@record}"; killed ;;
+    *DIRREC*) rm "#{@record}"; mkdir "#{@record}"; killed ;;
+    *BADBYTES*)
+      printf '  1) test b (Cinder.XTest)\\n     test/x_test.exs:3\\n     bad \\377 byte\\n' | rec
+      killed ;;
+    *CAPTEN*) msg 10 | rec; killed ;;
+    *CAPMORE1*) msg 11 | rec; killed ;;
+    *CAPMORE3*) msg 13 | rec; killed ;;
+    *LABELS*)
+      # A `Failure #N` line ends a message, and so does a line ExUnit does not indent. Then a
+      # block per label that ends a message: a line after the label is no message line, and a
+      # `code:` line after it still prints.
+      {
+        printf '  1) test bare (Cinder.XTest)\\n     test/x_test.exs:1\\n'
+        printf '\\n     Failure #1\\n     bare one\\n\\n     Failure #2\\n     bare two\\n'
+        printf 'stray\\n     after stray\\n'
+        n=1
+        for label in doctest arguments left right mailbox stacktrace; do
+          n=$((n + 1))
+          printf '  %s) test %s (Cinder.XTest)\\n     test/x_test.exs:%s\\n' "$n" "$label" "$n"
+          printf '     ends at %s\\n     %s: 1\\n     after %s\\n' "$label" "$label" "$label"
+          printf '     code: c %s\\n' "$label"
+        done
+      } | rec
+      killed ;;
+    *MATCHFAIL*)
+      rec <<'OUT'
     1) test t (Cinder.XTest)
        test/my dir/x_test.exs:4
        match (=) failed
@@ -45,13 +114,10 @@ defmodule Cinder.MutationCheckScriptTest do
        right: {:error, :timeout}
        stacktrace:
          test/x_test.exs:5: (test)
-
-  Result: 1/2 passed
   OUT
-      exit 2 ;;
+      killed ;;
     *LTFAIL*)
-      cat <<'OUT'
-
+      rec <<'OUT'
     1) test t (Cinder.XTest)
        Parameters: %{input: 1}
        test/x_test.exs:4
@@ -61,7 +127,6 @@ defmodule Cinder.MutationCheckScriptTest do
        right: 30_000
        stacktrace:
          test/x_test.exs:7: (test)
-
     2) test u (Cinder.XTest)
        test/x_test.exs:9
        Assertion with == failed
@@ -71,7 +136,8 @@ defmodule Cinder.MutationCheckScriptTest do
               ) == [true, true, true]
        left:  [false, false, false]
        right: [true, true, true]
-
+       stacktrace:
+         test/x_test.exs:10: (test)
     3) test v (Cinder.XTest)
        test/x_test.exs:12
        Assertion failed, no matching message after 10ms
@@ -84,7 +150,8 @@ defmodule Cinder.MutationCheckScriptTest do
                      code: 404,
                      body: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                    }}
-
+       stacktrace:
+         test/x_test.exs:13: (test)
     4) test w (Cinder.XTest)
        test/x_test.exs:15
        ** (MatchError) no match of right hand side value:
@@ -97,7 +164,6 @@ defmodule Cinder.MutationCheckScriptTest do
        code: %{code: 200} = v
        stacktrace:
          test/x_test.exs:17: (test)
-
     5) test x (Cinder.XTest)
        test/x_test.exs:25
 
@@ -113,31 +179,25 @@ defmodule Cinder.MutationCheckScriptTest do
        Assertion with > failed, both sides are exactly equal
        code: assert number > 2
        left: 2
-
-    6) test y (Cinder.XTest)
+       stacktrace:
+         test/x_test.exs:29: anonymous fn/1 in Cinder.XTest."test x"/1
+   10) test y (Cinder.XTest)
        test/x_test.exs:31
        could not reach localhost:4000
        code: flunk("could not reach localhost:4000")
        stacktrace:
          test/x_test.exs:32: (test)
-
-       The following output was logged:
-
-       22:06:55.149 [error] request failed
-       code: 503 from upstream
-
-  1) step one (Cinder.Setup)
-    2) step two
-
+   11) Cinder.ZTest: failure on setup_all callback, all tests have been invalidated
+       Parameters: %{kind: :a}
+       ** (RuntimeError) zz
+       stacktrace:
+         test/x_test.exs:3: Cinder.ZTest.__ex_unit_setup_all_0/1
   100) Cinder.YTest: failure on setup_all callback, all tests have been invalidated
        ** (RuntimeError) oops
-      └─ test/x_test.exs:3:5
-       code: indented output outside a failure block
-
-  Finished in 0.01 seconds
-
-  Result: 0/7 passed, 1 invalid
+       stacktrace:
+         test/x_test.exs:3: Cinder.YTest.__ex_unit_setup_all_0/1
   OUT
+      printf '\\n  Finished in 0.01 seconds\\n\\nResult: 0/7 passed, 1 invalid\\n'
       exit 2 ;;
     *) printf '\\nResult: 2 passed\\n' ;;
   esac
@@ -156,15 +216,22 @@ defmodule Cinder.MutationCheckScriptTest do
 
     target = Path.join(dir, "target.ex")
     File.write!(target, @base)
-    %{dir: dir, bin: bin, target: target, log: Path.join(dir, "calls.log")}
+    tmp = Path.join(dir, "tmp")
+    File.mkdir_p!(tmp)
+    %{dir: dir, bin: bin, target: target, log: Path.join(dir, "calls.log"), tmp: tmp}
   end
 
+  # The record env var is unset: under `scripts/mutation-check`, this test run has it, and a
+  # script that failed to set its own would hand the stub the outer run's record.
   defp env(ctx) do
     [
       {"PATH", ctx.bin},
+      {"MUTATION_CHECK_TMPDIR", ctx.tmp},
+      {Cinder.MutationFailures.env_var(), nil},
       {"MUT_TARGET", ctx.target},
       {"MUT_LOG", ctx.log},
-      {"MUT_SEEN", Path.join(ctx.dir, "seen.ex")}
+      {"MUT_SEEN", Path.join(ctx.dir, "seen.ex")},
+      {"MUT_MODES", Path.join(ctx.dir, "modes.log")}
     ]
   end
 
@@ -183,11 +250,24 @@ defmodule Cinder.MutationCheckScriptTest do
     System.cmd("python3", ["-I", @script | args], env: env(ctx), stderr_to_stdout: true)
   end
 
-  defp calls(ctx) do
+  # The failure record path the script gave each call of the stub.
+  defp records(ctx) do
     case File.read(ctx.log) do
-      {:ok, log} -> log |> String.split("\n", trim: true) |> length()
-      {:error, :enoent} -> 0
+      {:ok, log} -> for "call " <> path <- String.split(log, "\n", trim: true), do: path
+      {:error, :enoent} -> []
     end
+  end
+
+  defp calls(ctx), do: length(records(ctx))
+
+  # Every call got a record in the test's MUTATION_CHECK_TMPDIR, in a folder only its owner can
+  # open, and the script removed them all.
+  defp assert_records_removed(ctx) do
+    assert [_ | _] = paths = records(ctx)
+    assert Enum.all?(paths, &String.starts_with?(&1, ctx.tmp <> "/")), inspect(paths)
+    modes = ctx.dir |> Path.join("modes.log") |> File.read!() |> String.split()
+    assert modes == List.duplicate("700", length(paths))
+    assert File.ls!(ctx.tmp) == []
   end
 
   @tag :tmp_dir
@@ -221,10 +301,12 @@ defmodule Cinder.MutationCheckScriptTest do
     assert out =~ "2 of 7 killed"
     assert calls(ctx) == 8
     assert File.read!(ctx.target) == @base
+    assert_records_removed(ctx)
   end
 
   @tag :tmp_dir
-  test "prints each failure's header under a kill and the run's errors under no result", ctx do
+  test "prints each failure from the record under a kill and the run's errors under no result",
+       ctx do
     list =
       mutants(ctx, [
         {"k", "x + 1", "x + 1 # BROKEN"},
@@ -241,13 +323,14 @@ defmodule Cinder.MutationCheckScriptTest do
 
     assert out =~
              "k: killed, Result: 1/2 passed\n    -def rule(x), do: x + 1\n" <>
-               "    +def rule(x), do: x + 1 # BROKEN\n    failed: 1) test x (Cinder.XTest)\ni: "
+               "    +def rule(x), do: x + 1 # BROKEN\n    failed: 1) test x (Cinder.XTest)\n" <>
+               "      boom\ni: "
 
     assert out =~
              "i: killed, Result: 1 passed, 2 invalid\n    -def other, do: :ok\n" <>
                "    +def other, # INVALID do: :ok\n" <>
                "    failed: 1) Cinder.XTest: failure on setup_all callback, all tests have been " <>
-               "invalidated\nn: "
+               "invalidated\n      ** (RuntimeError) oops\nn: "
 
     assert out =~
              "n: NO RESULT, exit 1\n    -def other, do: :ok\n    +def SYNTAX other, do: :ok\n" <>
@@ -273,6 +356,23 @@ defmodule Cinder.MutationCheckScriptTest do
   end
 
   @tag :tmp_dir
+  test "lists only the record's failures, not a header-shaped line a passing test prints", ctx do
+    list = mutants(ctx, [{"f", "x + 1", "x + 1 # FAKEHEAD"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 0, out
+
+    assert out =~
+             "f: killed, Result: 1/2 passed\n    -def rule(x), do: x + 1\n" <>
+               "    +def rule(x), do: x + 1 # FAKEHEAD\n" <>
+               "    failed: 1) test real (Cinder.XTest)\n      Assertion with == failed\n" <>
+               "      code:  assert 1 == 2\n1 of 1 killed\n"
+
+    refute out =~ "fake"
+  end
+
+  @tag :tmp_dir
   test "prints the message and code lines of each failed assertion under a kill", ctx do
     list =
       mutants(ctx, [
@@ -285,9 +385,10 @@ defmodule Cinder.MutationCheckScriptTest do
 
     assert code == 1, out
 
-    # The two kills fail test t on different assertions. The parameters, the location, the
-    # values, the `code:` lines inside a value or a captured log, and the lines outside a failure
-    # block, a test's own `1) ...` among them, stay out.
+    # The two kills fail test t on different assertions. The parameters of a test and of a
+    # `setup_all`, the location, the values, the stacktraces and the `code:` lines inside a value
+    # stay out. Each non-blank line of a message prints, a deeper one as indented as ExUnit has
+    # it, up to its first label. Headers come with a number of 1, 2 and 3 digits.
     assert out =~
              "m: killed, Result: 1/2 passed\n    -def rule(x), do: x + 1\n" <>
                "    +def rule(x), do: x + 1 # MATCHFAIL\n" <>
@@ -306,22 +407,140 @@ defmodule Cinder.MutationCheckScriptTest do
                "             ) == [true, true, true]\n" <>
                "    failed: 3) test v (Cinder.XTest)\n" <>
                "      Assertion failed, no matching message after 10ms\n" <>
+               "      Showing 1 of 1 message in the mailbox\n" <>
                "      code: assert_receive {:response, %{code: 200}}\n" <>
                "    failed: 4) test w (Cinder.XTest)\n" <>
                "      ** (MatchError) no match of right hand side value:\n" <>
+               "          %{\n" <>
+               "            code: 404,\n" <>
+               "            body: \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n" <>
+               "          }\n" <>
                "      code: %{code: 200} = v\n" <>
                "    failed: 5) test x (Cinder.XTest)\n" <>
                "      Failure #1\n      Assertion with > failed\n      code:  assert number > 2\n" <>
                "      Failure #2\n      Assertion with > failed, both sides are exactly equal\n" <>
                "      code: assert number > 2\n" <>
-               "    failed: 6) test y (Cinder.XTest)\n      could not reach localhost:4000\n" <>
+               "    failed: 10) test y (Cinder.XTest)\n      could not reach localhost:4000\n" <>
                "      code: flunk(\"could not reach localhost:4000\")\n" <>
+               "    failed: 11) Cinder.ZTest: failure on setup_all callback, all tests have been " <>
+               "invalidated\n      ** (RuntimeError) zz\n" <>
                "    failed: 100) Cinder.YTest: failure on setup_all callback, all tests have been " <>
                "invalidated\n      ** (RuntimeError) oops\ns: "
 
     assert out =~
              "s: SURVIVED, Result: 2 passed\n    -def other, do: :ok\n" <>
                "    +def  other, do: :ok\n2 of 3 killed\n"
+  end
+
+  @tag :tmp_dir
+  test "ends a message at each label ExUnit prints after one, a failure line or a block's end",
+       ctx do
+    {out, code} = run(ctx, [ctx.target, mutants(ctx, [{"b", "x + 1", "LABELS"}]), "t.exs"])
+
+    assert code == 0, out
+
+    bare =
+      "    failed: 1) test bare (Cinder.XTest)\n      Failure #1\n      bare one\n" <>
+        "      Failure #2\n      bare two\n"
+
+    blocks =
+      ~w(doctest arguments left right mailbox stacktrace)
+      |> Enum.with_index(2)
+      |> Enum.map_join(fn {label, n} ->
+        "    failed: #{n}) test #{label} (Cinder.XTest)\n      ends at #{label}\n" <>
+          "      code: c #{label}\n"
+      end)
+
+    assert out =~ "    +def rule(x), do: LABELS\n" <> bare <> blocks <> "1 of 1 killed\n"
+  end
+
+  @tag :tmp_dir
+  test "prints up to 10 message lines, then how many it left out", ctx do
+    list =
+      mutants(ctx, [
+        {"ten", "x + 1", "CAPTEN"},
+        {"eleven", ":ok", "CAPMORE1"},
+        {"thirteen", "def other", "def CAPMORE3 other"}
+      ])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 0, out
+    lines = fn n -> Enum.map_join(1..n, &"      line #{&1}\n") end
+    header = "    failed: 1) test m (Cinder.XTest)\n"
+    code_line = "      code: assert m()\n"
+
+    assert out =~
+             "    +def rule(x), do: CAPTEN\n" <> header <> lines.(10) <> code_line <> "eleven: "
+
+    assert out =~
+             "    +def other, do: CAPMORE1\n" <>
+               header <> lines.(10) <> "      (1 more message line left out)\n" <> code_line
+
+    assert out =~
+             "    +def CAPMORE3 other, do: :ok\n" <>
+               header <> lines.(10) <> "      (3 more message lines left out)\n" <> code_line
+  end
+
+  @tag :tmp_dir
+  test "a mutant's run never lists the failures of the run before it", ctx do
+    list = mutants(ctx, [{"m", "x + 1", "x + 1 # MATCHFAIL"}, {"n", ":ok", ":ok # NOREC"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 0, out
+
+    assert out =~
+             "    +def rule(x), do: x + 1 # MATCHFAIL\n    failed: 1) test t (Cinder.XTest)\n"
+
+    assert out =~
+             "n: killed, Result: 1/2 passed\n    -def other, do: :ok\n" <>
+               "    +def other, do: :ok # NOREC\n" <>
+               "    no failure record: Cinder.MutationFailures wrote no failure block\n" <>
+               "2 of 2 killed\n"
+
+    assert length(String.split(out, "failed: 1) test t")) == 2, out
+  end
+
+  @tag :tmp_dir
+  test "a kill whose record the run removed prints the no-record line", ctx do
+    {out, code} = run(ctx, [ctx.target, mutants(ctx, [{"r", "x + 1", "RMREC"}]), "t.exs"])
+
+    assert code == 0, out
+
+    assert out =~
+             "    +def rule(x), do: RMREC\n" <>
+               "    no failure record: Cinder.MutationFailures wrote no failure block\n"
+
+    assert_records_removed(ctx)
+  end
+
+  @tag :tmp_dir
+  test "a record it cannot read prints the no-record line, and one it cannot empty exits 2",
+       ctx do
+    list = mutants(ctx, [{"d", "x + 1", "DIRREC"}, {"next", ":ok", ":error"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 2, out
+
+    assert out =~
+             "    +def rule(x), do: DIRREC\n" <>
+               "    no failure record: Cinder.MutationFailures wrote no failure block\n"
+
+    assert out =~ "cannot run mix or write"
+    refute out =~ "next:"
+    assert calls(ctx) == 2
+    assert File.read!(ctx.target) == @base
+    assert_records_removed(ctx)
+  end
+
+  @tag :tmp_dir
+  test "replaces a record's bytes that are not UTF-8", ctx do
+    {out, code} = run(ctx, [ctx.target, mutants(ctx, [{"b", "x + 1", "BADBYTES"}]), "t.exs"])
+
+    assert code == 0, out
+    assert out =~ "    failed: 1) test b (Cinder.XTest)\n      bad � byte\n1 of 1 killed\n"
   end
 
   @tag :tmp_dir
@@ -365,6 +584,7 @@ defmodule Cinder.MutationCheckScriptTest do
       assert code == 2, out
       assert out =~ "control run on the unchanged file did not pass: #{unquote(line)}"
       assert calls(ctx) == 1
+      assert_records_removed(ctx)
     end
   end
 
@@ -399,12 +619,56 @@ defmodule Cinder.MutationCheckScriptTest do
   test "exits 2 when no mix is on PATH", ctx do
     list = mutants(ctx, [{"k", "x + 1", "x"}])
     args = ["-I", @script, ctx.target, list, "t.exs"]
+    env = [{"PATH", ctx.dir} | tl(env(ctx))]
 
-    {out, code} = System.cmd("python3", args, env: [{"PATH", ctx.dir}], stderr_to_stdout: true)
+    {out, code} = System.cmd("python3", args, env: env, stderr_to_stdout: true)
 
     assert code == 2, out
     assert out =~ "cannot run mix"
     assert File.read!(ctx.target) == @base
+    assert File.ls!(ctx.tmp) == []
+  end
+
+  @tag :tmp_dir
+  test "exits 2 and runs nothing when it cannot make the record's folder", ctx do
+    list = mutants(ctx, [{"k", "x + 1", "x"}])
+    none = {"MUTATION_CHECK_TMPDIR", Path.join(ctx.dir, "none")}
+    env = List.keyreplace(env(ctx), "MUTATION_CHECK_TMPDIR", 0, none)
+
+    {out, code} =
+      System.cmd("python3", ["-I", @script, ctx.target, list, "t.exs"],
+        env: env,
+        stderr_to_stdout: true
+      )
+
+    assert code == 2, out
+
+    assert out =~
+             "cannot make a folder for the failure record: [Errno 2] No such file or directory"
+
+    assert calls(ctx) == 0
+  end
+
+  # The default folder is outside the test's own, so the case checks each record path the stub
+  # got and that none is left, not the folder's listing.
+  @tag :tmp_dir
+  test "makes the record's folder in /var/tmp when MUTATION_CHECK_TMPDIR is unset or empty",
+       ctx do
+    env = List.keyreplace(env(ctx), "MUTATION_CHECK_TMPDIR", 0, {"MUTATION_CHECK_TMPDIR", nil})
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+
+    # A port's env option unsets a variable given an empty value, so bash sets the empty one.
+    for prefix <- ["", "MUTATION_CHECK_TMPDIR= "] do
+      shell = ~s(#{prefix}exec python3 -I "$0" "$@")
+      args = ["-c", shell, @script, ctx.target, list, "t.exs"]
+      {out, code} = System.cmd("bash", args, env: env, stderr_to_stdout: true)
+      assert code == 0, out
+    end
+
+    assert [_, _, _, _] = paths = records(ctx)
+    record = ~r|\A/var/tmp/mutation-check\.\d+\.[0-9a-f]{8}/failures\.txt\z|
+    assert Enum.all?(paths, &(&1 =~ record)), inspect(paths)
+    refute Enum.any?(paths, &File.exists?(Path.dirname(&1)))
   end
 
   @tag :tmp_dir
@@ -416,6 +680,7 @@ defmodule Cinder.MutationCheckScriptTest do
     assert code == 2, out
     assert out =~ "cannot run mix or write"
     assert File.read!(ctx.target) == @base
+    assert_records_removed(ctx)
   end
 
   @tag :tmp_dir
@@ -453,6 +718,7 @@ defmodule Cinder.MutationCheckScriptTest do
       if unquote(streams) == "stdout", do: assert(out =~ "stdout closed early")
       refute out =~ "Traceback"
       assert File.read!(ctx.target) == @base
+      assert_records_removed(ctx)
     end
   end
 
@@ -499,6 +765,7 @@ defmodule Cinder.MutationCheckScriptTest do
       assert out =~ "exit=130"
       assert File.read!(seen) =~ "# SLEEP"
       assert File.read!(ctx.target) == @base
+      assert_records_removed(ctx)
     end
   end
 end

@@ -8,9 +8,11 @@ ExUnit.after_suite(&Cinder.LostTests.after_suite/1)
 
 # A positive wait only costs time when the test is already failing, so the default is generous:
 # on the 3-core Forgejo CI runner a message a test waits for can take over a second (#636).
+# `Cinder.MutationFailures` writes each failure block to the file `scripts/mutation-check` names
+# (#1532).
 ExUnit.start(
   assert_receive_timeout: 5_000,
-  formatters: [ExUnit.CLIFormatter, Cinder.LostTests]
+  formatters: [ExUnit.CLIFormatter, Cinder.LostTests, Cinder.MutationFailures]
 )
 
 Ecto.Adapters.SQL.Sandbox.mode(Cinder.Repo, :manual)
