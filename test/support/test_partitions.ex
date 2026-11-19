@@ -33,6 +33,10 @@ defmodule Cinder.TestPartitions do
   partition still in `ecto.create`, `ecto.migrate` or the app start halts once it reaches the
   helper.
 
+  A SIGTERM to this VM once the partitions start halts it with status 143, through
+  `Cinder.LostTests.halt_on_sigterm/0`, and its partitions then halt at end of file. Without the
+  trap, the VM stopped with status 0 and printed no summary (#1475).
+
   Each partition writes ExUnit's failures manifest into its own build folder. `merge_failures!/2`
   folds them back into the build folder's own, so `mix test.unchecked --failed` after a
   partitioned run reads the manifest one process would have left.
@@ -230,6 +234,8 @@ defmodule Cinder.TestPartitions do
   end
 
   defp run_partitions(args, count, opts) do
+    # On SIGTERM the VM would stop with status 0 and print no summary (#1475).
+    _ = Cinder.LostTests.halt_on_sigterm()
     build = Keyword.get_lazy(opts, :build, &Mix.Project.build_path/0)
     start = Keyword.get_lazy(opts, :start, &default_start/0)
     root = Path.join(Path.dirname(build), "test-partitions")

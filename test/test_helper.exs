@@ -1,9 +1,18 @@
 # A partition of a bare `mix test` halts once the run that started it exits or is killed (#1488).
 Cinder.TestPartitions.halt_when_parent_exits()
 
+# A run stopped by SIGTERM halts with status 143 instead of printing a Result line that counts
+# only the tests that finished, and a run whose ExUnit lost a module's tests exits 1 (#1475).
+{:ok, _} = Cinder.LostTests.halt_on_sigterm()
+ExUnit.after_suite(&Cinder.LostTests.after_suite/1)
+
 # A positive wait only costs time when the test is already failing, so the default is generous:
 # on the 3-core Forgejo CI runner a message a test waits for can take over a second (#636).
-ExUnit.start(assert_receive_timeout: 5_000)
+ExUnit.start(
+  assert_receive_timeout: 5_000,
+  formatters: [ExUnit.CLIFormatter, Cinder.LostTests]
+)
+
 Ecto.Adapters.SQL.Sandbox.mode(Cinder.Repo, :manual)
 
 # Mox mocks for the external-service behaviours (real impls land per phase).
