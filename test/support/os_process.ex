@@ -4,7 +4,7 @@ defmodule Cinder.Test.OsProcess do
   a kill reached a process the command forked (`Cinder.BoundedCommandTest`, `Cinder.DiskTest`,
   `Cinder.Subtitles.Sync.FfsubsyncTest`). `await_record/1` waits for the pid a stub records,
   its own or its child's, for the tests whose bound can kill that stub before it writes it
-  (`Cinder.DiskTest`, `Cinder.Library.MediaInfo.FfprobeTest`,
+  (`Cinder.BoundedCommandTest`, `Cinder.DiskTest`, `Cinder.Library.MediaInfo.FfprobeTest`,
   `Cinder.Subtitles.Sync.FfsubsyncTest`).
 
   A forked child whose parent died is reparented, and the CI job container's PID 1 may never

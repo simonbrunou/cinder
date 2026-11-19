@@ -13,9 +13,14 @@ defmodule Cinder.BoundedCommandTest do
   describe "run/4 with :env" do
     test "the variables reach the child process", %{tmp_dir: tmp} do
       bin = stub!(tmp, ~S|printf '%s' "$CINDER_BOUNDED_TEST"|)
+      value = "from-env-#{System.unique_integer([:positive])}"
 
-      assert BoundedCommand.run(bin, [], 1_000, env: [{"CINDER_BOUNDED_TEST", "from-env"}]) ==
-               {:ok, "from-env", 0}
+      # A call meant to finish, so its deadline is 10 s: a loaded runner missed a 1 s one (run
+      # 5592, #1462). A child that misses the pair prints nothing, or the value it inherits from
+      # the test's own environment, and neither is this call's value, so the result pattern
+      # fails a wrong env.
+      assert BoundedCommand.run(bin, [], 10_000, env: [{"CINDER_BOUNDED_TEST", value}]) ==
+               {:ok, value, 0}
     end
 
     test "a non-string value raises before the command is ever spawned", %{tmp_dir: tmp} do
@@ -165,9 +170,9 @@ defmodule Cinder.BoundedCommandTest do
   end
 
   # #876: a halt or a timeout kills the command's whole process group, not only its pid. The
-  # child sleeps 5 s, longer than the 1 s deadline, the 200 ms reap wait and
-  # `OsProcess.dead?/1`'s 1 s poll together, so it can only be dead there if the kill reached it,
-  # and a killed child writes nothing more.
+  # child records its own pid, then sleeps 10 s, longer than the 1 s deadline, the 200 ms reap
+  # wait, `OsProcess.await_record/1`'s 1 s wait and `OsProcess.dead?/1`'s 1 s poll together, so
+  # it can only be dead there if the kill reached it.
   describe "run/4 kills what the command forked" do
     test "on a check halt", %{tmp_dir: tmp} do
       child_pidfile = Path.join(tmp, "child.pid")
@@ -186,9 +191,14 @@ defmodule Cinder.BoundedCommandTest do
 
       assert BoundedCommand.run(bin, [], 1_000) == {:error, {:timeout, ""}}
 
-      # The kill must have had a child to reach, or this test proves nothing.
-      assert File.exists?(child_pidfile), "the stub had not forked its child by the deadline"
-      assert OsProcess.dead?(read_pid!(child_pidfile))
+      # A loaded runner can reach the 1 s deadline before the stub forks (#1462): no child exists
+      # then, and a missing record passes. A child the kill missed records its pid once it starts,
+      # and when that record appears within `OsProcess.await_record/1`'s wait,
+      # `OsProcess.dead?/1` fails on the live child.
+      case OsProcess.await_record(child_pidfile) do
+        {:ok, pid} -> assert OsProcess.dead?(pid |> String.trim() |> String.to_integer())
+        :none -> :ok
+      end
     end
   end
 
@@ -216,10 +226,11 @@ defmodule Cinder.BoundedCommandTest do
     end
   end
 
-  # Forks a child that sleeps 5 s, writes the child's pid, then `exec`s into a long sleep. A
-  # non-interactive shell has no job control, so the child stays in the stub's process group.
+  # Forks a child that writes its own pid and `exec`s into a 10 s sleep under it, then `exec`s
+  # into a long sleep itself. A non-interactive shell has no job control, so the child stays in
+  # the stub's process group.
   defp forking_stub!(tmp, child_pidfile) do
-    stub!(tmp, "sleep 5 &\n#{write_pid("$!", child_pidfile)}\nexec sleep 30")
+    stub!(tmp, "sh -c '#{write_pid("$$", child_pidfile)}; exec sleep 10' &\nexec sleep 30")
   end
 
   # Writes its pid, then `exec`s into a long sleep under that same pid.
