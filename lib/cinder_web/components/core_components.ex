@@ -400,8 +400,7 @@ defmodule CinderWeb.CoreComponents do
             value="true"
             checked={@checked}
             class={@class || "checkbox checkbox-sm"}
-            {input_aria(@errors, @id)}
-            {@rest}
+            {input_attrs(@errors, @id, @rest)}
           />{@label}
         </span>
       </label>
@@ -422,8 +421,7 @@ defmodule CinderWeb.CoreComponents do
           name={@name}
           class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
           multiple={@multiple}
-          {input_aria(@errors, @id)}
-          {@rest}
+          {input_attrs(@errors, @id, @rest)}
         >
           <option :if={@prompt} value="">{@prompt}</option>
           {Phoenix.HTML.Form.options_for_select(@options, @value)}
@@ -448,8 +446,7 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full textarea",
             @errors != [] && (@error_class || "textarea-error")
           ]}
-          {input_aria(@errors, @id)}
-          {@rest}
+          {input_attrs(@errors, @id, @rest)}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </label>
       <div :if={@errors != []} id={@id && "#{@id}-error"}>
@@ -474,8 +471,7 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full input",
             @errors != [] && (@error_class || "input-error")
           ]}
-          {input_aria(@errors, @id)}
-          {@rest}
+          {input_attrs(@errors, @id, @rest)}
         />
       </label>
       <div :if={@errors != []} id={@id && "#{@id}-error"}>
@@ -485,13 +481,22 @@ defmodule CinderWeb.CoreComponents do
     """
   end
 
-  # Shared ARIA error wiring for every input clause (spread with {input_aria(@errors, @id)}):
-  # flag the control invalid and point it at its error node, only when there are errors.
-  defp input_aria(errors, id) do
-    %{
-      "aria-invalid": errors != [] && "true",
-      "aria-describedby": errors != [] && id && "#{id}-error"
-    }
+  # Shared attribute wiring for every input clause (spread with
+  # {input_attrs(@errors, @id, @rest)}): the caller's attributes, plus, when there are errors, the
+  # control flagged invalid and pointed at its error node. A caller's own `aria-describedby` (a
+  # hint beside the field) comes first and keeps the error node after it, so neither replaces the
+  # other. With no errors, a caller's own `aria-invalid` stays.
+  defp input_attrs(errors, id, rest) do
+    error_node = errors != [] && id && "#{id}-error"
+
+    described_by =
+      [rest[:"aria-describedby"], error_node]
+      |> Enum.filter(&(is_binary(&1) and &1 != ""))
+      |> Enum.join(" ")
+
+    rest
+    |> Map.put(:"aria-describedby", described_by != "" && described_by)
+    |> then(&if errors != [], do: Map.put(&1, :"aria-invalid", "true"), else: &1)
   end
 
   # Helper used by inputs to generate form errors

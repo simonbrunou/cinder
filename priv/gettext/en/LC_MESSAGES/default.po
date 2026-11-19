@@ -7559,3 +7559,8 @@ msgstr[1] ""
 #, elixir-autogen, elixir-format
 msgid "Checks that plex.tv returns the owner's account and who the household server is shared with, for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
 msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Email changes need mail set up. Ask an admin to set an SMTP host in Settings."
+msgstr ""

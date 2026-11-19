@@ -16,6 +16,25 @@ defmodule Cinder.Mailer do
     end
   end
 
+  @doc """
+  False when `deliver/1` cannot send: the adapter is `Swoosh.Adapters.Local` and Swoosh's local
+  mailbox (`Swoosh.Adapters.Local.Storage.Memory`, the adapter's default storage driver and the
+  only one Cinder configures) is not running, so every delivery that reaches the adapter exits
+  with `:noproc`. That is prod with no SMTP host: `Cinder.Settings` keeps the Local adapter, and
+  `config :swoosh, local: false` keeps the mailbox from starting (#1546).
+
+  True under any other adapter, such as `Swoosh.Adapters.SMTP` once an SMTP host is set, or
+  `Swoosh.Adapters.Test` in test, and under the Local adapter while its mailbox runs, as in dev.
+  It does not tell whether a given delivery will succeed: an SMTP relay can still refuse one.
+  """
+  @spec deliverable?() :: boolean()
+  def deliverable? do
+    adapter = Application.get_env(:cinder, __MODULE__, [])[:adapter]
+
+    adapter != Swoosh.Adapters.Local or
+      :global.whereis_name(Swoosh.Adapters.Local.Storage.Memory) != :undefined
+  end
+
   @doc "The sender `{name, address}` every outgoing email uses."
   @spec from() :: {String.t(), String.t()}
   def from, do: {"Cinder", from_address()}

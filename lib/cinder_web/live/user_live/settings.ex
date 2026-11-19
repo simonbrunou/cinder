@@ -51,8 +51,20 @@ defmodule CinderWeb.UserLive.Settings do
           autocomplete="username"
           spellcheck="false"
           required
+          aria-describedby={!@mail_deliverable? && "email_change_unavailable"}
         />
-        <.button variant="primary" phx-disable-with={gettext("Changing…")}>{gettext("Change email")}</.button>
+        <p :if={!@mail_deliverable?} id="email_change_unavailable" class="mb-2 text-sm">
+          {email_change_unavailable()}
+        </p>
+        <.button
+          id="change_email_button"
+          variant="primary"
+          phx-disable-with={gettext("Changing…")}
+          disabled={!@mail_deliverable?}
+          aria-describedby={!@mail_deliverable? && "email_change_unavailable"}
+        >
+          {gettext("Change email")}
+        </.button>
       </.form>
 
       <div class="divider" />
@@ -319,6 +331,7 @@ defmodule CinderWeb.UserLive.Settings do
       |> assign(:current_email, user.email)
       |> assign(:locale_form, to_form(locale_changeset))
       |> assign(:email_form, to_form(email_changeset))
+      |> assign(:mail_deliverable?, Cinder.Mailer.deliverable?())
       |> assign(:password_form, to_form(password_changeset))
       |> assign(:delete_form, to_form(%{}, as: "delete_account"))
       |> assign(:jellyfin_form, to_form(%{}, as: "jellyfin"))
@@ -371,20 +384,20 @@ defmodule CinderWeb.UserLive.Settings do
     {:noreply, assign(socket, email_form: email_form)}
   end
 
+  # With no mail transport (`Cinder.Mailer.deliverable?/0`), the confirmation link can never
+  # arrive, so the change is refused before any token, rate-limit slot or address lookup. The
+  # refusal depends on the install, not on the address, so it tells nothing about which addresses
+  # are registered (#1546). The live check, not the mount-time assign, decides: a forged frame
+  # skips the disabled button.
   def handle_event("update_email", params, socket) do
     with_sudo_mode(socket, fn ->
-      %{"user" => user_params} = params
-      user = socket.assigns.current_scope.user
-
-      case Accounts.change_user_email(user, user_params,
-             validate_unique: false,
-             validate_changed: true
-           ) do
-        %{valid?: true} = changeset ->
-          request_email_change(socket, user, changeset)
-
-        changeset ->
-          {:noreply, assign(socket, :email_form, to_form(changeset, action: :insert))}
+      if Cinder.Mailer.deliverable?() do
+        update_email(socket, params)
+      else
+        {:noreply,
+         socket
+         |> assign(:mail_deliverable?, false)
+         |> put_flash(:error, email_change_unavailable())}
       end
     end)
   end
@@ -495,6 +508,25 @@ defmodule CinderWeb.UserLive.Settings do
 
   # Client event frames are forgeable — ignore anything unrecognized rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp update_email(socket, %{"user" => user_params}) do
+    user = socket.assigns.current_scope.user
+
+    case Accounts.change_user_email(user, user_params,
+           validate_unique: false,
+           validate_changed: true
+         ) do
+      %{valid?: true} = changeset ->
+        request_email_change(socket, user, changeset)
+
+      changeset ->
+        {:noreply, assign(socket, :email_form, to_form(changeset, action: :insert))}
+    end
+  end
+
+  defp email_change_unavailable do
+    gettext("Email changes need mail set up. Ask an admin to set an SMTP host in Settings.")
+  end
 
   # No uniqueness error at request time (it would enumerate registered addresses to any pending
   # account): a taken address gets the same flash as a free one but no mail — the confirm step

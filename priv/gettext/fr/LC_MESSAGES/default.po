@@ -7915,3 +7915,8 @@ msgstr[1] "%{count} œuvres suivies supplémentaires n'ont pas été importées 
 #, elixir-autogen, elixir-format
 msgid "Checks that plex.tv returns the owner's account and who the household server is shared with, for the owner's Plex token. It does not try a sign-in or show what a shared user sees."
 msgstr "Vérifie que plex.tv renvoie le compte du propriétaire et la liste des personnes avec qui le serveur du foyer est partagé, pour le jeton Plex du propriétaire. Ne tente aucune connexion et ne montre pas ce que voit un utilisateur partagé."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Email changes need mail set up. Ask an admin to set an SMTP host in Settings."
+msgstr "Le changement d'e-mail nécessite un envoi de mails configuré. Demandez à un administrateur de renseigner un hôte SMTP dans Paramètres."

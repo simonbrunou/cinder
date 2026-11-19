@@ -135,8 +135,10 @@ defmodule Cinder.Settings.Overlay do
 
   # Layers :adapter and :ssl onto the Cinder.Mailer config :modules just wrote. The adapter only
   # switches to SMTP once a host is actually configured: an unconfigured install keeps whatever
-  # the bootstrap shipped (Swoosh.Adapters.Local in dev, .Test in test), so a blank smtp_host can
-  # never crash the mailer on a missing :relay. Both Swoosh's SMTP adapter and the Local/Test
+  # the bootstrap shipped (Swoosh.Adapters.Local in dev and prod, .Test in test), so a blank
+  # smtp_host can never crash the mailer on a missing :relay. Prod's Local adapter has no mailbox
+  # (`config :swoosh, local: false`), so it sends nothing and `Cinder.Mailer.deliverable?/0` is
+  # false there (#1546). Both Swoosh's SMTP adapter and the Local/Test
   # adapters accept extra unknown keys, so :from (read by Cinder.Mailer.from/0, not the adapter
   # itself) and a temporarily-stale :ssl on a non-SMTP adapter are harmless.
   defp write(:mailer, rows) do

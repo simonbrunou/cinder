@@ -213,5 +213,6 @@ if config_env() == :prod do
   # TLS terminates at the reverse proxy in front of Cinder (the self-host model).
   # `force_ssl` in config/prod.exs adds HSTS + the http->https redirect — it relies
   # on the proxy sending X-Forwarded-Proto and skips localhost/127.0.0.1. The mailer
-  # stays on Swoosh's local adapter until a notifier transport lands (Part II / M3).
+  # keeps Swoosh's Local adapter, with no mailbox, until an admin sets an SMTP host in
+  # Settings: `Cinder.Settings.Overlay` then switches it to Swoosh.Adapters.SMTP.
 end

@@ -5,6 +5,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.Scope
   alias Cinder.Test.ClosedPort
+  alias Cinder.Test.StoppedMailbox
   alias CinderWeb.UserLive.Settings
   import Phoenix.LiveViewTest
   import Swoosh.TestAssertions
@@ -108,6 +109,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
 
   describe "update email form" do
     @email_change_info "If that address is available, a link to confirm your email change has been sent to it."
+    @email_change_unavailable "Email changes need mail set up. Ask an admin to set an SMTP host in Settings."
 
     setup %{conn: conn} do
       user = user_fixture()
@@ -186,9 +188,11 @@ defmodule CinderWeb.UserLive.SettingsTest do
              )
     end
 
-    # #1535: with no SMTP host, prod's Local adapter has no mailbox process and exits with
-    # `:noproc` (Cinder.Test.UnstartedMailbox), which used to take the LiveView down too.
-    test "with no SMTP host in prod, an email change keeps the page up with the same info flash",
+    # #1535: a Local adapter delivery that exits with `:noproc` used to take the LiveView down
+    # too. `Cinder.Mailer.deliverable?/0` checks only Swoosh's own mailbox, not this driver
+    # (Cinder.Test.UnstartedMailbox), so the request still reaches the mailer here, as when the
+    # mailbox stops between that check and the send.
+    test "a Local mailbox delivery that exits keeps the page up with the same info flash",
          %{
            conn: conn
          } do
@@ -210,6 +214,84 @@ defmodule CinderWeb.UserLive.SettingsTest do
       refute has_element?(lv, "#flash-error")
       assert length(Regex.scan(~r/\[warning\]/, log)) == 1, log
       assert log =~ "update email delivery exit: :noproc"
+    end
+
+    # #1546: with no SMTP host, prod keeps the Local adapter with its mailbox never started, so
+    # no confirmation link can go out. The page says so and refuses the change.
+    test "with no mail delivery, the email form shows the note and a disabled submit", %{
+      conn: conn
+    } do
+      Cinder.ConfigCase.put_config(Cinder.Mailer, adapter: Swoosh.Adapters.Local)
+      StoppedMailbox.stop!()
+
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      assert has_element?(lv, "#email_form #email_change_unavailable", @email_change_unavailable)
+
+      assert has_element?(
+               lv,
+               "#change_email_button[disabled][aria-describedby=email_change_unavailable]",
+               "Change email"
+             )
+
+      # The Email field stays editable, so it points at the note too, ahead of its error node.
+      assert has_element?(lv, ~s|#user_email[aria-describedby="email_change_unavailable"]|)
+
+      lv |> element("#email_form") |> render_change(%{"user" => %{"email" => "with spaces"}})
+
+      assert has_element?(
+               lv,
+               ~s|#user_email[aria-invalid="true"][aria-describedby="email_change_unavailable user_email-error"]|
+             )
+    end
+
+    test "with mail delivery, the email form has no note and an enabled submit", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      assert has_element?(lv, "#change_email_button", "Change email")
+      refute has_element?(lv, "#change_email_button[disabled]")
+      refute has_element?(lv, "#email_change_unavailable")
+
+      assert has_element?(
+               lv,
+               ~s|#user_email[autocomplete="username"][spellcheck="false"][required]|
+             )
+
+      refute has_element?(lv, "#user_email[aria-describedby]")
+
+      lv |> element("#email_form") |> render_change(%{"user" => %{"email" => "with spaces"}})
+
+      assert has_element?(
+               lv,
+               ~s|#user_email[aria-invalid="true"][aria-describedby="user_email-error"]|
+             )
+    end
+
+    # The page mounts while mail works and the mailbox stops after, so the mount-time assign
+    # still says mail works and only the event's own check can refuse the submit.
+    test "with no mail delivery, a submitted email change is refused with no token or delivery",
+         %{conn: conn, user: user} do
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+      refute has_element?(lv, "#email_change_unavailable")
+
+      Cinder.ConfigCase.put_config(Cinder.Mailer, adapter: Swoosh.Adapters.Local)
+      StoppedMailbox.stop!()
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          render_submit(lv, "update_email", %{"user" => %{"email" => unique_user_email()}})
+        end)
+
+      assert has_element?(lv, "#flash-error", @email_change_unavailable)
+      assert has_element?(lv, "#email_form #email_change_unavailable", @email_change_unavailable)
+      assert has_element?(lv, "#change_email_button[disabled]", "Change email")
+      refute has_element?(lv, "#flash-info")
+      refute log =~ "update email delivery"
+
+      refute Cinder.Repo.get_by(Cinder.Accounts.UserToken,
+               user_id: user.id,
+               context: "change:#{user.email}"
+             )
     end
 
     test "a case-only change of one's own address still sends the confirmation", %{
