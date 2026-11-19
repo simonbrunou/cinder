@@ -35,6 +35,21 @@ defmodule Cinder.Mailer do
       :global.whereis_name(Swoosh.Adapters.Local.Storage.Memory) != :undefined
   end
 
+  @doc """
+  Sets the log level of gen_smtp's `:mimemail` module to `:info`, so the lines it logs at
+  `:debug` never reach the log, whatever the primary level. While `Swoosh.Adapters.SMTP`
+  encodes a mail, those are `Headers: [...]` lines. Each line that lists the mail's own headers
+  quotes the To header, the recipient's address (#1548); the lines for a multipart mail's parts
+  list only the part's headers. `Cinder.Application.start/2` calls it at boot.
+
+  An OTP module level replaces the primary level for that module rather than capping it: under
+  a primary level of `:error`, the module would still log at `:info` and up. gen_smtp 1.3.0's
+  `mimemail.erl` logs at `:debug` only, so that changes nothing today. No other gen_smtp module
+  on the client path that `Swoosh.Adapters.SMTP` runs logs the address.
+  """
+  @spec limit_gen_smtp_logs() :: :ok
+  def limit_gen_smtp_logs, do: :logger.set_module_level(:mimemail, :info)
+
   @doc "The sender `{name, address}` every outgoing email uses."
   @spec from() :: {String.t(), String.t()}
   def from, do: {"Cinder", from_address()}

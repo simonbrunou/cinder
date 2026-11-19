@@ -9,6 +9,8 @@ defmodule Cinder.Application do
 
   @impl true
   def start(_type, _args) do
+    :ok = Cinder.Mailer.limit_gen_smtp_logs()
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Cinder.Supervisor]
