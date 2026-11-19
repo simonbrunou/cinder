@@ -4,8 +4,7 @@ defmodule Cinder.MutationFailuresTest do
   use ExUnit.Case, async: true
 
   alias Cinder.MutationFailures
-
-  @boot_ms 60_000
+  alias Cinder.Test.ChildVM
 
   describe "a child VM" do
     @tag :tmp_dir
@@ -105,44 +104,10 @@ defmodule Cinder.MutationFailuresTest do
     System.halt(if failures > 0, do: 2, else: 0)
     """
 
-    # `sh` sets the env var, since a port's `env:` option unsets one given an empty value.
-    var = MutationFailures.env_var()
-
-    port =
-      Port.open({:spawn_executable, System.find_executable("sh")}, [
-        :binary,
-        :stderr_to_stdout,
-        line: 4096,
-        cd: dir,
-        args: [
-          "-c",
-          ~s(if [ "$3" = set ]; then export #{var}="$4"; else unset #{var}; fi; ) <>
-            ~s(if [ -n "$5" ]; then exec 2> "$5"; fi; "$0" -pa "$1" -e "$2"; echo "exit $?"),
-          System.find_executable("elixir"),
-          Path.dirname(:code.which(MutationFailures)),
-          code,
-          if(record, do: "set", else: "unset"),
-          record || "",
-          stderr
-        ]
-      ])
-
-    collect(port, [])
-  end
-
-  defp collect(port, lines) do
-    receive do
-      {^port, {:data, {:eol, "exit " <> status}}} ->
-        {lines |> Enum.reverse() |> Enum.join("\n"), String.to_integer(status)}
-
-      {^port, {:data, {_eol, line}}} ->
-        collect(port, [line | lines])
-    after
-      @boot_ms ->
-        flunk(
-          "the child printed no exit status within #{@boot_ms} ms:\n" <> Enum.join(lines, "\n")
-        )
-    end
+    ChildVM.run(code, dir, Path.dirname(:code.which(MutationFailures)),
+      env: {MutationFailures.env_var(), record},
+      stderr: stderr
+    )
   end
 
   @passing """

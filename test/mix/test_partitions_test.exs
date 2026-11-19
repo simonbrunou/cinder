@@ -5,6 +5,7 @@ defmodule Cinder.TestPartitionsTest do
 
   import ExUnit.CaptureIO
 
+  alias Cinder.Test.ChildVM
   alias Cinder.TestPartitions
   alias Cinder.TestPartitions.Partition
 
@@ -437,7 +438,7 @@ defmodule Cinder.TestPartitionsTest do
 
     # The first two tests start a real `elixir` on this build's code, as `start/4` starts a
     # partition. A slow boot on a loaded host takes seconds.
-    @boot_ms 60_000
+    @boot_ms ChildVM.timeout_ms()
 
     # The child sleeps twice as long as the test waits for its exit, then exits 0 by itself, so a
     # red run leaves no process behind for long.
@@ -483,22 +484,12 @@ defmodule Cinder.TestPartitionsTest do
   defp open_child!(dir, halt_env, code) do
     fifo = Path.join(dir, "stdin")
     {_, 0} = System.cmd("mkfifo", [fifo])
-    halt_env = if halt_env, do: String.to_charlist(halt_env), else: false
 
     port =
-      Port.open({:spawn_executable, System.find_executable("sh")}, [
-        :binary,
-        line: 1024,
-        env: [{~c"CINDER_TEST_HALT_ON_STDIN_EOF", halt_env}],
-        args: [
-          "-c",
-          ~s("$0" -pa "$1" -e "$2" < "$3"; echo "exit $?"),
-          System.find_executable("elixir"),
-          Path.dirname(:code.which(TestPartitions)),
-          code,
-          fifo
-        ]
-      ])
+      ChildVM.open(code, dir, Path.dirname(:code.which(TestPartitions)),
+        env: {"CINDER_TEST_HALT_ON_STDIN_EOF", halt_env},
+        stdin: fifo
+      )
 
     # Returns once `sh` opened the FIFO for reading.
     {:ok, stdin} = File.open(fifo, [:write, :binary])

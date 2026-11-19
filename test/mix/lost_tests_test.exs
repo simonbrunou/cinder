@@ -5,6 +5,7 @@ defmodule Cinder.LostTestsTest do
   use ExUnit.Case, async: true
 
   alias Cinder.LostTests
+  alias Cinder.Test.ChildVM
 
   # A test module ExUnit never queues, for the never-started check. It is compiled here and
   # unloaded after the module's tests: loaded at the end of this run, it would trip that same
@@ -32,7 +33,6 @@ defmodule Cinder.LostTestsTest do
   end
 
   @unqueued Cinder.LostTestsTest.Unqueued
-  @boot_ms 60_000
 
   describe "report/2" do
     test "is nil when every started instance finished", ctx do
@@ -272,43 +272,15 @@ defmodule Cinder.LostTestsTest do
     ExUnit.run()
     """
 
-    port =
-      Port.open({:spawn_executable, System.find_executable("sh")}, [
-        :binary,
-        :stderr_to_stdout,
-        line: 4096,
-        cd: dir,
-        args: [
-          "-c",
-          ~s("$0" -pa "$1" -e "$2"; echo "exit $?"),
-          System.find_executable("elixir"),
-          Path.dirname(:code.which(LostTests)),
-          code
-        ]
-      ])
-
-    collect(port, case, [])
+    ChildVM.run(code, dir, Path.dirname(:code.which(LostTests)), on_line: &on_line(case, &1, &2))
   end
 
-  defp collect(port, case, lines) do
-    receive do
-      {^port, {:data, {:eol, "exit " <> status}}} ->
-        {lines |> Enum.reverse() |> Enum.join("\n"), String.to_integer(status)}
-
-      {^port, {:data, {:eol, "running" = line}}} when case == :sigterm ->
-        {:ok, os_pid} = os_pid(lines)
-        {_, 0} = System.cmd("kill", ["-TERM", os_pid])
-        collect(port, case, [line | lines])
-
-      {^port, {:data, {_eol, line}}} ->
-        collect(port, case, [line | lines])
-    after
-      @boot_ms ->
-        flunk(
-          "the child printed no exit status within #{@boot_ms} ms:\n" <> Enum.join(lines, "\n")
-        )
-    end
+  defp on_line(:sigterm, "running", lines) do
+    {:ok, os_pid} = os_pid(lines)
+    {_, 0} = System.cmd("kill", ["-TERM", os_pid])
   end
+
+  defp on_line(_case, _line, _lines), do: :ok
 
   defp os_pid(lines) do
     Enum.find_value(lines, :error, fn
@@ -353,7 +325,7 @@ defmodule Cinder.LostTestsTest do
 
         test "waits" do
           IO.puts("running")
-          Process.sleep(#{2 * @boot_ms})
+          Process.sleep(#{2 * ChildVM.timeout_ms()})
         end
       end
       """
