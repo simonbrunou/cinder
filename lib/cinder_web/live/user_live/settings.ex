@@ -498,7 +498,11 @@ defmodule CinderWeb.UserLive.Settings do
 
   # No uniqueness error at request time (it would enumerate registered addresses to any pending
   # account): a taken address gets the same flash as a free one but no mail — the confirm step
-  # (Accounts.update_user_email/2) still rejects it. A per-user cap bounds the mail relay.
+  # (Accounts.update_user_email/2) still rejects it. A failed delivery gets that same flash too,
+  # since a different message would tell the user which addresses are registered: `UserNotifier`
+  # returns `{:error, _}`, and logs a warning when the mailer raised, exited or threw (#1535), as
+  # with a domain the SMTP adapter refuses. Unless `:ip_rate_limiting` is off, a per-user cap
+  # bounds the mail relay.
   defp request_email_change(socket, user, changeset) do
     new_email = Ecto.Changeset.get_field(changeset, :email)
 

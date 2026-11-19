@@ -4,6 +4,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
   alias Cinder.Accounts
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.Scope
+  alias Cinder.Test.ClosedPort
   alias CinderWeb.UserLive.Settings
   import Phoenix.LiveViewTest
   import Swoosh.TestAssertions
@@ -106,6 +107,8 @@ defmodule CinderWeb.UserLive.SettingsTest do
   end
 
   describe "update email form" do
+    @email_change_info "If that address is available, a link to confirm your email change has been sent to it."
+
     setup %{conn: conn} do
       user = user_fixture()
       %{conn: log_in_user(conn, user), user: user}
@@ -148,6 +151,65 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert free =~ "If that address is available"
       refute_email_sent()
       assert Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
+    end
+
+    # #1535: under Swoosh.Adapters.SMTP, `:idna` exits on a domain it refuses while the adapter
+    # renders the To header. The format check accepts `x@-bad.com`, so the exit used to escape
+    # the delivery and take the settings LiveView down with it.
+    test "an address whose domain idna refuses keeps the page up with the same info flash", %{
+      conn: conn,
+      user: user
+    } do
+      Cinder.ConfigCase.put_config(Cinder.Mailer,
+        adapter: Swoosh.Adapters.SMTP,
+        relay: "127.0.0.1",
+        port: ClosedPort.number(),
+        no_mx_lookups: true,
+        retries: 0
+      )
+
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          lv |> form("#email_form", %{"user" => %{"email" => "x@-bad.com"}}) |> render_submit()
+        end)
+
+      assert has_element?(lv, "#flash-info", @email_change_info)
+      refute has_element?(lv, "#flash-error")
+      assert length(Regex.scan(~r/\[warning\]/, log)) == 1, log
+      assert log =~ "update email delivery exit: :bad_label"
+
+      assert Cinder.Repo.get_by(Cinder.Accounts.UserToken,
+               user_id: user.id,
+               context: "change:#{user.email}"
+             )
+    end
+
+    # #1535: with no SMTP host, prod's Local adapter has no mailbox process and exits with
+    # `:noproc` (Cinder.Test.UnstartedMailbox), which used to take the LiveView down too.
+    test "with no SMTP host in prod, an email change keeps the page up with the same info flash",
+         %{
+           conn: conn
+         } do
+      Cinder.ConfigCase.put_config(Cinder.Mailer,
+        adapter: Swoosh.Adapters.Local,
+        storage_driver: Cinder.Test.UnstartedMailbox
+      )
+
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          lv
+          |> form("#email_form", %{"user" => %{"email" => unique_user_email()}})
+          |> render_submit()
+        end)
+
+      assert has_element?(lv, "#flash-info", @email_change_info)
+      refute has_element?(lv, "#flash-error")
+      assert length(Regex.scan(~r/\[warning\]/, log)) == 1, log
+      assert log =~ "update email delivery exit: :noproc"
     end
 
     test "a case-only change of one's own address still sends the confirmation", %{
