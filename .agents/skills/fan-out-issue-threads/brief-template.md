@@ -12,6 +12,8 @@ otherwise delete that section. Send everything below the rule as the thread's fi
 | `{{DOCS}}` | the topic doc `AGENTS.md` names for the change | `docs/agents/testing.md` and `docs/agents/deploy.md` |
 | `{{SETUP}}` | Seed the worktree as `docs/agents/workflow.md` "Worktrees" says | `nix develop -c bun install --frozen-lockfile` |
 | `{{TEST}}` | `mix test` (on a docs-only branch, the fence run in `docs/agents/testing.md`) | `nix develop -c bun run test` |
+| `{{TEST_FOCUSED}}` | `mix test <paths>`, which runs the compile, format and Credo gates first. Before the first full `mix test`, do the fence run `docs/agents/testing.md` asks for | `nix develop -c bun run test <path>` |
+| `{{TEST_FIX}}` | the fence run `docs/agents/testing.md` asks of a review fix commit, with the test files the change reaches appended. A review fix that `testing.md` sends to a second full `mix test` takes this run instead (#1553) | `nix develop -c bun run test <path>` on the test files the change reaches |
 | `{{SHIP}}` | Ship with the `ship-cinder-pr-on-forgejo` skill, and merge with `scripts/merge-pr <n>`. A user-visible change adds a `changelog.d/` fragment (AGENTS.md "Changelog"). | Open the PR, wait for its CI and merge it as the `forgejo-issues` skill's "PRs and CI" section says, the body written with the `pr` skill. |
 | `{{CI_RULES}}` | delete the bullet | Run `scripts/wait-e2e-slot.sh` before each push, merge to `main` or rerun, as `docs/agents/testing.md` says. |
 | `{{DEPLOY}}` | the ship skill's deploy check | `scripts/smoke-prod.sh <new main sha>` |
@@ -68,7 +70,7 @@ write.
 
 - {{CI_RULES}}
 - Other threads merge while you work, and CI is one shared runner. Batch commits and push once
-  per review round.
+  per review round: fix every finding and re-review the fix diff, then push.
 - Wait for CI in the foreground with `forgejo.py ci` (the `forgejo-issues` skill), running it
   again while it exits 3. `ci` reports only to a call that is waiting, so a turn that ends first
   leaves the thread without the result.
@@ -76,9 +78,10 @@ write.
   report: a delegate's report, or its failure, reaches you only when your turn ends. A nudge from
   the orchestrator in that time gets the same answer: end the turn again. A delegate still
   unreported 45 minutes after you started it has hung: `task_cancel` it and start a fresh one.
-- Read a red job's log before rerunning it. When a check is red on code your diff does not touch,
-  read what the repo's docs say about red runs, and tell the orchestrator when it looks
-  repo-wide.
+- Read a red job's log first. When the repo's docs give that red a re-run, re-run that one job
+  with the job rerun POST of the `forgejo-issues` skill's "PRs and CI" section. When a check is
+  red on code your diff does not touch, read what the repo's docs say about red runs, and tell
+  the orchestrator when it looks repo-wide.
 - Send each message to the orchestrator (a red check, a CI window, an issue number) with
   `t3_thread_send` and mode `steer`, so it reaches the orchestrator's running turn. When `steer`
   fails with `thread_not_sendable`, send the message again with mode `auto`, which starts an
@@ -99,13 +102,17 @@ write.
 
 ## Tests
 
-- Run {{TEST}} and read its result line before you end the turn. Start a run that can outlast
-  the 600 s cap of one foreground Bash call (a full cinder `mix test`, `docs/agents/testing.md`)
-  with `run_in_background` and `timeout: 1800000`, call `t3_background_wait` with its task id,
-  then wait for the run to exit in foreground calls, each a loop bounded by round count as the
-  global CLAUDE.md's round-count bullet says. A bare cinder `mix test` prints each passed
-  partition's `Result:` line while others still run, so a `Result:` line does not end the wait. Other suites share the CPU, so re-run a timing
-  failure alone before treating it as yours.
+- Run {{TEST}} once per PR, right before the first push, and read its result line. While you
+  code, run the test files the change reaches with {{TEST_FOCUSED}}. Before you push a
+  review fix, run {{TEST_FIX}}, and CI's full run on the pushed SHA gates that push. Any other
+  later push, such as one after a merge of `origin/main`, takes the run the repo's docs ask for.
+- Start a run that can outlast the 600 s cap of one foreground Bash call (a full cinder
+  `mix test`, `docs/agents/testing.md`) with `run_in_background`, `timeout: 1800000` and its
+  output in a file, call `t3_background_wait` with its task id, then wait for the run to exit in
+  foreground calls, each a loop bounded by round count as the global CLAUDE.md's round-count
+  bullet says. A bare cinder `mix test` prints each passed partition's `Result:` line while
+  others still run, so a `Result:` line does not end the wait. Other suites share the CPU, so
+  re-run a timing failure alone before treating it as yours.
 - A negative test (asserting nothing happened) starts from a state that would otherwise act,
   waits for async work, and gets a mutation check. Break the fix, see it go red, restore.
 

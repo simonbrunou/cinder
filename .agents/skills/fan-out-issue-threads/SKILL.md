@@ -85,8 +85,10 @@ landed.
 
 ## 3. Write each brief
 
-Fill [brief-template.md](brief-template.md) per issue, with the repo's values from its table. The
-`{{HOW}}` block depends on the issue:
+Fill [brief-template.md](brief-template.md) per issue, with the repo's values from its table. Its
+"CI and merge" and "Tests" sections hold the rules that save CI time: one `{{TEST}}` run per PR,
+one push per review round, a re-run of the red job alone. Change such a rule in the template, so
+every brief carries it. The `{{HOW}}` block depends on the issue:
 
 - For a refactor, the thread designs two interfaces with the `codebase-design` skill and posts
   the chosen one on the issue before coding. When the issue already proposes the interface, one
