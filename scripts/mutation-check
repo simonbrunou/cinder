@@ -75,13 +75,24 @@ PASSED = re.compile(r"^Result: \d+ passed")
 FAILURE = re.compile(r"^(  \d| \d\d|\d{3,})\) .*( \(\S+\)|: failure on setup_all callback, .*)$")
 SETUP_ALL = re.compile(r"^\s*\d+\) \S+: failure on setup_all callback, ")
 # ExUnit indents the lines under a header by 5. A test's block opens with an optional
-# `Parameters: ...` line and the test's `file:line`; a `setup_all` block with the optional
-# `Parameters: ...` line only. Each failure
+# `Parameters: ...` line and the test's `file:line`, which ExUnit always prints: the script
+# skips each line that PARAMETERS matches there and reads the first other line as the
+# `file:line`. A `setup_all` block opens with the optional `Parameters: ...` line only, and its
+# first message line can start `Parameters: ` too, as under `flunk("Parameters: missing")`.
+# ExUnit prints the parameters with `inspect`, so the script skips that first line only when
+# SETUP_PARAMETERS matches it: `Parameters: %{`, as a map starts, or `Parameters: %` and an
+# alias such as `Mod.Sub` before `{`, as a struct starts. Limits: a `setup_all` message whose
+# first line starts that way stays out. A parameters value whose Inspect prints another form,
+# such as `#Mod<a: 1, ...>` under `@derive {Inspect, only: [:a]}`, prints as a message line in
+# a `setup_all` block. ExUnit indents only the first line of a value that Inspect prints over
+# several lines, so a later line that Inspect indents by fewer than 5 spaces ends the block and
+# leaves out that block's failures. Each failure
 # in the block then opens with a `Failure #N` line when there are several, its message
 # (`match (=) failed`), whose lines can go deeper, and labels such as `code:` and `left:`, whose
-# values go deeper. LABEL lists the labels `ExUnit.Formatter` (Elixir 1.20.5) prints after a
-# message.
+# values go deeper. LABEL lists the labels `ExUnit.Formatter` (Elixir 1.20.5) can print right
+# after a message; its `hint:` label follows only `left:` and `right:`.
 PARAMETERS = re.compile(r"^ {5}Parameters: ")
+SETUP_PARAMETERS = re.compile(r"^ {5}Parameters: %(?:[A-Z][\w.]*)?\{")
 SECTION = re.compile(r"^ {5}Failure #\d+$")
 TOP = re.compile(r"^ {5}\S")
 CODE = re.compile(r"^ {5}code:")
@@ -147,7 +158,7 @@ def failures(record):
     for line in record:
         if state == "setup" and line.strip():
             state = "message"
-            if PARAMETERS.match(line):
+            if SETUP_PARAMETERS.match(line):
                 continue  # a `setup_all` block's only line before its first failure
         if FAILURE.match(line):
             end_message()

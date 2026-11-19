@@ -104,6 +104,39 @@ defmodule Cinder.MutationCheckScriptTest do
         done
       } | rec
       killed ;;
+    *PARAMS*)
+      # Plain `setup_all` blocks whose message starts `Parameters: `, a `setup_all` of a module
+      # parameterized with a struct, then a test and a `setup_all` of modules parameterized with
+      # a struct whose derived Inspect prints `#Mod<...>`.
+      rec <<'OUT'
+    5) Cinder.UTest: failure on setup_all callback, all tests have been invalidated
+       Parameters: %d{n} unset
+       stacktrace:
+         test/u_test.exs:3: Cinder.UTest.__ex_unit__/2
+    1) Cinder.PTest: failure on setup_all callback, all tests have been invalidated
+       Parameters: missing
+       stacktrace:
+         test/p_test.exs:3: Cinder.PTest.__ex_unit__/2
+    2) Cinder.QTest: failure on setup_all callback, all tests have been invalidated
+       Parameters: %Cinder.S{a: 1}
+       ** (RuntimeError) q
+       stacktrace:
+         test/q_test.exs:3: Cinder.QTest.__ex_unit__/2
+    3) test s (Cinder.STest)
+       Parameters: #Cinder.S<a: 1, ...>
+       test/s_test.exs:4
+       s failed
+       code: flunk("s failed")
+       stacktrace:
+         test/s_test.exs:4: (test)
+    4) Cinder.RTest: failure on setup_all callback, all tests have been invalidated
+       Parameters: #Cinder.S<a: 1, ...>
+       ** (RuntimeError) r
+       stacktrace:
+         test/r_test.exs:3: Cinder.RTest.__ex_unit__/2
+  OUT
+      printf '\\nResult: 0/1 passed, 4 invalid\\n'
+      exit 2 ;;
     *MATCHFAIL*)
       rec <<'OUT'
     1) test t (Cinder.XTest)
@@ -430,6 +463,32 @@ defmodule Cinder.MutationCheckScriptTest do
     assert out =~
              "s: SURVIVED, Result: 2 passed\n    -def other, do: :ok\n" <>
                "    +def  other, do: :ok\n2 of 3 killed\n"
+  end
+
+  @tag :tmp_dir
+  test "a setup_all leaves out only a %{ or %Alias{ parameters line, a test each Parameters line",
+       ctx do
+    {out, code} = run(ctx, [ctx.target, mutants(ctx, [{"p", "x + 1", "PARAMS"}]), "t.exs"])
+
+    assert code == 0, out
+
+    # A `setup_all` block prints a first line that starts `Parameters: ` without a `{` or a
+    # capital after the `%`, and a `#Mod<...>` parameters line, the limit the script's header
+    # names. A struct's parameters line stays out of it. A test block leaves out a `#Mod<...>`
+    # parameters line and its `file:line`.
+    assert out =~
+             "    +def rule(x), do: PARAMS\n" <>
+               "    failed: 5) Cinder.UTest: failure on setup_all callback, all tests have " <>
+               "been invalidated\n      Parameters: %d{n} unset\n" <>
+               "    failed: 1) Cinder.PTest: failure on setup_all callback, all tests have " <>
+               "been invalidated\n      Parameters: missing\n" <>
+               "    failed: 2) Cinder.QTest: failure on setup_all callback, all tests have " <>
+               "been invalidated\n      ** (RuntimeError) q\n" <>
+               "    failed: 3) test s (Cinder.STest)\n      s failed\n" <>
+               "      code: flunk(\"s failed\")\n" <>
+               "    failed: 4) Cinder.RTest: failure on setup_all callback, all tests have " <>
+               "been invalidated\n      Parameters: #Cinder.S<a: 1, ...>\n" <>
+               "      ** (RuntimeError) r\n1 of 1 killed\n"
   end
 
   @tag :tmp_dir
