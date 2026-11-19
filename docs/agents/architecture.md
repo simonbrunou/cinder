@@ -29,6 +29,12 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
   (`config :swoosh, local: false`), so a delivery there exits `:noproc`. A caller of the mailer
   catches exits, as `Cinder.Accounts.UserNotifier` and `Cinder.Notifier.Email` do. Before #1545
   an email change that sent its confirmation crashed the settings page on prod (#1535).
+  A user-facing flow that needs a mail to arrive checks `Cinder.Mailer.deliverable?/0` first. A
+  test reaches that no-SMTP state with `Cinder.Test.StoppedMailbox.stop!/0`, whose moduledoc
+  says why setting `local: false` at runtime does not. A test of a delivery exit past that check
+  uses the `Cinder.Test.UnstartedMailbox` storage driver, which leaves the mailbox running. On
+  #1551 (for #1546) the triage brief's `local: false` recipe still delivered `{:ok, ...}` in the
+  Spec reviewer's probe.
 - Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
   `imdb_id` through for this.
 

@@ -66,6 +66,12 @@
   query. `test/code_health/live_view_raw_html_test.exs` fails a new whole-view assert, holds each
   older file at its count, and names in its header the forms it misses, such as HTML a test
   helper returns.
+- A change to a shared component, such as `CinderWeb.CoreComponents.input/1`, gets a component
+  test over each clause it touches before review, as
+  `test/cinder_web/components/core_components_input_test.exs` renders one call site per clause
+  that calls `input_attrs/3`.
+  On #1551 (for #1546) the re-check of `dc891622` found `input_attrs/3` dropping a caller's
+  `aria-invalid` when the input had no errors, which took a third commit and test.
 - Each file Mix compiles (`elixirc_paths`: `lib/`, plus `test/support/` in the test env) defines
   one module, as `deps/phoenix/usage-rules/elixir.md` asks: "**Never** nest multiple modules in
   the same file as it can cause cyclic dependencies and compilation errors". An `.exs` test file
