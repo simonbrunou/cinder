@@ -2,15 +2,17 @@ defmodule Cinder.Notifier.EmailTest do
   # async: false — mutates Cinder.Mailer's Application env to simulate SMTP-configured.
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Swoosh.TestAssertions
   import Cinder.AccountsFixtures
 
   alias Cinder.Notifier.Email
   alias Cinder.Requests.Request
+  alias Cinder.Test.ClosedPort
   alias Swoosh.Adapters.SMTP
 
   # The "configured" guard is config-shaped (a saved smtp_host), not adapter-shaped — the
-  # adapter stays Swoosh.Adapters.Test in every test regardless, so this is the only way to
+  # adapter stays Swoosh.Adapters.Test unless a test sets another one, so this is the only way to
   # flip the guard while still capturing delivered emails.
   defp configure_smtp!(extra \\ []),
     do: Cinder.ConfigCase.put_config(Cinder.Mailer, Keyword.merge([relay: "smtp.test"], extra))
@@ -737,11 +739,96 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
-  # Every other test in this module delivers through Swoosh.Adapters.Test, which renders no header
-  # and never calls `:idna`. Once an SMTP host is saved, prod sends through Swoosh.Adapters.SMTP,
-  # so this renders the email the notifier built with that adapter's own `body/2`: a swoosh, idna
-  # or gen_smtp bump that changes how From and To render these two addresses fails here. #1536
-  # bumped idna with no test on this path.
+  # Fails each delivery the way its `:fail_with` config names, with a value that holds the
+  # recipient's address and the whole adapter config, SMTP password included.
+  defmodule FailingAdapter do
+    use Swoosh.Adapter
+
+    @impl true
+    def deliver(%Swoosh.Email{to: [{_name, address}]}, config) do
+      leak = "#{address} #{inspect(config)}"
+
+      case Keyword.fetch!(config, :fail_with) do
+        :error -> {:error, {:rejected, leak}}
+        :raise -> raise ArgumentError, leak
+        :exit -> exit({:bad_label, leak})
+        :throw -> throw(leak)
+      end
+    end
+  end
+
+  @password "smtp-password-sentinel-1544"
+
+  defp approved_request(user),
+    do: %Request{title: "Arrival", year: 2016, target_type: "movie", user_id: user.id, user: user}
+
+  # The one warning-or-above line the delivery logged, which must end with `expected`.
+  defp assert_one_warning(log, expected) do
+    lines =
+      ~r/\[(?:warning|error|critical|alert|emergency)\] [^\n]*\n/
+      |> Regex.scan(log)
+      |> List.flatten()
+
+    assert match?([_], lines), log
+    [line] = lines
+    assert line =~ ~r/\[warning\] #{Regex.escape(expected)}\n\z/, log
+  end
+
+  # #1544: each failure branch logged the reason or the exception message, stripped of line
+  # breaks and cut to 500 bytes, which can still hold the recipient's address or the mailer
+  # config. The warning now names only the exception module or the reason's atom tag, else
+  # `(no tag)`.
+  describe "a failed delivery" do
+    test "logs one warning per branch with the tag only, never the address or a config value" do
+      user = confirmed_user(email: "reader-sentinel@example.com")
+
+      for {fail_with, expected} <- [
+            error: "email notify delivery failed: :rejected",
+            raise: "email notify raised ArgumentError",
+            exit: "email notify exit: :bad_label",
+            throw: "email notify throw: (no tag)"
+          ] do
+        configure_smtp!(adapter: FailingAdapter, fail_with: fail_with, password: @password)
+
+        {result, log} =
+          with_log(fn -> Email.notify({:request_approved, approved_request(user)}) end)
+
+        assert result == :ok
+        assert_one_warning(log, expected)
+        refute log =~ "reader-sentinel", log
+        refute log =~ @password, log
+      end
+    end
+
+    # The issue's own run: the SMTP adapter's `:idna` exits on a domain it refuses while it
+    # renders the To header, with a reason that quotes the refused label.
+    test "an address the SMTP adapter cannot encode logs the exit's tag, not the label" do
+      configure_smtp!(
+        adapter: Swoosh.Adapters.SMTP,
+        relay: "127.0.0.1",
+        port: ClosedPort.number(),
+        password: @password,
+        no_mx_lookups: true,
+        retries: 0
+      )
+
+      user = confirmed_user(email: "reader@-bad.com")
+
+      {result, log} =
+        with_log(fn -> Email.notify({:request_approved, approved_request(user)}) end)
+
+      assert result == :ok
+      assert_one_warning(log, "email notify exit: :bad_label")
+      refute log =~ "-bad", log
+      refute log =~ @password, log
+    end
+  end
+
+  # The tests in this module outside "a failed delivery" deliver through Swoosh.Adapters.Test, which
+  # renders no header and never calls `:idna`. Once an SMTP host is saved, prod sends through
+  # Swoosh.Adapters.SMTP, so this renders the email the notifier built with that adapter's own
+  # `body/2`: a swoosh, idna or gen_smtp bump that changes how From and To render these two
+  # addresses fails here. #1536 bumped idna with no test on this path.
   describe "the SMTP adapter's rendering" do
     test "puts the configured sender and the recipient in From and To, with punycode domains" do
       configure_smtp!(from: "notify@crème.example")

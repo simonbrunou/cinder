@@ -65,13 +65,14 @@ defmodule Cinder.Accounts.UserNotifierTest do
     end
   end
 
-  # Exits or throws with the value its config names.
+  # Returns an error, exits or throws with the value its config names.
   defmodule FailingAdapter do
     use Swoosh.Adapter
 
     @impl true
     def deliver(_email, config) do
       case Keyword.fetch!(config, :fail_with) do
+        {:error, value} -> {:error, value}
         {:exit, value} -> exit(value)
         {:throw, value} -> throw(value)
       end
@@ -96,6 +97,26 @@ defmodule Cinder.Accounts.UserNotifierTest do
         assert warnings(log) == 1, log
         refute log =~ "someone@"
       end
+    end
+
+    # #1543: a plain `{:error, reason}` from the mailer logged nothing.
+    test "a returned error logs one warning naming its tag, and returns the error as it is" do
+      reason = {:rejected, "someone@example.com"}
+
+      Cinder.ConfigCase.put_config(Cinder.Mailer,
+        adapter: FailingAdapter,
+        fail_with: {:error, reason}
+      )
+
+      {result, log} =
+        with_log(fn ->
+          UserNotifier.deliver_update_email_instructions(%{email: "a@example.com"}, "u")
+        end)
+
+      assert result == {:error, reason}
+      assert log =~ ~r/\[warning\] update email delivery failed: :rejected\n/, log
+      assert warnings(log) == 1, log
+      refute log =~ "someone@"
     end
   end
 
@@ -134,6 +155,24 @@ defmodule Cinder.Accounts.UserNotifierTest do
       assert log =~ "update email delivery exit: :bad_label"
       assert warnings(log) == 1, log
       refute log =~ "-bad"
+    end
+
+    # #1543's run: gen_smtp gives up on the refused connection and Swoosh returns
+    # `{:error, {:retries_exceeded, {:network_failure, ~c"127.0.0.1", {:error, :econnrefused}}}}`.
+    test "a refused relay logs one warning naming the error's tag only" do
+      configure_smtp!(relay: "127.0.0.1", port: ClosedPort.number())
+
+      {result, log} =
+        with_log(fn ->
+          UserNotifier.deliver_update_email_instructions(%{email: "x@example.com"}, "http://x/t")
+        end)
+
+      assert {:error, {:retries_exceeded, _}} = result
+      assert log =~ ~r/\[warning\] update email delivery failed: :retries_exceeded\n/, log
+      assert warnings(log) == 1, log
+      refute log =~ "x@example.com"
+      refute log =~ "network_failure"
+      refute log =~ @password
     end
 
     # Swoosh.Adapter.validate_config/2 raises an ArgumentError whose message inspects the whole

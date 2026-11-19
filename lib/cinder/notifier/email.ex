@@ -25,7 +25,6 @@ defmodule Cinder.Notifier.Email do
   import Swoosh.Email
 
   alias Cinder.Accounts.User
-  alias Cinder.HTTPPolicy
   alias Cinder.Mailer
   alias Cinder.Requests
   alias CinderWeb.LiveHelpers
@@ -240,6 +239,8 @@ defmodule Cinder.Notifier.Email do
     :ok
   end
 
+  # A failed delivery logs one warning that names the reason's tag only (`Mailer.reason_tag/1`),
+  # since the reason can hold the recipient's address or the mailer config (#1544).
   defp deliver(to, subject, body) do
     email =
       new()
@@ -253,16 +254,16 @@ defmodule Cinder.Notifier.Email do
         :ok
 
       {:error, reason} ->
-        Logger.warning("email notify delivery failed: #{HTTPPolicy.sanitize_log(reason)}")
+        Logger.warning("email notify delivery failed: #{Mailer.reason_tag(reason)}")
         :ok
     end
   rescue
     e ->
-      Logger.warning("email notify raised: #{HTTPPolicy.sanitize_log(Exception.message(e))}")
+      Logger.warning("email notify raised #{Mailer.reason_tag(e)}")
       :ok
   catch
     kind, value ->
-      Logger.warning("email notify #{kind}: #{HTTPPolicy.sanitize_log(value)}")
+      Logger.warning("email notify #{kind}: #{Mailer.reason_tag(value)}")
       :ok
   end
 
