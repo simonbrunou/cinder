@@ -135,7 +135,7 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
 - **Broken `main`.** Two PRs that pass apart can break `main` together (AGENTS.md "Merge
   authority"). A test that flakes under runner load also goes red on `main` now and then (#984),
   so a red on `origin/main`'s head does not show that your tree inherits a break. A red test
-  that also failed on `origin/main`'s head and passes **Flake** step 1 first gets the PR's one
+  that also failed on `origin/main`'s head and passes **Flake** step 1 first gets its one
   re-run (**Flake** step 2). Nothing before the re-run tells the two cases apart. An open
   `CI flake:` issue that names the test misses a first sighting, and the logs zip of `main`'s run
   holds only the newest attempt of each job. A later green `main` run of a tree that still holds
@@ -186,10 +186,11 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   2. Re-run the job once, as "Re-running CI" says. Only the re-run can supply the green run: a
      green re-run of the identical tree (the same SHA, or an empty commit on it) makes the
      failure a flake, even when `CI / test (push)` on `origin/main`'s head failed the same test.
-     A re-run that fails again on the same test goes to **Broken `main`**, which says when that
-     cause fits. When `CI / test (push)` on `origin/main`'s head passes the test, search the
-     open issues for the test module again, since a session on another PR may have filed it
-     while your re-run ran. Comment your sighting there, or file the issue. When your branch
+     A re-run that fails only other tests gets one more ("Re-running CI"). A re-run that fails
+     again on the same test goes to **Broken `main`**, which says when that cause fits. When
+     `CI / test (push)` on `origin/main`'s head passes the test, search the open issues for the
+     test module again, since a session on another PR may have filed it while your re-run ran.
+     Comment your sighting there, or file the issue. When your branch
      lacks that head, merge `origin/main` into it, run `mix test` and push: the new SHA gets a
      new run. When it already holds that head, the PR's diff is the only difference from the
      green tree, so look for its part in the failure before anything else. On #1346 both
@@ -445,8 +446,10 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   same tree prints the same warning. The call is the job rerun POST of the `forgejo-issues`
   skill's "PRs and CI" section, which answers 204. A job at `attempt` above 1 was re-run
   already, by you or by another agent in a merge burst: wait on it while it reads `waiting` or
-  `running`. A release PR's merge commit re-runs each `cancelled` job at any `attempt`
-  ([workflow.md](workflow.md) "Releasing" step 3).
+  `running`. A red job at `attempt` 2, or at `attempt` 1 of a run that an empty commit or a
+  reopen started as a re-run, gets one more re-run only as the bullet "When the re-run fails
+  only new tests" says. A release PR's merge commit re-runs each `cancelled` job at any
+  `attempt` ([workflow.md](workflow.md) "Releasing" step 3).
 - When the POST answers anything but 204 on a PR, push an empty commit instead
   (`git commit --allow-empty -m "ci: re-run after <test> flake"`, which a squash merge drops;
   `scripts/merge-pr` then stops until you pass `--body-from=<sha of the fix commit>`). In
@@ -458,9 +461,20 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   a POST that fails leaves the run red.
 - Before you wait on the re-run, confirm its statuses show `pending`, or the wait reads the old
   failure.
-- When the re-run fails again, read its new log as "Judging a red run" says. On a PR, check a
-  failure on the same test against **Broken `main`**. On `main`, a job that fails again leaves
-  the run red (AGENTS.md "Merge authority").
+- When the re-run fails again, read its new log as "Judging a red run" says. Note each
+  attempt's failing tests before you start the next re-run, since the logs zip then holds only
+  the new attempt (**Broken `main`**). A re-run that fails a test an earlier attempt failed
+  too, or whose earlier failures nobody noted, fails again on the same test: on a PR, check it
+  against **Broken `main`**; on `main`, the run stays red (AGENTS.md "Merge authority").
+- When the re-run fails only new tests, ones no earlier attempt failed, the job gets one more
+  re-run, on a PR and on `main` alike, once each new test passes step 1 of **Flake**. Before
+  that re-run replaces the log, search the open issues for each new test's module and comment
+  your sighting there with the run id, the job's `attempt` and the failure line, or file the
+  issue when none names the module. A new test that fails beside an old one gets the same
+  sighting. That second re-run is the last for the tree, counting an empty commit or a reopen
+  as a re-run: treat its red as failing again on the same test, as the bullet above says. On
+  #1493 (for #1449), attempt 1 failed `OsProcessTest` (#1456), attempt 2 `LibreTranslateTest`
+  (#1490), and attempt 3 passed.
 - A newer push to the same ref cancels its run in progress, a re-run included (`ci.yml`'s
   `concurrency` group). On `main`, wait on the new head once one lands, except for the tag of a
   release, which needs the release PR's merge commit itself green ([workflow.md](workflow.md)
