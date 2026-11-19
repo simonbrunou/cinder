@@ -1,9 +1,10 @@
 defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   @moduledoc """
-  What each of `Cinder.Download.permanent_submission_errors/0` does to a movie, a TV episode and
-  a book target, through the path each poller takes: the download intent submits the release and
-  `abandon_reserved/2` drops the reservation, holding a book target first; then the movie or TV
-  poller's own failure handling runs (#1449).
+  What each of `Cinder.Download.permanent_submission_errors/0` does to a movie, a TV episode, a
+  season pack, an anime episode and a book target, through the path each poller takes: the
+  download intent submits the release and `abandon_reserved/2` drops the reservation, holding a
+  book target or blocking a TV release first; then the movie or TV poller's own failure handling
+  runs (#1449, #1492).
 
   A reason the client returns on `add` reaches the movie and TV pollers on a fresh grab from their
   search pass. `:invalid_intent_release` comes only from an intent stored on an earlier tick whose
@@ -14,6 +15,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   """
   use Cinder.DataCase, async: false
 
+  import Ecto.Query
   import Mox
   import Cinder.CatalogFixtures
   import Cinder.PollerHelpers, only: [stub_clean_content: 0]
@@ -22,7 +24,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   alias Cinder.Books
   alias Cinder.Books.BookTarget
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Movie}
   alias Cinder.Download
   alias Cinder.Download.{BookPoller, Intent, Poller, TvPoller}
   alias Cinder.Repo
@@ -43,33 +45,69 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     stub_clean_content()
   end
 
-  # For each reason the client returns: the searching movie parks at once; a TV episode spends one
-  # search attempt and stays wanted; a book target is held with the reason. A stored intent whose
-  # link cannot be read back is dropped by the movie and TV pending-intent pass, and the search
-  # pass that follows grabs the release its search finds (`adds: 1`), so neither the movie nor the
-  # episode records a failure (#1491).
-  @expected %{
-    unsupported_download_url: %{
-      movie: %{status: :search_failed, search_attempts: 0, adds: 1},
-      episode: %{grabbed: false, search_attempts: 1, adds: 1},
-      book_target: %{status: :held, hold_reason: "unsupported_download_url", adds: 1}
-    },
-    bad_torrent: %{
-      movie: %{status: :search_failed, search_attempts: 0, adds: 1},
-      episode: %{grabbed: false, search_attempts: 1, adds: 1},
-      book_target: %{status: :held, hold_reason: "bad_torrent", adds: 1}
-    },
-    add_rejected: %{
-      movie: %{status: :search_failed, search_attempts: 0, adds: 1},
-      episode: %{grabbed: false, search_attempts: 1, adds: 1},
-      book_target: %{status: :held, hold_reason: "add_rejected", adds: 1}
-    },
-    invalid_intent_release: %{
-      movie: %{status: :downloading, search_attempts: 0, adds: 1},
-      episode: %{grabbed: true, search_attempts: 0, adds: 1},
-      book_target: %{status: :held, hold_reason: "invalid_intent_release", adds: 0}
-    }
-  }
+  # For each reason the client returns: the searching movie parks at once; a book target is held
+  # with the reason. A TV episode, a season pack and an anime episode each run two polls: each poll
+  # spends one search attempt and blocks the refused release for the series under the reason, so
+  # the second poll adds the other release and the episodes stay wanted (#1492). A stored intent
+  # whose link cannot be read back is dropped by the movie and TV pending-intent pass, and the
+  # search pass that follows grabs the release its search finds (one add), so neither the movie nor
+  # the episodes record a failure or a block (#1491).
+  @episode_first "Show.S01E01.1080p.WEB-DL-GRP"
+  @episode_second "Show.S01E01.1080p.WEB-DL-OTHER"
+  @pack_first "Show.S01.1080p.WEB-DL-GRP"
+  @pack_second "Show.S01.1080p.WEB-DL-OTHER"
+  @anime_first "[GRP] Show S01E01 [1080p]"
+  @anime_second "[OTHER] Show S01E01 [1080p]"
+
+  @expected (for reason <- [:unsupported_download_url, :bad_torrent, :add_rejected], into: %{} do
+               code = to_string(reason)
+
+               {reason,
+                %{
+                  movie: %{status: :search_failed, search_attempts: 0, adds: 1},
+                  episode: %{
+                    states: [:wanted],
+                    search_attempts: [2],
+                    added: [@episode_first, @episode_second],
+                    blocked: [{@episode_first, code}, {@episode_second, code}]
+                  },
+                  season_pack: %{
+                    states: [:wanted, :wanted],
+                    search_attempts: [2, 2],
+                    added: [@pack_first, @pack_second],
+                    blocked: [{@pack_first, code}, {@pack_second, code}]
+                  },
+                  anime_episode: %{
+                    states: [:wanted],
+                    search_attempts: [2],
+                    added: [@anime_first, @anime_second],
+                    blocked: [{@anime_first, code}, {@anime_second, code}]
+                  },
+                  book_target: %{status: :held, hold_reason: code, adds: 1}
+                }}
+             end)
+            |> Map.put(:invalid_intent_release, %{
+              movie: %{status: :downloading, search_attempts: 0, adds: 1},
+              episode: %{
+                states: [:downloading],
+                search_attempts: [0],
+                added: [@episode_first],
+                blocked: []
+              },
+              season_pack: %{
+                states: [:downloading, :downloading],
+                search_attempts: [0, 0],
+                added: [@pack_first],
+                blocked: []
+              },
+              anime_episode: %{
+                states: [:downloading],
+                search_attempts: [0],
+                added: [@anime_first],
+                blocked: []
+              },
+              book_target: %{status: :held, hold_reason: "invalid_intent_release", adds: 0}
+            })
 
   test "the table covers every permanent submission error" do
     assert Enum.sort(Map.keys(@expected)) == Enum.sort(Download.permanent_submission_errors())
@@ -83,6 +121,76 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     test "#{kind} on #{reason}" do
       assert outcome(@kind, @reason) == @cell
     end
+  end
+
+  # A client error that is not permanent keeps the stored intent, and the TV pending-intent pass
+  # submits the same release again once its retry is due: nothing is blocked (#1492).
+  test "episode on a transient client error retries the same release" do
+    %{series: series, episode_ids: [id]} = wanted_episodes([1])
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [indexer_result(@episode_first, 20), indexer_result(@episode_second, 10)]}
+    end)
+
+    stub_client(:timeout, "hash-transient")
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert [%Intent{} = intent] = Repo.all(Intent)
+    intent |> Intent.changeset(%{next_attempt_at: DateTime.utc_now(:second)}) |> Repo.update!()
+    assert :ok = TvPoller.poll()
+
+    assert added() == [@episode_first, @episode_first]
+    assert blocked(series.id) == []
+    assert %Episode{grab_id: nil} = Repo.get!(Episode, id)
+  end
+
+  # A refusal for good on a stored intent's retry blocks the release too, so the search pass of the
+  # same poll picks the other one (#1492).
+  test "episode on a permanent refusal after a transient one blocks the release on the retry" do
+    %{series: series, episode_ids: [id]} = wanted_episodes([1])
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [indexer_result(@episode_first, 20), indexer_result(@episode_second, 10)]}
+    end)
+
+    test_pid = self()
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+    stub(Cinder.Download.ClientMock, :status, fn _id -> {:ok, %{state: :downloading}} end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      send(test_pid, {:add, release.title})
+
+      case {release.title, Agent.get_and_update(calls, &{&1, &1 + 1})} do
+        {@episode_first, 0} -> {:error, :timeout}
+        {@episode_first, _} -> {:error, :bad_torrent}
+        {@episode_second, _} -> {:ok, "hash-second"}
+      end
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert [%Intent{} = intent] = Repo.all(Intent)
+    intent |> Intent.changeset(%{next_attempt_at: DateTime.utc_now(:second)}) |> Repo.update!()
+    assert :ok = TvPoller.poll()
+
+    assert added() == [@episode_first, @episode_first, @episode_second]
+    assert blocked(series.id) == [{@episode_first, "bad_torrent"}]
+    assert Catalog.episode_state(Repo.get!(Episode, id)) == :downloading
+  end
+
+  # A release the operator picked by hand is not blocked when the client refuses it (#1492).
+  test "an operator-picked episode release the client refuses for good is not blocked" do
+    %{series: series, episode_ids: ids} = wanted_episodes([1])
+    stub_client(:bad_torrent, "hash-manual")
+
+    assert {:error, :bad_torrent} =
+             Download.grab_episodes(release(@episode_first), ids, operator_initiated: true)
+
+    assert added() == [@episode_first]
+    assert blocked(series.id) == []
   end
 
   # --- movie ---------------------------------------------------------------------------------------
@@ -103,26 +211,18 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     %{status: status, search_attempts: attempts, adds: adds()}
   end
 
-  # --- TV episode ----------------------------------------------------------------------------------
+  # --- TV episode, season pack and anime episode ---------------------------------------------------
 
-  defp outcome(:episode, reason) do
-    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all})
-    season = season_fixture(series)
-    episode = episode_fixture(season, %{episode_number: 1})
+  # The indexer offers two releases that cover the wanted episodes, the first with more seeders, so
+  # a search picks it while it is not blocked.
+  defp outcome(:episode, reason),
+    do: tv_outcome(reason, :episode, :standard, [1], [@episode_first, @episode_second])
 
-    if from_stored_intent?(reason), do: store_broken_intent(:episode, episode.id, [episode.id])
+  defp outcome(:season_pack, reason),
+    do: tv_outcome(reason, :season_pack, :standard, [1, 2], [@pack_first, @pack_second])
 
-    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
-      {:ok, [indexer_result("Show.S01E01.1080p.WEB-DL-GRP")]}
-    end)
-
-    stub_client(reason, "hash-episode")
-    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
-    assert :ok = TvPoller.poll()
-
-    %Episode{grab_id: grab_id, search_attempts: attempts} = Repo.get!(Episode, episode.id)
-    %{grabbed: not is_nil(grab_id), search_attempts: attempts, adds: adds()}
-  end
+  defp outcome(:anime_episode, reason),
+    do: tv_outcome(reason, :episode, :anime, [1], [@anime_first, @anime_second])
 
   # --- book target ---------------------------------------------------------------------------------
 
@@ -148,6 +248,49 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     %{status: status, hold_reason: hold_reason, adds: adds()}
   end
 
+  # --- TV helpers ----------------------------------------------------------------------------------
+
+  defp tv_outcome(reason, kind, media_profile, numbers, [first, second]) do
+    %{series: series, episode_ids: ids} = wanted_episodes(numbers, media_profile)
+    if from_stored_intent?(reason), do: store_broken_intent(kind, hd(ids), ids)
+    results = [indexer_result(first, 20), indexer_result(second, 10)]
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, _title, 1 -> {:ok, results} end)
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, results} end)
+
+    stub_client(reason, "hash-#{kind}")
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+    assert :ok = TvPoller.poll()
+
+    episodes = Enum.map(ids, &Repo.get!(Episode, &1))
+
+    %{
+      states: Enum.map(episodes, &Catalog.episode_state/1),
+      search_attempts: Enum.map(episodes, & &1.search_attempts),
+      added: added(),
+      blocked: blocked(series.id)
+    }
+  end
+
+  defp wanted_episodes(numbers, media_profile \\ :standard) do
+    series =
+      series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: media_profile})
+
+    season = season_fixture(series)
+    ids = Enum.map(numbers, &episode_fixture(season, %{episode_number: &1}).id)
+    %{series: series, episode_ids: ids}
+  end
+
+  defp blocked(series_id),
+    do:
+      Repo.all(
+        from b in BlockedRelease,
+          where: b.series_id == ^series_id,
+          order_by: b.id,
+          select: {b.release_title, b.reason}
+      )
+
   # --- helpers -------------------------------------------------------------------------------------
 
   # Every `add` reports to the test, so a cell whose poller never reached the client (a raise that
@@ -158,21 +301,24 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     test_pid = self()
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
-      send(test_pid, :add)
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      send(test_pid, {:add, release.title})
       if from_stored_intent?(reason), do: {:ok, remote_id}, else: {:error, reason}
     end)
 
     stub(Cinder.Download.ClientMock, :status, fn _id -> {:ok, %{state: :downloading}} end)
   end
 
-  defp adds, do: count_adds(0)
+  defp adds, do: length(added())
 
-  defp count_adds(n) do
+  # The release titles the client was asked to add, in order.
+  defp added, do: collect_added([])
+
+  defp collect_added(titles) do
     receive do
-      :add -> count_adds(n + 1)
+      {:add, title} -> collect_added([title | titles])
     after
-      0 -> n
+      0 -> Enum.reverse(titles)
     end
   end
 
@@ -200,8 +346,8 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   defp release(title),
     do: %Release{title: title, download_url: "magnet:?xt=urn:btih:#{title}", protocol: :torrent}
 
-  defp indexer_result(title),
-    do: %{title: title, size: 2_000_000_000, download_url: "magnet:?x", seeders: 10}
+  defp indexer_result(title, seeders \\ 10),
+    do: %{title: title, size: 2_000_000_000, download_url: "magnet:?#{title}", seeders: seeders}
 
   defp monitored_book_target do
     {:ok, profile} =

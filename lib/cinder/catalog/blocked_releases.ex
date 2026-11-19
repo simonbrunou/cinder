@@ -8,9 +8,11 @@ defmodule Cinder.Catalog.BlockedReleases do
   Two kinds of write:
 
     * **Non-raising** (`block_release/2`, `block_series_release/3`, `block_unplaced_pack/2`):
-      for the pollers' park paths, which run inside `isolate/2`, where a raise would re-fire
-      every tick with nothing parked. A refused or raised insert is logged and swallowed, and
-      the call returns `:ok` (mirrors `Cinder.Download.SourceRemoval.best_effort_remove/2`).
+      for the pollers' park paths and a refused TV submission (`Cinder.Download`), which run
+      inside a poller's `isolate/2`, where a raise would re-fire every tick: a park with nothing
+      parked, a submission whose reservation is never dropped. A refused or raised insert is
+      logged and swallowed, and the call returns `:ok` (mirrors
+      `Cinder.Download.SourceRemoval.best_effort_remove/2`).
     * **Strict** (`block_policy_mismatch/3`): for a caller inside a transaction whose other
       writes must not commit without the row, so it gets `{:error, changeset}` back.
 

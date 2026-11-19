@@ -791,7 +791,10 @@ defmodule Cinder.Download.TvPoller do
   # Add one chosen release to its client, guarded on free disk. Returns the episode ids the caller
   # must NOT bump: those actually grabbed, and — on a disk skip — those held for next tick (space
   # may free up, so a full disk never burns a search attempt or parks the title). A genuine grab
-  # failure returns `[]`, so those episodes back off normally.
+  # failure returns `[]`, so those episodes back off normally. That includes a release the client
+  # refused for good, which `Download` has already tried to block for the series (#1492): the bump
+  # writes the `updated_at` the search backoff reads, and the block is best-effort, so the search
+  # budget still bounds re-picking the release in a sweep that grabs and holds nothing.
   defp grab_release(release, episode_ids) do
     if Disk.grab_space_available?(release.size) do
       case Download.grab_episodes(release, episode_ids) do

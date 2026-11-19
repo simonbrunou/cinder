@@ -3137,6 +3137,7 @@ defmodule Cinder.Download.TvPollerTest do
     refute Repo.get!(Episode, unmonitored.id).grab_id
   end
 
+  # The refused release is blocked for the series (#1492), so the next tick grabs the other one.
   test "a definite add rejection releases the episode for the next search tick" do
     {_series, season} = series_tree()
     episode = episode(season, 1)
@@ -3150,6 +3151,12 @@ defmodule Cinder.Download.TvPollerTest do
            size: 2_000_000_000,
            download_url: "u",
            seeders: 5
+         },
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-OTHER",
+           size: 2_000_000_000,
+           download_url: "v",
+           seeders: 1
          }
        ]}
     end)
@@ -3169,7 +3176,11 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert :ok = TvPoller.poll()
     linked = Repo.get!(Episode, episode.id)
-    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-tv-after-rejection"
+
+    assert %Grab{
+             download_id: "hash-tv-after-rejection",
+             release_title: "Show.S01E01.1080p.WEB-DL-OTHER"
+           } = Repo.get!(Grab, linked.grab_id)
   end
 
   test "recovers a remotely accepted episode after process death without submitting twice" do

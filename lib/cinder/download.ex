@@ -35,12 +35,15 @@ defmodule Cinder.Download do
     :invalid_intent_release,
     :add_rejected
   ]
+  @refused_release_errors @permanent_submission_errors -- [:invalid_intent_release]
 
   @doc """
   The submission errors that drop a reservation for good; a book target is also held on them
   (`abandon_reserved/2`), and a movie in its search phase parks on them
-  (`Cinder.Catalog.MovieLifecycle.record_failure/2`). `CinderWeb.LiveHelpers.book_hold_reason/1`
-  words each one.
+  (`Cinder.Catalog.MovieLifecycle.record_failure/2`). For a TV release that neither an operator
+  nor the upgrade sweep picked (an intent not `operator_initiated`), Cinder tries to block the
+  release for its series on each of them but `:invalid_intent_release` (`abandon_reserved/2`).
+  `CinderWeb.LiveHelpers.book_hold_reason/1` words each one.
   """
   @spec permanent_submission_errors() :: [atom()]
   def permanent_submission_errors, do: @permanent_submission_errors
@@ -883,7 +886,8 @@ defmodule Cinder.Download do
   # release whose stored ciphertext no longer decrypts) drops the reservation and reports the
   # reason to the caller. A grab from the movie poller's search pass then parks the movie when it
   # is still in the search pass (`MovieLifecycle.record_failure/2`), and one from the TV poller's
-  # spends a search attempt.
+  # spends a search attempt, after Cinder tries to block the release for the series on each
+  # reason but `:invalid_intent_release` (below).
   #
   # For a book that report is not enough, and the difference is the missing search sweep.
   # `reconcile_pending_intents/1` discards the report, and a movie or episode it leaves in its
@@ -902,10 +906,36 @@ defmodule Cinder.Download do
     {:error, reason}
   end
 
+  # A TV release the search pass picked is blocked for its series first, on each of these reasons
+  # but `:invalid_intent_release`, which says a stored link could not be read back, not that the
+  # release is bad (#1492). This is the one place both a fresh grab and a stored intent's retry
+  # pass through. An operator-initiated intent (a release picked by hand, or the upgrade sweep's)
+  # is not blocked.
+  defp abandon_reserved(%Intent{kind: kind} = intent, reason)
+       when kind in [:episode, :season_pack] do
+    if reason in @refused_release_errors and not operator_initiated?(intent) do
+      series_id = fn -> intent_series_id(intent) end
+      Catalog.block_series_release(series_id, release_title(intent), reason)
+    end
+
+    delete_intent(intent)
+    {:error, reason}
+  end
+
   defp abandon_reserved(intent, reason) do
     delete_intent(intent)
     {:error, reason}
   end
+
+  # Raises when the episodes no longer share one series: `Catalog.block_series_release/3` logs that
+  # and records nothing.
+  defp intent_series_id(intent) do
+    {:ok, series} = Catalog.get_single_series_for_episode_ids(intent.episode_ids)
+    series.id
+  end
+
+  defp release_title(%Intent{release: %{"title" => title}}) when is_binary(title), do: title
+  defp release_title(_intent), do: nil
 
   defp hold_book_target(target_id, reason, release_title, replace?) do
     case Repo.get(BookTarget, target_id) do

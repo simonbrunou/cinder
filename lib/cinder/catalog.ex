@@ -259,6 +259,7 @@ defmodule Cinder.Catalog do
   defdelegate block_release(movie, reason), to: BlockedReleases
   defdelegate block_release_and_confirm(movie, reason), to: BlockedReleases
   defdelegate block_grab_release(grab, reason), to: Grabs
+  defdelegate block_series_release(series, title, reason), to: BlockedReleases
   defdelegate clear_stalled_blocklist(scope), to: BlockedReleases
   defdelegate blocked_release_titles(movie), to: BlockedReleases
   defdelegate blocked_release_titles_for_series(series_id), to: BlockedReleases
