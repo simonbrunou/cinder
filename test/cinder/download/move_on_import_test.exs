@@ -620,7 +620,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert_receive {:removed, "nzo-reject", [delete_files: true]}
     end
 
-    test "an unverdictable probe holds for verification and never deletes the source" do
+    test "an unverdictable probe holds for verification: no removal, no cleanup intent" do
       enable()
       enable_media_info()
       source = "/downloads/cinder-hold/Anime.Movie.mkv"
@@ -630,15 +630,19 @@ defmodule Cinder.Download.MoveOnImportTest do
       expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
       expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
 
-      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _path ->
-        flunk("rm_rf should not be called for a verification hold")
-      end)
-
+      # The poller's `isolate/2` and `SourceRemoval`'s best-effort helpers rescue every raise, so
+      # a stub that calls `flunk` would stay green when the hold attempted a removal: record each
+      # call (the stubs send to this test process from the poller's) and refute it instead.
+      record_removals(Cinder.Download.SabnzbdClientMock)
       start_supervised!({Poller, interval: 60_000})
       assert :ok = Poller.poll()
 
       assert %Movie{status: :import_failed, verification_hold_origin: :download} =
                Repo.get!(Movie, movie.id)
+
+      refute_removals()
+      # A fenced intent would have the download removed on a later tick.
+      refute Repo.get_by(Intent, kind: :movie, target_id: movie.id, status: :cleanup_pending)
     end
   end
 
