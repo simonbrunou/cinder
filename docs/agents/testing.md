@@ -88,7 +88,8 @@
   #851 records 22 more threads that lost runs to them. Both aliases stop before ExUnit with
   `mix test: no such test path: <path>` when a path under `test/` names no file or directory.
   Mix itself fails only when none of the given paths matches: on #786 a fence run with one
-  mistyped file exited 0 without running it.
+  mistyped file exited 0 without running it. A `<file>:<line>` can select a neighbour of the
+  test you meant, as a bullet below says.
 - Run a list of one-edit mutants with `scripts/mutation-check <file> <mutants.json> <test>...`.
   Its header gives the JSON shape, the checks it makes before the first mutant runs, the
   verdicts and the exit codes. Read the lines it prints under each verdict: the lines the edit
@@ -96,6 +97,23 @@
   assertion's message and the `code:` lines ExUnit prints, or the errors of a run with no result.
   On #702 a hand-written loop chained `diff && run_suite` and ran no mutant, and #1230, #1250 and
   #1254 each wrote a loop by hand.
+- Select each test a mutant must kill by name: after the test file, give one
+  `--only "test:test <name>"` per test. `<name>` is what a `--trace` run prints after `* test `:
+  the test's name, prefixed by its `describe` block's name and a space when it sits in one. Put
+  a `\` before each `$`, backtick or `"` in the name. Check that the control's `N passed` equals
+  the number of names: a mistyped name among several drops its test, and the control passes on
+  the rest. When no name matches, the control ends on `Result: 0 tests` and
+  `scripts/mutation-check` exits 2.
+- A `<file>:<line>` runs the closest test that starts at or above that line, or the whole
+  `describe` when the line is the `describe` line itself. A line above the test's own, such as
+  the blank line before it, or one that an edit above the test shifted, runs a neighbour. A
+  mutation check then tests that neighbour, and the script prints no test names for a pass. A
+  line above a file's first test, other than a `describe` line, runs no test, and
+  `mix test.unchecked` exits 0 on `Result: 0 tests`. On #1479 (for #1460)
+  `requests_test.exs:129` named the blank line above that PR's new test at line 130. `--dry-run`
+  on `6a5cd9ea` shows that line selects the test at line 114, and #1502 records three mutation
+  runs there that checked the wrong test. Before a direct `mix test.unchecked <file>:<line>` run,
+  check that `--dry-run` lists the test's own line.
 - Mutation-check every negative assertion: break the guard it fences and watch the test go red.
   Pair a refute on a collection with a positive control that proves the collection is the right
   one and populated, and refute the stem, not a guessed inflection. After a rename that changes
@@ -478,8 +496,9 @@
   #1484 (for #1444) the first exact-cap test sent its upload to 127.0.0.1:1, a real port, and the
   Standards review rejected that test.
 - A test that polls until a timer fires (a shrunk `ownership_timeout`, a lease, a TTL) runs
-  `mix test.unchecked --repeat-until-failure 1000 <file>:<line>` before review. Each repeat runs
-  the whole selection, so name the test's line. A poll that lands as the timer fires fails in a
+  `mix test.unchecked --repeat-until-failure 1000 <file> --only "test:test <name>"` before
+  review. Each repeat runs the whole selection, so select that one test by name, as the bullet
+  on selecting tests by name says. A poll that lands as the timer fires fails in a
   shape the first runs never show. On #1276 `Cinder.DataCaseOwnershipTest` passed 3 runs, then
   failed run 978 of 1000: its query reached the ownership proxy just after the proxy stopped,
   and exited `:noproc`. Its `assert_ownership_lapses/0` now counts each shape the lapse gives. From
