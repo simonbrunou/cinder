@@ -2,9 +2,10 @@ defmodule Cinder.Subtitles.SidecarTransactionResetTest do
   # Drives the sidecar replacement transaction directly, on real temp directories through the
   # `Cinder.Library.Filesystem` seam: no engine, no media probe. Crashes are a killed process at a
   # `Cinder.Test.BarrierFilesystem` barrier, or a pending record written by hand. This module
-  # covers `restore_original/2`, `reconcile/2`, `remove/3`, the `AtomicFile` writes, and which
-  # module writes the manifest's transaction fields; `Cinder.Test.SidecarTransactionCase` holds
-  # the setup and helpers it shares with its sibling modules (#1474).
+  # covers `restore_original/2`, `reconcile/2`, `remove/3` and the `AtomicFile` writes;
+  # `Cinder.Test.SidecarTransactionCase` holds the setup and helpers it shares with its sibling
+  # modules (#1474). The fence on which modules write the manifest's transaction fields is
+  # `test/code_health/manifest_writers_test.exs` (#1481).
   use Cinder.DataCase, async: false
   use Cinder.Test.SidecarTransactionCase
 
@@ -1381,44 +1382,5 @@ defmodule Cinder.Subtitles.SidecarTransactionResetTest do
       assert {:ok, :corrected, _} = manual(video, 500)
       assert File.read!(backup) == replacement
     end
-  end
-
-  test "only the transaction writes the manifest's record, journal and tombstone fields" do
-    writers =
-      ~r/Manifest\.(put_sync|clear_sync|begin_replacement_cleanup|clear_replacement_cleanup|begin_reset_cleanup|finish_reset_cleanup|put_backup_tombstone)\(/
-
-    offenders =
-      "lib/**/*.ex"
-      |> Path.wildcard()
-      |> Enum.reject(&String.starts_with?(&1, "lib/cinder/subtitles/sidecar_transaction"))
-      |> Enum.filter(&(File.read!(&1) =~ writers))
-
-    assert offenders == []
-
-    # `Manifest.put/7` opens the replacement cleanup journal; `put/5` and `put/6` do not.
-    journal_puts =
-      "lib/**/*.ex"
-      |> Path.wildcard()
-      |> Enum.reject(&String.starts_with?(&1, "lib/cinder/subtitles/sidecar_transaction"))
-      |> Enum.flat_map(&manifest_put_arities/1)
-
-    refute 7 in journal_puts
-  end
-
-  defp manifest_put_arities(file) do
-    {_ast, arities} =
-      file
-      |> File.read!()
-      |> Code.string_to_quoted!()
-      |> Macro.prewalk([], fn
-        {{:., _, [{:__aliases__, _, aliases}, :put]}, _, args} = node, acc
-        when is_list(args) ->
-          if List.last(aliases) == :Manifest, do: {node, [length(args) | acc]}, else: {node, acc}
-
-        node, acc ->
-          {node, acc}
-      end)
-
-    arities
   end
 end

@@ -36,8 +36,10 @@
 # or seed) is a FAIL: with exit 1 too. Wrong arguments exit 2.
 #
 # On the Linux host it takes about 1 minute for one small fence (a 29 s seed, then 19 to 44 s of
-# mix test, as measured on #1153), and 4 to 5 minutes when it selects
-# test/cinder/subtitles/sidecar_transaction_test.exs, whose two lib scanners make it a fence.
+# mix test, as measured on #1153), and 4 to 5 minutes when it selected
+# test/cinder/subtitles/sidecar_transaction_test.exs (sidecar_transaction_reset_test.exs after
+# #1498), whose two lib scanners made it a fence until #1481 moved them to
+# test/code_health/manifest_writers_test.exs.
 set -euo pipefail
 
 usage() {
