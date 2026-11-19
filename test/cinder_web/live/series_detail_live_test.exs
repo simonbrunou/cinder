@@ -1394,6 +1394,23 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Enum.all?(eps, & &1.monitored)
   end
 
+  test "monitoring a season of an unmonitored series turns the header badge to Monitored",
+       %{conn: conn} do
+    series = create_series(703)
+    refute series.monitored
+    season = first_season(series.id)
+    badge = "#series-detail-monitored-status-#{series.id}"
+
+    {:ok, lv, _html} = live_series(conn, series)
+    refute has_element?(lv, badge, "Monitored")
+
+    lv
+    |> element(~s|button[phx-click="toggle_season"][phx-value-id="#{season.id}"]|)
+    |> render_click()
+
+    assert has_element?(lv, badge, "Monitored")
+  end
+
   # Seasons render as native <details>; their open state used to live only in the browser DOM, so
   # any {:series_updated} reload (the refresher, a grab landing, another tab's toggle) stripped the
   # `open` attribute and snapped expanded seasons shut. The open set is now tracked server-side.

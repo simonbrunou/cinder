@@ -5,6 +5,7 @@ defmodule Cinder.CatalogAdminTest do
 
   import Mox
   import ExUnit.CaptureLog
+  import Ecto.Query
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, MovieLifecycle, Series}
@@ -1002,6 +1003,16 @@ defmodule Cinder.CatalogAdminTest do
       assert updated.monitored == false
     end
 
+    test "unmonitor: true unmarks a None series once nothing in it is monitored" do
+      {series, ep} = episode_with_file!("/tmp/ep.mkv")
+      none_series_with_unmonitored_season!(series, ep.season_id)
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _updated} = Catalog.delete_episode_file(ep, nil, unmonitor: true)
+      refute Repo.get!(Series, series.id).monitored
+    end
+
     test "no file_path returns {:error, :no_file} and makes no FS call" do
       {_series, ep} = episode_with_file!(nil)
       assert {:error, :no_file} = Catalog.delete_episode_file(ep, nil)
@@ -1013,6 +1024,20 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:error, :eacces} = Catalog.delete_episode_file(ep, nil)
       assert Repo.get(Cinder.Catalog.Episode, ep.id).file_path == "/tmp/ep.mkv"
+    end
+
+    test "a failed unlink with unmonitor: true leaves the series flag, which no broadcast would show" do
+      {series, ep} = episode_with_file!("/tmp/ep.mkv")
+      none_series_with_unmonitored_season!(series, ep.season_id)
+
+      Repo.update_all(from(e in Cinder.Catalog.Episode, where: e.id == ^ep.id),
+        set: [monitored: false]
+      )
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :eacces} end)
+
+      assert {:error, :eacces} = Catalog.delete_episode_file(ep, nil, unmonitor: true)
+      assert Repo.get!(Series, series.id).monitored
     end
 
     test "broadcasts {:series_updated, series_id}" do
@@ -1055,6 +1080,18 @@ defmodule Cinder.CatalogAdminTest do
 
   describe "delete_season_files/3" do
     setup :verify_on_exit!
+
+    # A series set to "None" that still reads monitored, with its season unmonitored, so only
+    # the episodes' own flags keep it monitored.
+    defp none_series_with_unmonitored_season!(series, season_id) do
+      Repo.update_all(from(s in Series, where: s.id == ^series.id),
+        set: [monitored: true, monitor_strategy: :none]
+      )
+
+      Repo.update_all(from(s in Cinder.Catalog.Season, where: s.id == ^season_id),
+        set: [monitored: false]
+      )
+    end
 
     defp season_with_files!(paths) do
       series =
@@ -1100,6 +1137,16 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil, unmonitor: true)
       assert Repo.get(Cinder.Catalog.Episode, e1.id).monitored == false
+    end
+
+    test "unmonitor: true unmarks a None series whose season is already unmonitored" do
+      {series, season, [_e1]} = season_with_files!(["/tmp/e1.mkv"])
+      none_series_with_unmonitored_season!(series, season.id)
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil, unmonitor: true)
+      refute Repo.get!(Series, series.id).monitored
     end
 
     test "a per-file unlink failure leaves that episode's file_path (not cleared)" do

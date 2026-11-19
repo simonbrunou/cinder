@@ -24,6 +24,7 @@ defmodule Cinder.Catalog.MetadataRefresh do
     Movie,
     Season,
     Series,
+    SeriesCatalog,
     SeriesIdentitySync
   }
 
@@ -74,6 +75,8 @@ defmodule Cinder.Catalog.MetadataRefresh do
       %Series{} = current ->
         updated = update_series_row(current, info)
         reconcile_tree(updated, fetched.seasons)
+        # Retiring a vanished episode can remove the last monitored one of a "None" series.
+        SeriesCatalog.unmark_unmonitored_series(updated.id)
 
         case SeriesIdentitySync.sync(updated, fetched) do
           :ok -> updated

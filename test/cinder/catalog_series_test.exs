@@ -418,6 +418,108 @@ defmodule Cinder.CatalogSeriesTest do
       eps = Enum.find(loaded(series.id).seasons, &(&1.id == season.id)).episodes
       assert Enum.all?(eps, & &1.monitored)
     end
+
+    # The series header and the library badge read `series.monitored`, while the TV sweep reads
+    # each episode's flag. A series set to "None" and then given back an aired episode or a season
+    # with aired episodes was searched under an "Unmonitored" badge.
+    test "monitoring an episode of an unmonitored series marks the series monitored" do
+      stub_tmdb(63)
+      {:ok, series} = Catalog.add_series(63, monitor_strategy: :none)
+      refute series.monitored
+
+      assert {:ok, _} = Catalog.set_episode_monitored(hd(episodes(series.id)), true)
+      assert Repo.get!(Series, series.id).monitored
+    end
+
+    test "monitoring a season of an unmonitored series marks the series monitored" do
+      stub_tmdb(64)
+      {:ok, series} = Catalog.add_series(64, monitor_strategy: :none)
+      refute series.monitored
+
+      season = Enum.find(loaded(series.id).seasons, &(&1.season_number == 1))
+      assert {:ok, _} = Catalog.set_season_monitored(season, true)
+      assert Repo.get!(Series, series.id).monitored
+    end
+
+    # Under "None" nothing else monitors the series: once no season and no episode is monitored,
+    # the badge reads Unmonitored again.
+    test "under :none, unmonitoring the last monitored episode unmarks the series" do
+      stub_tmdb(67)
+      {:ok, series} = Catalog.add_series(67, monitor_strategy: :none)
+      [first, second | _] = Enum.map(episodes(series.id), & &1.id)
+      toggle = &Catalog.set_episode_monitored(Repo.get!(Episode, &1), &2)
+
+      assert {:ok, _} = toggle.(first, true)
+      assert {:ok, _} = toggle.(second, true)
+      assert {:ok, _} = toggle.(first, false)
+      assert Repo.get!(Series, series.id).monitored
+
+      assert {:ok, _} = toggle.(second, false)
+      refute Repo.get!(Series, series.id).monitored
+    end
+
+    test "under :none, unmonitoring the last monitored season unmarks the series" do
+      stub_tmdb(68)
+      {:ok, series} = Catalog.add_series(68, monitor_strategy: :none)
+      season = Enum.find(loaded(series.id).seasons, &(&1.season_number == 1))
+
+      assert {:ok, season} = Catalog.set_season_monitored(season, true)
+      assert Repo.get!(Series, series.id).monitored
+
+      assert {:ok, _} = Catalog.set_season_monitored(season, false)
+      refute Repo.get!(Series, series.id).monitored
+    end
+
+    # A season keeps monitoring the episodes TMDB adds to it (`MetadataRefresh.insert_episode/3`
+    # reads `season.monitored`), so a monitored season keeps the series monitored.
+    test "under :none, a monitored season keeps the series monitored with no episode monitored" do
+      stub_tmdb(69)
+      {:ok, series} = Catalog.add_series(69, monitor_strategy: :none)
+      season = Enum.find(loaded(series.id).seasons, &(&1.season_number == 1))
+      assert {:ok, _} = Catalog.set_season_monitored(season, true)
+
+      for ep <- episodes(series.id),
+          ep.monitored,
+          do: assert({:ok, _} = Catalog.set_episode_monitored(ep, false))
+
+      assert Repo.get!(Series, series.id).monitored
+    end
+
+    # A monitored series keeps its flag when its episodes go off: under :future or :all it still
+    # monitors the seasons TMDB adds later (`MetadataRefresh.ensure_season/3`).
+    test "unmonitoring every episode and season leaves a monitored series monitored" do
+      stub_tmdb(65)
+      {:ok, series} = Catalog.add_series(65, monitor_strategy: :all)
+      assert series.monitored
+
+      assert_unmonitoring_keeps(series.id, true)
+    end
+
+    # The state series 108 reached on prod: the series flag off, its episodes monitored.
+    test "unmonitoring every episode and season leaves an unmonitored series unmonitored" do
+      stub_tmdb(66)
+      {:ok, series} = Catalog.add_series(66, monitor_strategy: :all)
+      Repo.update_all(from(s in Series, where: s.id == ^series.id), set: [monitored: false])
+      assert Enum.any?(episodes(series.id), & &1.monitored)
+
+      assert_unmonitoring_keeps(series.id, false)
+    end
+  end
+
+  # Unmonitors each episode, then each season, of `series_id`, checking the series flag after
+  # every toggle.
+  defp assert_unmonitoring_keeps(series_id, monitored?) do
+    for ep <- episodes(series_id) do
+      assert {:ok, _} = Catalog.set_episode_monitored(ep, false)
+      assert Repo.get!(Series, series_id).monitored == monitored?
+    end
+
+    for season <- loaded(series_id).seasons do
+      assert {:ok, _} = Catalog.set_season_monitored(season, false)
+      assert Repo.get!(Series, series_id).monitored == monitored?
+    end
+
+    refute Enum.any?(episodes(series_id), & &1.monitored)
   end
 
   describe "language fields" do

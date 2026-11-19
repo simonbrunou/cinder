@@ -241,11 +241,17 @@ defmodule Cinder.Catalog.TitleDeletion do
       fresh = Repo.get(Episode, episode.id) || Repo.rollback(:stale_entry)
       successful = successful_paths(results)
 
-      Repo.all(from e in Episode, where: e.season_id == ^fresh.season_id)
-      |> Enum.filter(&shares_path?(&1, results))
-      |> Enum.each(&reconcile_deleted_paths(&1, successful, unmonitor?))
+      outcomes =
+        Repo.all(from e in Episode, where: e.season_id == ^fresh.season_id)
+        |> Enum.filter(&shares_path?(&1, results))
+        |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
 
       updated = Repo.get!(Episode, fresh.id)
+
+      # Only a cleared episode unmonitors, and it announces the series, so the unmark never
+      # changes the badge without a broadcast.
+      if unmonitor? and :cleared in outcomes,
+        do: SeriesCatalog.unmark_unmonitored_series(Episodes.series_id(updated))
 
       Audit.log_or_rollback(
         actor,
@@ -394,6 +400,7 @@ defmodule Cinder.Catalog.TitleDeletion do
         |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
 
       cleared_count = Enum.count(outcomes, &(&1 == :cleared))
+      if unmonitor?, do: SeriesCatalog.unmark_unmonitored_series(season.series_id)
 
       Audit.log_or_rollback(
         actor,

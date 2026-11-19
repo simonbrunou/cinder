@@ -426,17 +426,84 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   @doc """
-  Sets one episode's `monitored` flag and broadcasts `{:series_updated, series_id}`. Unmonitoring
-  the series' last monitored episode lifts its anime hold (`lift_unmonitored_anime_hold/1`).
+  Sets one episode's `monitored` flag and broadcasts `{:series_updated, series_id}`. Monitoring
+  it sets its series' `monitored` flag too, in the same transaction. Unmonitoring it clears that
+  flag under "None" once nothing in the series is monitored (`unmark_unmonitored_series/1`), and
+  unmonitoring the series' last monitored episode lifts its anime hold
+  (`lift_unmonitored_anime_hold/1`).
   """
   def set_episode_monitored(%Episode{} = episode, monitored?) do
-    with {:ok, episode} <-
-           episode |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
-      series_id = Episodes.series_id(episode)
+    result =
+      Repo.transaction(fn ->
+        case episode |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
+          {:ok, updated} ->
+            series_id = Episodes.series_id(updated)
+            monitor_series(series_id, monitored?)
+            {updated, series_id}
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, {episode, series_id}} <- result do
       Events.series_updated(series_id)
       unless monitored?, do: lift_unmonitored_anime_hold(series_id)
       {:ok, episode}
     end
+  end
+
+  # The series header and the library read `series.monitored`; the TV sweep reads each episode's
+  # flag. Monitoring an episode or a season of a series set to "None" puts its aired episodes back
+  # in the sweep's wanted set, so the series reads monitored too, as a request approval marks it
+  # (`mark_series_monitored/1`).
+  # Unmonitoring clears the flag only under `:none`, once no season and no episode of the series is
+  # monitored: a monitored season still monitors the regular episodes TMDB adds to it, and under
+  # `:all` or `:future` the series still monitors the seasons TMDB adds later. Direct writes, so a
+  # stale caller struct cannot skip them.
+  defp monitor_series(nil, _monitored?), do: :ok
+
+  defp monitor_series(series_id, true = _monitored?) do
+    Repo.update_all(from(s in Series, where: s.id == ^series_id and not s.monitored),
+      set: [monitored: true, updated_at: DateTime.utc_now(:second)]
+    )
+
+    :ok
+  end
+
+  defp monitor_series(series_id, false = _monitored?), do: unmark_unmonitored_series(series_id)
+
+  @doc """
+  Clears `series.monitored` on a series set to "None" once no season and no episode of it is
+  monitored, so its header and library badge stop reading "Monitored". Call it inside the
+  transaction of a write that unmonitors episodes or seasons. A series under "All episodes" or
+  "Future episodes" keeps its flag. Returns `:ok`.
+  """
+  def unmark_unmonitored_series(nil), do: :ok
+
+  def unmark_unmonitored_series(series_id) do
+    monitored_season =
+      from season in Season,
+        where: season.series_id == ^series_id and season.monitored,
+        select: 1
+
+    monitored_episode =
+      from e in Episode,
+        join: season in Season,
+        on: season.id == e.season_id,
+        where: season.series_id == ^series_id and e.monitored,
+        select: 1
+
+    Repo.update_all(
+      from(s in Series,
+        where:
+          s.id == ^series_id and s.monitored and s.monitor_strategy == :none and
+            not exists(subquery(monitored_season)) and not exists(subquery(monitored_episode))
+      ),
+      set: [monitored: false, updated_at: DateTime.utc_now(:second)]
+    )
+
+    :ok
   end
 
   @doc """
@@ -462,15 +529,21 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   @doc """
   Sets a season's `monitored` flag and cascades it to every episode in one transaction, then
-  broadcasts `{:series_updated, series_id}`. Unmonitoring the series' last monitored episode lifts
-  its anime hold (`lift_unmonitored_anime_hold/1`).
+  broadcasts `{:series_updated, series_id}`. Monitoring it sets its series' `monitored` flag too,
+  in the same transaction. Unmonitoring it clears that flag under "None" once nothing in the
+  series is monitored (`unmark_unmonitored_series/1`), and unmonitoring the series' last monitored
+  episode lifts its anime hold (`lift_unmonitored_anime_hold/1`).
   """
   def set_season_monitored(%Season{} = season, monitored?) do
     result =
       Repo.transaction(fn ->
         case write_season_monitored(season, monitored?) do
-          {:ok, updated} -> updated
-          {:error, reason} -> Repo.rollback(reason)
+          {:ok, updated} ->
+            monitor_series(updated.series_id, monitored?)
+            updated
+
+          {:error, reason} ->
+            Repo.rollback(reason)
         end
       end)
 

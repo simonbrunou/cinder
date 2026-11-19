@@ -682,6 +682,24 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.get!(Episode, keep.id).title == "Kept"
   end
 
+  test "retiring a None series' last monitored episode unmarks the series" do
+    s = series(:none, %{monitored: true})
+    sn = season(s, 1)
+    Repo.update_all(from(x in Season, where: x.id == ^sn.id), set: [monitored: false])
+    episode(sn, %{tmdb_episode_id: 561, episode_number: 1, monitored: false})
+
+    gone =
+      episode(sn, %{tmdb_episode_id: 562, episode_number: 2, monitored: true, air_date: @past})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 561, episode_number: 1, title: "Kept", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    refute Repo.get(Episode, gone.id)
+    refute Repo.get!(Series, s.id).monitored
+  end
+
   test "a replacement at the same slot preserves a direct episode monitor" do
     s = series(:none)
     sn = season_fixture(s, %{season_number: 1, monitored: false})
