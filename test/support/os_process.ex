@@ -2,7 +2,7 @@ defmodule Cinder.Test.OsProcess do
   @moduledoc """
   Tells whether an OS process a test spawned has stopped running code, for the tests that prove
   a kill reached a process the command forked (`Cinder.BoundedCommandTest`, `Cinder.DiskTest`,
-  `Cinder.Subtitles.Sync.FfsubsyncTest`). `await_record/1` waits for the pid a stub records,
+  `Cinder.MutationCheckScriptTest`, `Cinder.Subtitles.Sync.FfsubsyncTest`). `await_record/1` waits for the pid a stub records,
   its own or its child's, for the tests whose bound can kill that stub before it writes it
   (`Cinder.BoundedCommandTest`, `Cinder.DiskTest`, `Cinder.Library.MediaInfo.FfprobeTest`,
   `Cinder.Subtitles.Sync.FfsubsyncTest`).

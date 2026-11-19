@@ -24,6 +24,11 @@ Audiobookshelf, Booklore) is reached only through a behaviour, never directly fr
   not in a context module.
 - An adapter's `health/0` backs the `/settings` Test button; its timeout rule is in
   [configuration.md](configuration.md).
+- The mailer switches to SMTP only once an admin sets the SMTP host in `/settings`, which no env
+  var sets. Until then prod keeps `Swoosh.Adapters.Local` with its mailbox unstarted
+  (`config :swoosh, local: false`), so a delivery there exits `:noproc`. A caller of the mailer
+  catches exits, as `Cinder.Accounts.UserNotifier` and `Cinder.Notifier.Email` do. Before #1545
+  an email change that sent its confirmation crashed the settings page on prod (#1535).
 - Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
   `imdb_id` through for this.
 

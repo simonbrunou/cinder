@@ -80,6 +80,10 @@ site:
   email out. On #1214 the first renderer passed Assent's strings through `sanitize_log/1`, and
   the mask that followed (quoted values, words holding `@`) still leaked three shapes: two review
   rounds, about 24 minutes from the first finding to a clean re-check.
+- A failed mail delivery logs only `Cinder.Mailer.reason_tag/1`, the exception module or the
+  reason's atom tag. Its reason can hold the SMTP password or the whole email with its
+  confirm-link token, as the comment above `Cinder.Accounts.UserNotifier`'s `deliver/3` says, and
+  `HTTPPolicy.sanitize_log/1` only removes line breaks and cuts the text at 500 bytes (#1544).
 - Session and LiveView signing salts are derived from `secret_key_base` at runtime in
   `config/runtime.exs`, so nothing crypto-related is committed. `signing_salt` is a salt, not a
   secret; the secret is `secret_key_base`.

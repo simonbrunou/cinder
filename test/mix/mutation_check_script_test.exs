@@ -10,6 +10,8 @@ defmodule Cinder.MutationCheckScriptTest do
   # script removes its record.
   use ExUnit.Case, async: true
 
+  alias Cinder.Test.OsProcess
+
   @tools ~w(bash cat cp rm mkdir sleep seq stat python3)
 
   @script Path.expand("scripts/mutation-check")
@@ -30,7 +32,17 @@ defmodule Cinder.MutationCheckScriptTest do
   killed() { printf '\\nResult: 1/2 passed\\nFailed: 1 test\\n'; exit 2; }
   body=$(cat "$MUT_TARGET")
   case "$body" in
-    *SLEEP*) cp "$MUT_TARGET" "$MUT_SEEN"; exec sleep 30 ;;
+    *RESULTHANG*) printf '\\nResult: 1/2 passed\\n'; exec sleep 30 ;;
+    *PASSHANG*) printf '\\nResult: 2 passed\\n'; exec sleep 30 ;;
+    *HANG*)
+      # A grandchild in the run's process group, then a wait on it. The test reads its pid.
+      printf 'hang start\\n'; sleep 30 & echo $! > "$MUT_CHILD"
+      cp "$MUT_TARGET" "$MUT_SEEN"; wait ;;
+    *SLOWKILL*) sleep 1; killed ;;
+    *SLOWPASS*) sleep 3; printf '\\nResult: 2 passed\\n' ;;
+    # A process left behind that writes a failing result into the output it inherited.
+    *LATE*) (sleep 1; printf 'Result: 1/2 passed\\n') & printf '\\nResult: 2 passed\\n' ;;
+    *STDERR*) printf 'err line\\n' >&2; printf 'out line\\n'; exit 1 ;;
     *SYNTAX*) printf 'noise\\n** (SyntaxError) invalid syntax\\n'; exit 1 ;;
     *ZERO*) printf '\\nResult: 0 tests, 4 excluded\\n'; exit 1 ;;
     *NONE*) printf '\\nResult: 0 tests\\n' ;;
@@ -261,7 +273,9 @@ defmodule Cinder.MutationCheckScriptTest do
       {"PATH", ctx.bin},
       {"MUTATION_CHECK_TMPDIR", ctx.tmp},
       {Cinder.MutationFailures.env_var(), nil},
+      {"MUTATION_CHECK_TIMEOUT", nil},
       {"MUT_TARGET", ctx.target},
+      {"MUT_CHILD", Path.join(ctx.dir, "child.pid")},
       {"MUT_LOG", ctx.log},
       {"MUT_SEEN", Path.join(ctx.dir, "seen.ex")},
       {"MUT_MODES", Path.join(ctx.dir, "modes.log")}
@@ -279,8 +293,19 @@ defmodule Cinder.MutationCheckScriptTest do
     path
   end
 
-  defp run(ctx, args) do
-    System.cmd("python3", ["-I", @script | args], env: env(ctx), stderr_to_stdout: true)
+  defp run(ctx, args, limit \\ nil) do
+    env = List.keystore(env(ctx), "MUTATION_CHECK_TIMEOUT", 0, {"MUTATION_CHECK_TIMEOUT", limit})
+    System.cmd("python3", ["-I", @script | args], env: env, stderr_to_stdout: true)
+  end
+
+  # Whether the grandchild the HANG marker starts in the run's process group is dead.
+  defp grandchild_dead?(ctx) do
+    ctx.dir
+    |> Path.join("child.pid")
+    |> File.read!()
+    |> String.trim()
+    |> String.to_integer()
+    |> OsProcess.dead?()
   end
 
   # The failure record path the script gave each call of the stub.
@@ -807,8 +832,8 @@ defmodule Cinder.MutationCheckScriptTest do
 
   for signal <- ["TERM", "INT"] do
     @tag :tmp_dir
-    test "restores the file and exits 130 on SIG#{signal} during a mutant's run", ctx do
-      list = mutants(ctx, [{"slow", "x + 1", "x + 1 # SLEEP"}])
+    test "restores the file, kills the run's group and exits 130 on SIG#{signal}", ctx do
+      list = mutants(ctx, [{"slow", "x + 1", "x + 1 # HANG"}])
       seen = Path.join(ctx.dir, "seen.ex")
 
       # A background job in a non-interactive bash starts with SIGINT ignored, so the SIGINT
@@ -822,9 +847,142 @@ defmodule Cinder.MutationCheckScriptTest do
       {out, 0} = System.cmd("bash", ["-c", shell, @script, ctx.target, list], env: env(ctx))
 
       assert out =~ "exit=130"
-      assert File.read!(seen) =~ "# SLEEP"
+      assert File.read!(seen) =~ "# HANG"
       assert File.read!(ctx.target) == @base
       assert_records_removed(ctx)
+      assert grandchild_dead?(ctx)
     end
+  end
+
+  # The control run of the stub takes milliseconds, so a 5 s limit leaves it seconds on a
+  # loaded host, and a HANG run outlives it by 25 s.
+  @tag :tmp_dir
+  test "a mutant's run past the limit is HUNG, and the next mutant runs on the original", ctx do
+    list = mutants(ctx, [{"hang", "x + 1", "x + 1 # HANG"}, {"next", ":ok", ":ok # BROKEN"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"], "5")
+
+    assert code == 1, out
+    assert out =~ "control: Result: 2 passed (limit 5 s a run)\n"
+    assert out =~ "hang: HUNG, past the 5 s limit\n"
+    assert out =~ "    output: hang start\n"
+    assert out =~ "next: killed, Result: 1/2 passed\n"
+    assert out =~ "1 of 2 killed"
+    assert calls(ctx) == 3
+    assert File.read!(ctx.target) == @base
+    assert_records_removed(ctx)
+  end
+
+  @tag :tmp_dir
+  test "a run that printed a failing result before the limit is HUNG", ctx do
+    list = mutants(ctx, [{"late", "x + 1", "x + 1 # RESULTHANG"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"], "5")
+
+    assert code == 1, out
+    assert out =~ "late: HUNG, past the 5 s limit\n"
+    assert out =~ "0 of 1 killed"
+  end
+
+  # The HANG run would end by itself after 30 s. The script ends within 5 s of the 5 s limit,
+  # counted from the HANG run's pid file, so the control run's time does not count.
+  @tag :tmp_dir
+  test "the kill at the limit reaches the run's whole process group", ctx do
+    list = mutants(ctx, [{"hang", "x + 1", "x + 1 # HANG"}])
+
+    {out, 1} = run(ctx, [ctx.target, list, "t.exs"], "5")
+
+    started = File.stat!(Path.join(ctx.dir, "child.pid"), time: :posix).mtime
+    assert out =~ "hang: HUNG"
+    assert System.os_time(:second) - started < 10
+    assert grandchild_dead?(ctx)
+  end
+
+  # PASSHANG prints a passing result before it hangs, as a VM that never exits after ExUnit.
+  for marker <- ["HANG", "PASSHANG"] do
+    @tag :tmp_dir
+    test "exits 2 when the control run passes the limit after #{marker}", ctx do
+      File.write!(ctx.target, unquote(marker) <> " " <> @base)
+
+      {out, code} = run(ctx, [ctx.target, mutants(ctx, [{"k", "x + 1", "x"}]), "t.exs"], "2")
+
+      assert code == 2, out
+      assert out =~ "control run on the unchanged file did not pass: past the 2 s limit"
+      assert calls(ctx) == 1
+      assert_records_removed(ctx)
+    end
+  end
+
+  @tag :tmp_dir
+  test "a run that takes a second under a 60 s limit keeps its verdict", ctx do
+    list = mutants(ctx, [{"slow", "x + 1", "x + 1 # SLOWKILL"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"], "60")
+
+    assert code == 0, out
+    assert out =~ "slow: killed, Result: 1/2 passed\n"
+  end
+
+  # The first run leaves a process that writes a failing result 1 s later; the second run
+  # passes after 3 s.
+  @tag :tmp_dir
+  test "a process an earlier run left behind cannot change a later run's verdict", ctx do
+    list = mutants(ctx, [{"late", "x + 1", "x + 1 # LATE"}, {"next", ":ok", ":ok # SLOWPASS"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+    assert out =~ "late: SURVIVED, Result: 2 passed\n"
+    assert out =~ "next: SURVIVED, Result: 2 passed\n"
+  end
+
+  @tag :tmp_dir
+  test "reads a run's stderr after its stdout", ctx do
+    list = mutants(ctx, [{"err", "x + 1", "x + 1 # STDERR"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+    assert out =~ "+def rule(x), do: x + 1 # STDERR\n    output: out line\n    output: err line\n"
+  end
+
+  @tag :tmp_dir
+  test "takes a limit from 1 to 86400, leading zeros allowed", ctx do
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+
+    for {limit, shown} <- [{"1", "1"}, {"05", "5"}, {"86400", "86400"}] do
+      {out, code} = run(ctx, [ctx.target, list, "t.exs"], limit)
+      assert {limit, code} == {limit, 0}, out
+      assert out =~ "control: Result: 2 passed (limit #{shown} s a run)\n"
+    end
+  end
+
+  @tag :tmp_dir
+  test "takes 600 s a run when MUTATION_CHECK_TIMEOUT is unset or empty", ctx do
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+    env = env(ctx)
+
+    # A port's env option unsets a variable given an empty value, so bash sets the empty one.
+    for prefix <- ["", "MUTATION_CHECK_TIMEOUT= "] do
+      shell = ~s(#{prefix}exec python3 -I "$0" "$@")
+      args = ["-c", shell, @script, ctx.target, list, "t.exs"]
+      {out, code} = System.cmd("bash", args, env: env, stderr_to_stdout: true)
+      assert code == 0, out
+      assert out =~ "control: Result: 2 passed (limit 600 s a run)\n"
+    end
+  end
+
+  @tag :tmp_dir
+  test "exits 2 and runs nothing on a limit that is not a whole number from 1 to 86400", ctx do
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+    huge = String.duplicate("9", 309)
+
+    for limit <- ["0", "00", "86401", huge, "-5", "1.5", "abc", " 5", "5 "] do
+      {out, code} = run(ctx, [ctx.target, list, "t.exs"], limit)
+      assert {limit, code} == {limit, 2}, out
+      assert out =~ "MUTATION_CHECK_TIMEOUT is not a whole number of seconds from 1 to 86400"
+    end
+
+    assert calls(ctx) == 0
   end
 end

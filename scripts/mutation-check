@@ -13,6 +13,14 @@ unchanged file as a control, which must pass at least one test. Then, for each m
 mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
 matches the wrong text proves nothing, so read them.
 
+Each run gets MUTATION_CHECK_TIMEOUT seconds, a whole number from 1 to 86400 (MAX_LIMIT), 600
+when unset or empty, which the control line prints. Past it, the script sends SIGKILL to the
+run's process group, which the run leads in a session of its own, and reads the output the run
+left. The kill misses a program the BEAM starts
+through a port, since `erl_child_setup` gives it a session of its own. A mutant's run past the
+limit gets the HUNG verdict, and the next mutant runs on the file rewritten from the original. A
+control run past the limit exits 2.
+
 Under a killed mutant it then prints the failures from the run's failure record, not from its
 output, where a line a passing test prints can look like a failure header. Before each run the
 script empties a file in a folder of its own and names it in the CINDER_MUTATION_FAILURES env var.
@@ -33,22 +41,25 @@ many it left out. When the record holds no block, because the formatter did not 
 test that runs another `mix test` adds that run's failures to the record. When it ends, the
 script removes the folder, and ignores an error doing so.
 
-Under NO RESULT it prints the run's first 5 error lines from its output, those that start with
-`error:` or `** (` after any blanks, or, when it has none, its last 5 non-blank lines
-(`output: ...`).
+Under NO RESULT and HUNG it prints the run's first 5 error lines from its output, stdout before
+stderr, those that start with `error:` or `** (` after any blanks, or, when it has none, its last
+5 non-blank lines (`output: ...`). The output goes to two files in the record's folder, made
+anew for each run, so a process an earlier run left behind writes to that run's files only.
 
   killed     the run ends on a `Result:` line that ExUnit prints when a test failed
              (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
   SURVIVED   the run exits 0 on a `Result: N passed` line: no test covers the edit, or the
              mutant changes nothing;
   NO RESULT  any other run, such as a compile error before ExUnit or `Result: 0 tests`:
-             rewrite the mutant or the test arguments.
+             rewrite the mutant or the test arguments;
+  HUNG       the run passed the time limit, whatever it printed before.
 
-Exit 0: every mutant killed. 1: a mutant survived or had no result. 2: wrong arguments, a file
-or mutant list it cannot read, an `old` that does not occur exactly once, no `mix` on PATH (run
-it through `nix develop`), a record folder it cannot make, a control run that does not pass,
-a <file> it cannot write or restore, a failure record it cannot empty, or a stdout closed early
-(as by `| head`). 130: a signal stopped the run.
+Exit 0: every mutant killed. 1: a mutant survived, had no result or hung. 2: wrong arguments, a
+file or mutant list it cannot read, an `old` that does not occur exactly once, a
+MUTATION_CHECK_TIMEOUT that is not a whole number from 1 to 86400, no `mix` on PATH (run it
+through `nix develop`), a record folder it cannot make, a control run that does not pass or
+passes the limit, a <file> it cannot write or restore, a failure record it cannot empty, or a
+stdout closed early (as by `| head`). 130: a signal stopped the run.
 """
 import difflib
 import json
@@ -64,6 +75,10 @@ from pathlib import Path
 # The env var `Cinder.MutationFailures` (test/support/mutation_failures.ex) reads.
 RECORD_ENV = "CINDER_MUTATION_FAILURES"
 MESSAGE_CAP = 10
+# The env var that sets each run's time limit in seconds, and the limit when it is unset.
+LIMIT_ENV = "MUTATION_CHECK_TIMEOUT"
+DEFAULT_LIMIT = 600
+MAX_LIMIT = 86400
 NO_RECORD = "no failure record: Cinder.MutationFailures wrote no failure block"
 
 # ExUnit prints `N/M passed` only when a test failed, `N passed` when every test passed, and
@@ -121,16 +136,54 @@ def load(argv):
     return path, mutants, tests, path.read_bytes()
 
 
-def run_tests(tests, record):
-    """Empties `record`, then runs the tests with RECORD_ENV naming it."""
+def time_limit():
+    """The seconds LIMIT_ENV gives, DEFAULT_LIMIT when unset or empty; ValueError otherwise."""
+    value = os.environ.get(LIMIT_ENV) or str(DEFAULT_LIMIT)
+    if not re.fullmatch(r"[0-9]+", value) or not 1 <= int(value) <= MAX_LIMIT:
+        raise ValueError(f"{LIMIT_ENV} is not a whole number of seconds from 1 to {MAX_LIMIT}: "
+                         f"{value!r}")
+    return int(value)
+
+
+def run_tests(tests, record, limit):
+    """Empties `record`, then runs the tests with RECORD_ENV naming it, for at most `limit`
+    seconds. Returns the exit code (None past the limit), the last `Result:` line and the
+    output, stdout before stderr."""
     record.write_bytes(b"")
     env = {**os.environ, RECORD_ENV: str(record)}
-    run = subprocess.run(
-        ["mix", "test.unchecked", *tests], capture_output=True, text=True, env=env
-    )
-    output = (run.stdout + run.stderr).splitlines()
+    # The output goes to files, not pipes: a process that outlives the kill and holds a pipe
+    # would block the read. Each run gets new files, so a process an earlier run left behind
+    # writes to that run's files, which the script no longer reads.
+    out, err = record.with_name("stdout.txt"), record.with_name("stderr.txt")
+    out.unlink(missing_ok=True)
+    err.unlink(missing_ok=True)
+    with out.open("xb") as stdout, err.open("xb") as stderr:
+        run = subprocess.Popen(
+            ["mix", "test.unchecked", *tests],
+            stdout=stdout,
+            stderr=stderr,
+            env=env,
+            start_new_session=True,
+        )
+    try:
+        code = run.wait(timeout=limit)
+    except subprocess.TimeoutExpired:
+        code = None
+    finally:
+        # Past the limit, or when a signal stops the script during the wait: the run is in a
+        # session of its own, so it would not die with the script. The leader, unreaped until
+        # the wait below, keeps the group alive even once it exits, so the kill finds the
+        # group. A poll() here could reap a leader that just exited and leave its group alive.
+        if run.returncode is None:
+            os.killpg(run.pid, signal.SIGKILL)
+            run.wait()
+    output = [
+        line
+        for path in (out, err)
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
+    ]
     results = [line for line in output if line.startswith("Result:")]
-    return run.returncode, (results[-1] if results else None), output
+    return code, (results[-1] if results else None), output
 
 
 def read_record(record):
@@ -195,7 +248,7 @@ def reasons(outcome, output, record):
     """The lines that say why: each recorded failure for a kill, the errors for no result."""
     if outcome == "killed":
         return failures(read_record(record)) or [NO_RECORD]
-    if outcome == "NO RESULT":
+    if outcome in ("NO RESULT", "HUNG"):
         errors = [line.strip() for line in output if ERROR.match(line)]
         lines = errors[:5] or [line for line in output if line.strip()][-5:]
         return [f"output: {line}" for line in lines]
@@ -212,6 +265,8 @@ def restore(path, original):
 
 
 def verdict(code, result):
+    if code is None:
+        return "HUNG"
     if KILLED.match(result or ""):
         return "killed"
     if code == 0 and PASSED.match(result or ""):
@@ -234,6 +289,11 @@ def main(argv):
     if bad:
         print(f"`old` does not occur exactly once in {path}: {', '.join(bad)}", file=sys.stderr)
         return 2
+    try:
+        limit = time_limit()
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
 
     def stop(signum, _frame):
         print(f"stopped by signal {signum}", file=sys.stderr)
@@ -250,35 +310,42 @@ def main(argv):
         print(f"cannot make a folder for the failure record: {error}", file=sys.stderr)
         return 2
     try:
-        return check(path, mutants, tests, text, original, folder / "failures.txt")
+        return check(path, mutants, tests, text, original, folder / "failures.txt", limit)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def check(path, mutants, tests, text, original, record):
+def status(code, result, limit):
+    """What a run ended on: past the limit, its `Result:` line, else its exit code."""
+    if code is None:
+        return f"past the {limit} s limit"
+    return result or f"exit {code}"
+
+
+def check(path, mutants, tests, text, original, record, limit):
     """The control run, then each mutant's run and its lines; returns the exit status."""
     try:
-        code, result, _output = run_tests(tests, record)
+        code, result, _output = run_tests(tests, record, limit)
     except OSError as error:
         print(f"cannot run mix or empty its failure record: {error}", file=sys.stderr)
         return 2
     if code != 0 or not PASSED.match(result or ""):
-        print(f"control run on the unchanged file did not pass: {result or f'exit {code}'}",
+        print(f"control run on the unchanged file did not pass: {status(code, result, limit)}",
               file=sys.stderr)
         return 2
 
     missed, failure = 0, None
     try:
-        print(f"control: {result}", flush=True)
+        print(f"control: {result} (limit {limit} s a run)", flush=True)
         for m in mutants:
             mutated = text.replace(m["old"], m["new"])
             path.write_bytes(mutated.encode("utf-8"))
-            code, result, output = run_tests(tests, record)
+            code, result, output = run_tests(tests, record, limit)
             outcome = verdict(code, result)
             missed += outcome != "killed"
             diff = difflib.unified_diff(text.splitlines(), mutated.splitlines(), lineterm="", n=0)
             changed = [line for line in list(diff)[2:] if not line.startswith("@@")]
-            print(f"{m['label']}: {outcome}, {result or f'exit {code}'}", flush=True)
+            print(f"{m['label']}: {outcome}, {status(code, result, limit)}", flush=True)
             for line in changed + reasons(outcome, output, record):
                 print(f"    {line}", flush=True)
         print(f"{len(mutants) - missed} of {len(mutants)} killed", flush=True)
