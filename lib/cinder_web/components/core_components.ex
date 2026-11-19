@@ -820,7 +820,8 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:episode, :wanted), do: {gettext("Wanted"), "badge-warning", "hero-eye"}
   defp badge_spec(:episode, :upcoming), do: {gettext("Upcoming"), "badge-ghost", "hero-calendar"}
 
-  # The sweep exhausted its search attempts and skips this episode until a manual Search.
+  # The sweep exhausted its search attempts and skips this episode until a manual Search or,
+  # with the Rehunter on, its first pass after the cooldown.
   defp badge_spec(:episode, :search_parked),
     do: {gettext("Search failed"), "badge-error", "hero-exclamation-triangle"}
 

@@ -22,7 +22,8 @@ defmodule Cinder.Download.TvPoller do
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
   budget (a download's blips don't starve its import). An unavailable policy probe preserves the
   content in a durable verification hold at that bound. The search phase backs off per
-  `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
+  `episode.search_attempts`/`updated_at` like the movie poller, with gaps that grow with the
+  attempts (`search_gap/2`) where the movie poller's stay flat, and an episode parks
   (derived `:search_parked`) at `Catalog.search_budget/0` — the crossing is warned +
   announced by Catalog at the counter's write site, covering every bump path.
   """
@@ -567,12 +568,26 @@ defmodule Cinder.Download.TvPoller do
         &(MapSet.member?(pending, &1.id) or
             &1.search_attempts >= Catalog.search_budget())
       )
-      |> Enum.filter(&search_due?(&1, retry_after))
+      |> Enum.filter(&search_due?(&1, search_gap(&1, retry_after)))
       |> Enum.group_by(& &1.season.series.id)
       |> Enum.reduce(0, &search_series_after_check/2)
 
     :ok
   end
+
+  # How long a wanted episode waits after its last fruitless search, as a multiple of
+  # `search_retry_after` (60 s by default) picked by its `search_attempts`: 1 min, 4 min and
+  # 16 min, then 6 h. An episode turns wanted at the start of its air date in the household's
+  # timezone, often hours before it airs, and a flat 60 s spent the whole search budget in about
+  # 10 minutes. With these gaps the budget lasts about 36 h. The three short gaps still retry a
+  # failed indexer call soon. 0 keeps every episode due (tests).
+  @search_gap_multipliers [1, 4, 16]
+  @search_gap_cap_multiplier 360
+
+  defp search_gap(%Episode{search_attempts: attempts}, retry_after) when attempts >= 1,
+    do: retry_after * Enum.at(@search_gap_multipliers, attempts - 1, @search_gap_cap_multiplier)
+
+  defp search_gap(_episode, retry_after), do: retry_after
 
   defp search_series_after_check({series_id, episodes}, checks) do
     {episodes, checks} = check_library_first(series_id, episodes, checks)

@@ -4175,4 +4175,59 @@ defmodule Cinder.Download.TvPollerTest do
       assert Repo.all(BlockedRelease) == []
     end
   end
+
+  # A flat 60 s spent the whole search budget about 10 minutes after an episode's air date
+  # began, hours before a US episode airs. The gaps grow to 1, 4 and 16 times the base, then
+  # stay at 360 times it: with the 60 s default, 1 min, 4 min, 16 min, then 6 h.
+  test "the wait before each next search grows with the episode's search attempts, up to a cap" do
+    assert_search_gaps(60, [{1, 60}, {2, 240}, {3, 960}, {4, 21_600}, {9, 21_600}])
+  end
+
+  test "the search gaps and their cap scale with search_retry_after" do
+    assert_search_gaps(30, [{1, 30}, {4, 10_800}])
+  end
+
+  # For each `{attempts, gap}`, one episode last searched 30 s short of `gap` and one 30 s past
+  # it, each in its own series with its own tvdb id. One poll must search the second only.
+  defp assert_search_gaps(retry_after, gaps) do
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn tvdb_id, _title, _season ->
+      send(test_pid, {:searched, tvdb_id})
+      {:ok, []}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+
+    now = DateTime.utc_now(:second)
+
+    rows =
+      for {{attempts, gap}, index} <- Enum.with_index(gaps),
+          {label, age} <- [early: gap - 30, due: gap + 30] do
+        tvdb_id = 1_000 + index * 2 + if(label == :due, do: 1, else: 0)
+        season = season_fixture(series_fixture(%{tvdb_id: tvdb_id}))
+        ep = episode(season, 1, air_date: ~D[2001-01-01])
+
+        Repo.update_all(from(e in Episode, where: e.id == ^ep.id),
+          set: [search_attempts: attempts, updated_at: DateTime.add(now, -age)]
+        )
+
+        {attempts, label, tvdb_id, ep.id}
+      end
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: retry_after})
+    assert :ok = TvPoller.poll()
+
+    for {attempts, label, tvdb_id, id} <- rows do
+      case label do
+        :due ->
+          assert_received {:searched, ^tvdb_id}
+          assert Repo.get!(Episode, id).search_attempts == attempts + 1
+
+        :early ->
+          refute_received {:searched, ^tvdb_id}
+          assert Repo.get!(Episode, id).search_attempts == attempts
+      end
+    end
+  end
 end

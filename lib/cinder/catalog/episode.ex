@@ -53,6 +53,21 @@ defmodule Cinder.Catalog.Episode do
     timestamps(type: :utc_datetime)
   end
 
+  @doc """
+  Keeps the row's `updated_at` through an update of provider metadata. `updated_at` is the TV
+  sweep's search clock: `Cinder.Download.TvPoller`'s retry spacing and the Rehunter's cooldown
+  (`Cinder.Catalog.EpisodeSearch.rehunt_parked_episodes/1`) read it. The metadata refresh runs at
+  every boot and on the Refresher's interval (12 h by default), so a refresh that stamped it kept
+  each search-parked episode it rewrote younger than the cooldown. Writing the value the row holds
+  stops `Repo.update` from autogenerating one. `force_change/3`, because `change/2` drops a value
+  equal to the struct's. A changeset with no changes stays empty, so `Repo.update` still skips it.
+  """
+  def keep_search_clock(%Ecto.Changeset{changes: changes} = changeset) when changes == %{},
+    do: changeset
+
+  def keep_search_clock(%Ecto.Changeset{data: %__MODULE__{updated_at: updated_at}} = changeset),
+    do: force_change(changeset, :updated_at, updated_at)
+
   @doc "Changeset for provider-owned episode classification metadata."
   def provider_classification_changeset(episode, attrs) do
     episode

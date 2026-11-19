@@ -403,7 +403,8 @@ defmodule Cinder.Catalog.EpisodeSearch do
 
         Logger.warning(
           "tv search exhausted for #{series.title} season #{season} episode(s) " <>
-            "#{inspect(numbers)}; the sweep will skip them until a manual Search"
+            "#{inspect(numbers)}; the sweep skips them until a manual Search or, with the Rehunter " <>
+            "on, its first pass after the cooldown"
         )
 
         Notifier.notify({:episodes_search_exhausted, episodes})

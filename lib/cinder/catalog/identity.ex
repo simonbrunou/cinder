@@ -223,6 +223,7 @@ defmodule Cinder.Catalog.Identity do
           classification_source: source,
           classification_label: label
         })
+        |> Episode.keep_search_clock()
         |> update_or_rollback()
 
       nil ->

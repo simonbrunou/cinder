@@ -213,6 +213,7 @@ defmodule Cinder.Catalog.MetadataRefresh do
     # if it ever did it degrades to {:error} rather than raising and aborting the whole series.
     case existing
          |> Episode.refresh_changeset(%{episode_number: -existing.id})
+         |> Episode.keep_search_clock()
          |> Repo.update() do
       {:ok, parked} ->
         parked
@@ -319,6 +320,7 @@ defmodule Cinder.Catalog.MetadataRefresh do
         localizations: merge_localizations(parked_ep.localizations, fe.localizations),
         air_date: fe.air_date
       })
+      |> Episode.keep_search_clock()
 
     case Repo.update(changeset) do
       {:ok, _} ->
@@ -343,6 +345,7 @@ defmodule Cinder.Catalog.MetadataRefresh do
           season_id: original.season_id,
           episode_number: original.episode_number
         })
+        |> Episode.keep_search_clock()
         |> Repo.update()
         |> log_reconcile_error("restore episode #{original.id}")
     end

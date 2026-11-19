@@ -110,6 +110,31 @@ defmodule Cinder.CatalogRefreshTest do
     {result, :counters.get(counter, 1)}
   end
 
+  # Counts `UPDATE "episodes"` statements whose only column is `updated_at`: a write that a
+  # forced search clock adds to a changeset that had nothing to write.
+  defp count_clock_only_episode_updates(fun) do
+    counter = :counters.new(1, [])
+    ref = make_ref()
+
+    :telemetry.attach(
+      ref,
+      [:cinder, :repo, :query],
+      fn _event, _measurements, metadata, _config ->
+        if is_binary(metadata.query) and
+             String.starts_with?(metadata.query, ~s(UPDATE "episodes" SET "updated_at" = ? WHERE)) do
+          :counters.add(counter, 1, 1)
+        end
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(ref) end)
+
+    result = fun.()
+    :telemetry.detach(ref)
+    {result, :counters.get(counter, 1)}
+  end
+
   test "provider refresh replaces only TMDB identity and preserves manual choices" do
     s = series(:all, %{tmdb_id: 9_001, media_profile: :anime})
     sn = season(s, 0)
@@ -1043,5 +1068,115 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.get!(Episode, b.id).episode_number == 2
     assert log =~ "series #{s.id}"
     assert length(Regex.scan(~r/preserved episode #{b.id} blocks/, log)) == 1
+  end
+
+  # An episode's `updated_at` is the TV sweep's search clock: the poller's retry spacing and the
+  # Rehunter's cooldown (`EpisodeSearch.rehunt_parked_episodes/1`) both read it. The Refresher
+  # runs at every boot and every 12 h by default, and prod boots on every merge, so a refresh
+  # that stamped it kept each parked episode it rewrote younger than the 24 h cooldown, and the
+  # rehunt never reached those episodes.
+  describe "a refresh keeps the search clock" do
+    @two_days_ago DateTime.add(DateTime.utc_now(:second), -2 * 86_400)
+
+    defp park_search(episode) do
+      Repo.update_all(from(e in Episode, where: e.id == ^episode.id),
+        set: [search_attempts: Catalog.search_budget(), updated_at: @two_days_ago]
+      )
+
+      Repo.get!(Episode, episode.id)
+    end
+
+    defp assert_rehunted(episode) do
+      cutoff = DateTime.add(DateTime.utc_now(:second), -86_400)
+      assert Catalog.EpisodeSearch.rehunt_parked_episodes(cutoff) == 1
+      assert Repo.get!(Episode, episode.id).search_attempts == 0
+    end
+
+    test "on a matched episode that keeps its slot, so the rehunt re-queues it" do
+      s = series(:all)
+      sn = season(s, 1)
+      ep = park_search(episode(sn, %{tmdb_episode_id: 700, episode_number: 1, air_date: @past}))
+
+      stub_tmdb(s, [
+        {1, [%{tmdb_episode_id: 700, episode_number: 1, title: "Retitled", air_date: @past}]}
+      ])
+
+      assert {:ok, _} = Catalog.refresh_series(s)
+
+      r = Repo.get!(Episode, ep.id)
+      assert r.title == "Retitled"
+      assert r.updated_at == @two_days_ago
+      assert_rehunted(ep)
+    end
+
+    test "and sends no write for a classification that did not change" do
+      s = series(:all)
+      sn = season(s, 1)
+      episode(sn, %{tmdb_episode_id: 705, episode_number: 1, air_date: @past})
+
+      stub_tmdb(s, [
+        {1, [%{tmdb_episode_id: 705, episode_number: 1, title: "Same", air_date: @past}]}
+      ])
+
+      # The first refresh moves the fixture's classification source to "tmdb".
+      assert {:ok, _} = Catalog.refresh_series(s)
+
+      {result, clock_only} = count_clock_only_episode_updates(fn -> Catalog.refresh_series(s) end)
+      assert {:ok, _} = result
+      assert clock_only == 0
+    end
+
+    test "on a matched episode renumbered within its season" do
+      s = series(:all)
+      sn = season(s, 1)
+      ep = park_search(episode(sn, %{tmdb_episode_id: 701, episode_number: 2, air_date: @past}))
+
+      stub_tmdb(s, [
+        {1, [%{tmdb_episode_id: 701, episode_number: 5, title: "Moved", air_date: @past}]}
+      ])
+
+      assert {:ok, _} = Catalog.refresh_series(s)
+
+      r = Repo.get!(Episode, ep.id)
+      assert r.episode_number == 5
+      assert r.updated_at == @two_days_ago
+      assert_rehunted(ep)
+    end
+
+    test "on a matched episode moved to another season" do
+      s = series(:all)
+      s1 = season(s, 1)
+      ep = park_search(episode(s1, %{tmdb_episode_id: 702, episode_number: 1, air_date: @past}))
+
+      stub_tmdb(s, [
+        {1, []},
+        {2, [%{tmdb_episode_id: 702, episode_number: 1, title: "Moved", air_date: @past}]}
+      ])
+
+      assert {:ok, _} = Catalog.refresh_series(s)
+
+      r = Repo.get!(Episode, ep.id)
+      assert r.season_id == Repo.get_by!(Season, series_id: s.id, season_number: 2).id
+      assert r.updated_at == @two_days_ago
+      assert_rehunted(ep)
+    end
+
+    test "on a matched episode a preserved vanished row sends back to its own slot" do
+      s = series(:all)
+      sn = season(s, 1)
+      a = park_search(episode(sn, %{tmdb_episode_id: 703, episode_number: 1, air_date: @past}))
+      episode(sn, %{tmdb_episode_id: 704, episode_number: 2, file_path: "/lib/b.mkv"})
+
+      stub_tmdb(s, [
+        {1, [%{tmdb_episode_id: 703, episode_number: 2, title: "A", air_date: @past}]}
+      ])
+
+      assert {:ok, _} = Catalog.refresh_series(s)
+
+      r = Repo.get!(Episode, a.id)
+      assert r.episode_number == 1
+      assert r.updated_at == @two_days_ago
+      assert_rehunted(a)
+    end
   end
 end

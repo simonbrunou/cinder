@@ -182,7 +182,9 @@ defmodule Cinder.Notifier.Discord do
     with_poster(
       %{
         title: "Episode search exhausted",
-        description: "#{summary} — giving up until a manual Search",
+        description:
+          "#{summary} — searching stops until a manual Search or, with the Rehunter on, " <>
+            "its first pass after the cooldown",
         color: @red
       },
       poster
