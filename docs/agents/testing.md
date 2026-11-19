@@ -456,6 +456,27 @@
   the call on `{:error, :request_timeout}` instead. Their elapsed bound is 30 s, well under that
   deadline: a 5.2 s bound failed on the CI runner, where `libre_translate_test.exs`'s call with
   a 200 ms `receive_timeout` took up to 15.3 s (#1443).
+- A `plug:` stub, including `Req.Test`'s, never sees a body that `Plug.Parsers` refuses. Req's
+  `run_plug` step parses the body before the stub runs, with parser options it builds itself
+  (`deps/req/lib/req/steps.ex`), so no stub can raise the limit. On a POST, PUT, PATCH or DELETE
+  these bodies raise `Plug.Parsers.RequestTooLargeError`: a JSON body (`application/json` or
+  `+json`) over 8,000,000 bytes, a urlencoded one over 1,000,000, and a `multipart/form-data` or
+  `multipart/mixed` one whose parts pass 8,000,000 bytes. Plug adds an estimate of each part's
+  headers to that count, so one 7,999,900-byte part that Req's `form_multipart` builds already
+  fails. A part with no filename that holds non-UTF-8 bytes can raise
+  `Plug.Parsers.BadEncodingError` instead: Plug checks the bytes it read before the limit.
+  `Cinder.HTTPPolicy.bounded_request/2,3` returns either error as
+  `{:error, {exception, stacktrace}}`, and a bare `Req` call raises it.
+  A body of any other content type or method reaches the stub whole: `Req.Test.raw_body/1`
+  returns all of it, while `Plug.Conn.read_body/1` stops at 8,000,000 bytes with `{:more, ...}`.
+  A test of a size cap above its body's limit takes one of two routes. It ends before the upload,
+  as `qbittorrent_test.exs` "add/1 fetches a torrent of exactly the 10 MiB cap and goes on to log
+  in" ends at a refused login. Or it answers the upload with a Req `:adapter` function, which
+  reads `request.body` unparsed, as `sabnzbd_test.exs` "add/1 fetches an NZB of exactly the
+  20 MiB cap and posts all of it to SABnzbd" does. Put that adapter in `req_options` without
+  `plug:`: Req's `put_plug` step replaces the adapter with `run_plug` whenever `plug:` is set. On
+  #1484 (for #1444) the first exact-cap test sent its upload to 127.0.0.1:1, a real port, and the
+  Standards review rejected that test.
 - A test that polls until a timer fires (a shrunk `ownership_timeout`, a lease, a TTL) runs
   `mix test.unchecked --repeat-until-failure 1000 <file>:<line>` before review. Each repeat runs
   the whole selection, so name the test's line. A poll that lands as the timer fires fails in a
