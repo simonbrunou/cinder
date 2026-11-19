@@ -255,6 +255,23 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   test that does not set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}`
   therefore means the subprocess did not answer for 20 s: look for a hang, or a runner far more
   loaded than usual, before calling it a flake.
+- **Loaded-runner A/B.** When a wall-clock bound fails on a PR's runs while other branches' runs
+  pass it, time the failing test in the PR's head and in its base side by side under CPU load
+  before you blame the diff. First move `tmp/` and `.elixir_ls/` out of both trees: on #1441,
+  while the head tree held 6572 leftover `tmp/` files and an `.elixir_ls/`, head reached the
+  test later than base in 6 of 7 pairs, and earlier in 4 of 6 once both were moved. ExUnit
+  prints a test's time only in trace mode, and `--slowest` sets `--trace`, which sets
+  `--max-cases` to 1. So add an untracked formatter under `test/support/` that writes
+  `test.time` (microseconds) from each `{:test_finished, test}` event, and pass
+  `--formatter ExUnit.CLIFormatter --formatter <its module>` to `mix test.unchecked`. When the
+  test is async, run only the files whose `use` line sets `async: true`. Stop each run once it
+  has logged the test: on #1441 a run of the 165 files holding `async: true`, at 2 CPUs and
+  10 busy loops, was still going after 15 minutes. Start both arms at once on the same CPUs
+  (`taskset -c 0,1`) with the busy loops pinned there, and stop both only once both have logged
+  the test, since an arm that runs on alone runs lighter. On #1441 head was slower in 8 of 14
+  pairs, and no run reached the 5.2 s bound (#1443). Such a result shows no effect of the diff
+  under CPU contention but not what stalls the runner, so it does not clear the diff: **Flake**
+  says what follows the red.
 - **Shared state.** Check order-dependent state before blaming a flake or a new test: the
   always-on `:login_pair` bucket of `Cinder.Accounts.IpRateLimiter`, keyed on the IP and the
   name (#686), and the suite-wide `Cinder.Subtitles.Fetcher` consuming another module's Mox
