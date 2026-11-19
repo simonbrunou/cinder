@@ -5,6 +5,7 @@ defmodule Cinder.Library.SidecarsTest do
   import Mox
   setup :verify_on_exit!
 
+  alias Cinder.Library
   alias Cinder.Library.FilesystemMock
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.Library.Sidecars
@@ -230,15 +231,7 @@ defmodule Cinder.Library.SidecarsTest do
 
   describe "real path-policy sinks" do
     setup do
-      keys = [
-        :filesystem,
-        :filesystem_failure,
-        :filesystem_failures,
-        :path_policy,
-        :import_roots,
-        :movies_library_path,
-        :tv_library_path
-      ]
+      keys = [:filesystem, :filesystem_failure, :filesystem_failures, :path_policy]
 
       saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
@@ -816,6 +809,42 @@ defmodule Cinder.Library.SidecarsTest do
       assert File.read!(sidecar_dest) == "manual"
     end
 
+    # #1470: `files/1` reads its videos from the importers' own list, `Library.video_extensions/0`.
+    # For each container on it, a source `M<ext>` lists `M.en.srt`, and a folder holding `B<ext>`
+    # beside `A.mkv` holds two videos, so `files/1` of `A.mkv` lists no `x.en.srt`. For each
+    # refused container below, which `library_test.exs` lists too, a source `M<ext>` lists
+    # nothing, and `B<ext>` is no video, so `A.mkv` is its folder's one video and lists `x.en.srt`.
+    @tag :tmp_dir
+    test "files/1 takes and counts each accepted container, and none of the refused ones listed",
+         %{tmp_dir: tmp} do
+      %{release: release} = configure_real_roots(tmp)
+
+      listed = fn files ->
+        folder = Path.join(release, "f#{System.unique_integer([:positive])}")
+        File.mkdir_p!(folder)
+        Enum.each(files, &File.write!(Path.join(folder, &1), "x"))
+        Sidecars.files(Path.join(folder, hd(files))) |> Enum.map(&Path.basename(elem(&1, 0)))
+      end
+
+      accepted = Library.video_extensions()
+      refused = ~w(.m2ts .mpg .mpeg .webm .flv .ogm .iso .img .vob .ifo .bup)
+
+      assert Enum.filter(refused, &(&1 in accepted)) == []
+
+      answers =
+        Map.new(accepted ++ refused, fn ext ->
+          {ext,
+           {listed.(["M#{ext}", "M.en.srt"]),
+            listed.(["A.mkv", "B#{ext}", "x.en.srt"]) |> Enum.sort()}}
+        end)
+
+      expected =
+        Map.new(accepted, &{&1, {["M.en.srt"], []}})
+        |> Map.merge(Map.new(refused, &{&1, {[], ["x.en.srt"]}}))
+
+      assert answers == expected
+    end
+
     @tag :tmp_dir
     test "recursive sidecar discovery skips a directory symlink outside allowed roots", %{
       tmp_dir: tmp
@@ -930,9 +959,13 @@ defmodule Cinder.Library.SidecarsTest do
     movies = Path.join(tmp, "movies")
     tv = Path.join(tmp, "tv")
     Enum.each([release, movies, tv], &File.mkdir_p!/1)
-    Application.put_env(:cinder, :import_roots, [downloads])
-    Application.put_env(:cinder, :movies_library_path, movies)
-    Application.put_env(:cinder, :tv_library_path, tv)
+
+    Cinder.ConfigCase.put_env(
+      import_roots: [downloads],
+      movies_library_path: movies,
+      tv_library_path: tv
+    )
+
     %{release: release, movies: movies}
   end
 

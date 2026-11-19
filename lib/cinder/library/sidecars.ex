@@ -7,6 +7,7 @@ defmodule Cinder.Library.Sidecars do
   """
   require Logger
 
+  alias Cinder.Library
   alias Cinder.Library.BoundedWalk
   alias Cinder.Library.Filesystem
   alias Cinder.Library.Filesystem.RenameIdentity
@@ -18,7 +19,6 @@ defmodule Cinder.Library.Sidecars do
   require Filesystem
 
   @sub_exts ~w(.srt .ass .ssa .sub .vtt)
-  @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
 
   @doc """
   Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one
@@ -41,15 +41,19 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  # Which source videos it takes, and which files count as videos for the lone-video rule, come
+  # from the importers' own list, `Library.video_extensions/0`, so the two cannot drift (#1470).
   defp list(source_video, dir, roots) do
     with {:ok, source_video} <-
-           path_policy().source_file(source_video, roots, @video_exts, filesystem: fs()),
+           path_policy().source_file(source_video, roots, Library.video_extensions(),
+             filesystem: fs()
+           ),
          true <- fs().dir?(dir),
          {:ok, entries} <- fs().find_files(dir) do
       paths = Enum.map(entries, fn {p, _size} -> p end)
       subs = safe_sidecars(paths, roots)
       stem = Path.rootname(Path.basename(source_video))
-      lone_video? = Enum.count(paths, &(String.downcase(Path.extname(&1)) in @video_exts)) == 1
+      lone_video? = Enum.count(paths, &Library.video_file?/1) == 1
 
       subs
       |> Enum.filter(fn p ->
