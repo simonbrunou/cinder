@@ -333,12 +333,18 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
   `mix deps.unlock tidewave` then `mix deps.get` moved `tidewave` alone. When the diff moves
   packages the fix does not need, close the PR and bump by hand that way. Otherwise review it as
   an upgrade of each package it moves, push a commit to its branch that adds the `### Security`
-  fragment every advisory bump carries, named after the Renovate PR's number
-  (`changelog.d/999-bandit-1_14_1.md` is one), and merge it under AGENTS.md "Merge authority"
+  fragment every advisory bump carries, and merge it under AGENTS.md "Merge authority"
   with `scripts/merge-pr --body-from=<sha of Renovate's commit> <n>`. These get the bump by hand
   too: a transitive package, a fix outside the requirement as Renovate reads it (any fix for
   `req` or `tailwind` today, locked past that reading), and a direct one before Renovate's PR
-  opens. Look for a fixed release first and bump to it: a red `deps.audit` prints
+  opens. Name the fragment as `changelog.d/README.md` says, by hand or not: #1536 closed #1534
+  and added `changelog.d/1534-idna-8_0_0.md`, and #999, opened with no issue, added
+  `changelog.d/999-bandit-1_14_1.md`. A fragment sentence about how Cinder reaches the vulnerable
+  package is a sentence about a path, as the README's paragraph that starts "A path includes"
+  defines it: run it before review. `smtp_from` has no address check, and on #1536 the sentence
+  on which addresses Swoosh passes through `idna` took a Standards review and a re-check before
+  it said "each From and To address that holds a single `@`".
+  Look for a fixed release first and bump to it: a red `deps.audit` prints
   `First patched versions:` (`NONE` when no release fixes it yet). A red `hex.audit` names none,
   but the advisory URL it prints does, and `mix hex.info <package>` lists the recent releases.
   The bump rebuilds every dependency (**Dependency rebuild** below). `mix hex.audit` takes its

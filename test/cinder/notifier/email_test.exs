@@ -7,20 +7,13 @@ defmodule Cinder.Notifier.EmailTest do
 
   alias Cinder.Notifier.Email
   alias Cinder.Requests.Request
-
-  setup do
-    original = Application.get_env(:cinder, Cinder.Mailer, [])
-    on_exit(fn -> Application.put_env(:cinder, Cinder.Mailer, original) end)
-    :ok
-  end
+  alias Swoosh.Adapters.SMTP
 
   # The "configured" guard is config-shaped (a saved smtp_host), not adapter-shaped — the
   # adapter stays Swoosh.Adapters.Test in every test regardless, so this is the only way to
   # flip the guard while still capturing delivered emails.
-  defp configure_smtp! do
-    current = Application.get_env(:cinder, Cinder.Mailer, [])
-    Application.put_env(:cinder, Cinder.Mailer, Keyword.put(current, :relay, "smtp.test"))
-  end
+  defp configure_smtp!(extra \\ []),
+    do: Cinder.ConfigCase.put_config(Cinder.Mailer, Keyword.merge([relay: "smtp.test"], extra))
 
   defp confirmed_user(attrs \\ %{}) do
     user = user_fixture()
@@ -741,6 +734,36 @@ defmodule Cinder.Notifier.EmailTest do
       assert :ok = Email.notify({:issue_reported, report})
       assert :ok = Email.notify({:issue_dismissed, report})
       refute_email_sent()
+    end
+  end
+
+  # Every other test in this module delivers through Swoosh.Adapters.Test, which renders no header
+  # and never calls `:idna`. Once an SMTP host is saved, prod sends through Swoosh.Adapters.SMTP,
+  # so this renders the email the notifier built with that adapter's own `body/2`: a swoosh, idna
+  # or gen_smtp bump that changes how From and To render these two addresses fails here. #1536
+  # bumped idna with no test on this path.
+  describe "the SMTP adapter's rendering" do
+    test "puts the configured sender and the recipient in From and To, with punycode domains" do
+      configure_smtp!(from: "notify@crème.example")
+      user = confirmed_user(email: "reader@bücher.example")
+
+      request = %Request{
+        title: "Arrival",
+        year: 2016,
+        target_type: "movie",
+        user_id: user.id,
+        user: user
+      }
+
+      assert :ok = Email.notify({:request_approved, request})
+      assert_received {:email, email}
+
+      [head, _body] = email |> SMTP.Helpers.body([]) |> String.split("\r\n\r\n", parts: 2)
+      headers = String.split(head, "\r\n")
+
+      # `inspect/1`, since a misbehaving encoder can hand back bytes that are not UTF-8.
+      assert "From: Cinder <notify@xn--crme-6oa.example>" in headers, inspect(head)
+      assert "To: reader@xn--bcher-kva.example" in headers, inspect(head)
     end
   end
 end

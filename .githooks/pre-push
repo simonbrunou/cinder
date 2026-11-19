@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Git's pre-push hook for Cinder: runs `mix format --check-formatted` and `mix credo --strict`,
+# two gates of the `mix test` alias that read the sources and compile nothing of Cinder's own.
+# On #1537 a comment-only commit went out with a 129-character line, and CI / test failed on
+# Credo: a fix commit and a second CI run.
+#
+# scripts/seed-worktree installs the runner in the hooks folder every checkout of the repo shares,
+# so this runs on each push from each checkout that holds this file, once the runner is there: the
+# script's header says when it writes none. Git starts it at the root of the pushing checkout.
+# When `mix` is not on PATH, it prints one line and lets the push go on. It runs both gates and
+# fails the push when either fails. Both gates read the working tree, not the commits being
+# pushed, so an uncommitted edit can fail a push of clean commits. `git push --no-verify` skips it.
+set -uo pipefail
+
+if ! command -v mix > /dev/null; then
+  echo "pre-push: mix is not on PATH; skipped mix format --check-formatted and" \
+    "mix credo --strict" >&2
+  exit 0
+fi
+
+failed=""
+mix format --check-formatted || failed="mix format --check-formatted"
+mix credo --strict || failed="${failed:+$failed and }mix credo --strict"
+
+if [[ -n $failed ]]; then
+  echo "pre-push: $failed failed (output above); fix it and push again" >&2
+  exit 1
+fi

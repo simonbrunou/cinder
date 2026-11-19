@@ -431,6 +431,10 @@
   and the idle class, since nice stops at 19 and the class is already idle, so the test also
   pins the exact command line with `Cinder.Test.PriorityShims`' recording shims on `PATH`, as
   `Cinder.Library.MediaInfo.FfprobeTest` "whole-file reads" does (#862).
+- `System.cmd/3` and `Port.open/2` unset a variable whose `env:` value is `""`. A test of the
+  empty-value case sets it inside a `sh -c` script, such as `VAR= <cmd>` or the `export` in
+  `Cinder.MutationFailuresTest`'s `run_child/4`. On #1537 a formatter mutant survived a test
+  that passed `""` through a port's `env:`.
 - A list built from a directory listing (`File.ls/1`, `Cinder.Library.PathPolicy.walk/2`,
   `Cinder.Library.Filesystem`'s `find_files/1`, so `Cinder.Library.Sidecars.files/1` too) comes
   in the order the disk returns. That is creation order on the btrfs dev host and can be any

@@ -134,6 +134,8 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
 - A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
   `mix` task, and again after a failure; its header says what it does. On a branch cut before
   the script existed, run `~/Projects/cinder/scripts/seed-worktree`.
+- The seed also installs a runner for `.githooks/pre-push`, the format and Credo gates a push
+  runs; the script's and the hook's headers say when each one skips.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
 - The seed has only `_build/test`, and in the dev env a task recompiles every dependency first.
   `mix format`, `mix credo --strict`, `mix gettext.extract --merge` and `mix test.unchecked` run
