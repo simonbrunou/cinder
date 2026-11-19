@@ -101,12 +101,17 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   import twin were false for a scoped code. A Standards review and a re-check found them, about 15
   minutes from the first finding to the last fix.
 - A sentence about what a tool prints or does (an abort line, a flag's effect, a retry) holds on
-  every path in the tool's source that reaches it, not only on the case its help text or your
-  first run shows. Read that source first (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints
-  Mix's directory, its tasks under `lib/mix/tasks/`; an Elixir dependency's source is in
-  `deps/<name>/lib`), then prove each path with a run. On #1170 the first draft of `ci.md`
-  "Test-file warning" repeated `mix help test` and missed two paths of Mix's `tasks/test.ex`.
-  Two re-check rounds found them, 15 minutes from the first fix commit to the last.
+  every path in the tool's source that reaches it and for each input form that source tells apart
+  (such as, for Swoosh's SMTP adapter, a text-only mail and a text+HTML mail), not only on the
+  case its help text or your first run shows. Read that source first
+  (`elixir -e 'IO.puts(:code.lib_dir(:mix))'` prints Mix's directory, its tasks under
+  `lib/mix/tasks/`; an Elixir dependency's source is in `deps/<name>/lib`, an Erlang one's in
+  `deps/<name>/src`), then prove each path and form with a run. On #1170 the first draft of
+  `ci.md` "Test-file warning" repeated `mix help test` and missed two paths of Mix's
+  `tasks/test.ex`. Two re-check rounds found them, 15 minutes from the first fix commit to the
+  last. On #1555 (for #1548) a run with a text-only mail led to a fragment saying each `Headers:`
+  line held the `To` address. With a text+HTML mail, 8 of 18 such lines held no `To`: a Standards
+  finding, a fix commit and a re-check.
 - For a tool outside the repo, such as mergerfs or coreutils `nice`, read its manual for every
   option and input that changes the claim, such as the niceness `nice -n` starts from, and link
   the manual for the conditions a feature needs instead of copying them. On #1336 (for #953) the
