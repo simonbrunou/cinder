@@ -19,10 +19,9 @@
 # of the repo shares, the hooks folder of the shared .git directory. The runner runs the pushing
 # checkout's .githooks/pre-push and exits 0 in a checkout without one, such as a branch cut before
 # the hook existed. The script leaves core.hooksPath alone, since pointing it at .githooks would
-# switch off the other hooks in that folder (graphify's). When core.hooksPath is set, git looks
-# for hooks where that setting says, so the script writes no runner and prints a WARNING line. It
-# also keeps a pre-push hook in that folder that lacks the runner's marker line, with a WARNING
-# line.
+# switch off the other hooks in that folder. When core.hooksPath is set, git looks for hooks where
+# that setting says, so the script writes no runner and prints a WARNING line. It also keeps a
+# pre-push hook in that folder that lacks the runner's marker line, with a WARNING line.
 #
 # It then runs the two audits of CI's dependency-audit job, `mix hex.audit` and `mix deps.audit`,
 # in the test env. When one fails, it prints that audit's output and ends on a WARNING line, still

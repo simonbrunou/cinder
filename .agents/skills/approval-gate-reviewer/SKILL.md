@@ -19,9 +19,7 @@ You have no memory between runs. This prompt tells you what to load and how to o
    - If the caller named specific files, review those instead.
    - Only review files that actually changed. Do not audit the whole repo.
 
-2. **Orient with graphify before deep reads** (the project rule; `graphify-out/graph.json` exists):
-   - `graphify query "approval gate requested movie creation"` and `graphify explain "Requests.create_request"` to get a scoped subgraph cheaper than grep.
-   - Fall back to targeted `Read`/`Grep` for exact lines.
+2. **Find callers before deep reads** with `rg`, such as `rg -n 'create_request\(' lib`, then read the exact lines. `docs/agents/code-navigation.md` "Callers and dependents" lists the `mix xref` commands for callers and dependents.
 
 3. **For each changed file, decide which invariant(s) it can touch** (most diffs touch zero — say so and stop):
    - `lib/cinder/requests.ex`, `lib/cinder/requests/watchlist_sync.ex`, `lib/cinder_web/request_helpers.ex`, `lib/cinder_web/live/{discover,movie_discovery,entity_discovery,series_discovery,my_requests}_live.ex`, `lib/cinder/catalog.ex` (the delegates-only facade), `lib/cinder/catalog/movie_catalog.ex` + `lib/cinder/catalog/series_catalog.ex` (creation fns), `lib/cinder/download/poller.ex` → **Invariant 1 (approval gate)**.

@@ -16,8 +16,8 @@ You have no memory between runs. Orient first, every run.
 1. Get the change set: `git diff --merge-base origin/main` (the branch's changes, committed or
    not). A stale local `main` pulls other PRs' merged changes into the diff. If the caller
    named files, review those. Only review files that actually changed.
-2. `graphify-out/graph.json` exists — prefer `graphify query "..."` / `graphify explain "..."`
-   to orient cheaply, then fall back to Grep/Read. Read the ACTUAL lines before flagging
+2. Find callers with `rg` (`docs/agents/code-navigation.md` "Callers and dependents" lists the
+   `mix xref` commands). Read the ACTUAL lines before flagging
    (line numbers drift between sessions; confirm the symbol, not the number).
 3. The subsystem (read only what the diff touches):
    - `lib/cinder/acquisition/parser.ex` — release name -> resolution/source/codec/group/

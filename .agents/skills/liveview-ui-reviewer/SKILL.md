@@ -17,8 +17,8 @@ No memory between runs. Orient first.
 1. Change set: `git diff --merge-base origin/main` (the branch's changes, committed or not), or
    the named files. Review only what changed. A stale local `main` pulls other PRs' merged
    changes into the diff.
-2. `graphify-out/graph.json` exists — prefer `graphify query`/`explain`, then Grep/Read. Read
-   the actual HEEx/handlers before flagging.
+2. Find callers with `rg` (`docs/agents/code-navigation.md` "Callers and dependents" lists the
+   `mix xref` commands). Read the actual HEEx/handlers before flagging.
 3. The layer:
    - LiveViews: `lib/cinder_web/live/*_live.ex` (+ `user_live/`). Discover (`/`), MyRequests,
      SeriesDiscovery, Dashboard, Activity, Library, Settings, Setup, SeriesDetail, Requests

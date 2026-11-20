@@ -59,9 +59,6 @@ __pycache__/
 .direnv/
 result
 
-# graphify tool output (stale-prone, regenerated locally)
-graphify-out/
-
 # Playwright MCP server output (page snapshots, screenshots, console logs).
 .playwright-mcp/
 

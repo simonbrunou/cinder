@@ -1,21 +1,30 @@
 # Code navigation
 
-## Graphify: source under `lib/` and `test/`
+## Callers and dependents: source under `lib/` and `test/`
 
-`graphify-out/` holds a local knowledge graph. It is gitignored; regenerate it with
-`graphify update .`.
-
-- For a question about source under `lib/` or `test/`, first run `graphify query "<question>"`
-  when `graphify-out/graph.json` exists. Use `graphify path "<A>" "<B>"` for relationships and
-  `graphify explain "<concept>"` for one concept.
-- For an exact code pattern, such as the `Repo` write-site search in
-  [architecture.md](architecture.md), search the files directly. The graph answers concept and
-  relationship questions, not exhaustive pattern matches.
-- The graph does not cover `deps/`, `_build/`, `config/`, `mix.exs` or tooling/config files.
-  Read those directly.
-- Read `graphify-out/GRAPH_REPORT.md` only for a broad architecture review, or when a scoped
-  query does not surface enough context.
-- After modifying project source, run `graphify update .`.
+- Search text with `rg -n '<pattern>' lib test`. It is the only one of these tools that reads
+  `_test.exs` files and finds an exact code pattern, such as the `Repo` write-site search in
+  [architecture.md](architecture.md).
+- `mix xref` covers the modules under `lib/` and `test/support/`, never a `_test.exs` file. Run
+  it as `MIX_ENV=test mix xref ...` in a seeded worktree ([workflow.md](workflow.md)
+  "Worktrees").
+  - `mix xref callers <Module>` prints each other file that references the module, with the kind
+    of reference (compile, export or runtime). It never lists the module's own file. It takes a
+    module only: `Mod.fun/arity` exits 1 with `expects a MODULE`. A misspelled module prints
+    nothing and exits 0.
+  - `mix xref trace <file>` compiles the file and prints each reference it makes to Cinder's
+    modules, with its line, such as `call Cinder.Requests.create_request/2 (runtime)`. It leaves
+    out calls to dependencies, to Elixir itself and local calls written without a module name. On
+    a `_test.exs` file it exits 1 with
+    `cannot use ExUnit.Case without starting the ExUnit application`.
+  - To find a function's call sites, run `trace` on each file `callers` printed and filter with
+    `rg -F 'Cinder.Requests.create_request/'`, which keeps every arity. Then search the
+    defining module's own file with `rg -n 'create_request\(' lib/cinder/requests.ex`: for
+    `approve_request/3` the `trace` recipe found 4 call sites and missed the local one in
+    `requests.ex`.
+  - `mix xref graph --sink <file> --only-nodes` prints every file that depends on the file,
+    directly or through other files. Through runtime calls that can reach most of `lib/`; for
+    direct references use `callers`.
 
 ## Tidewave: the running dev app
 
