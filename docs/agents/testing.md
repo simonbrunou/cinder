@@ -127,6 +127,16 @@
   Pair a refute on a collection with a positive control that proves the collection is the right
   one and populated, and refute the stem, not a guessed inflection. After a rename that changes
   how an identifier is built, re-run the check on every negative that names it.
+- A limit the change adds (a lifetime, a rate-limit window, a cap) gets a test that pins the
+  value the app runs with, without waiting it out: `PasskeyChallengesTest` "an entry lives 3
+  minutes by default" asserts the stored expiry, and `IpRateLimiterTest` "the :passkey_options
+  window lasts one minute from its first request" moves the window's start to 59 s and 60.001 s
+  ago. The expected value is a literal in the test. A test that shrinks the limit with `put_env`,
+  or takes its expected value from the module it tests, passes at any value. On #1568 every
+  expiry test set `:passkey_challenge_ttl_ms`, no test reached the end of the `:passkey_options`
+  window, and the cap test filled the store to `max = PasskeyChallenges.max_entries()`. Mutants
+  that set the TTL and the window to a day and the cap to ten times its value survived until the
+  Spec review, and closing them took a test per limit.
 - A negative test of code that rescues every raise, such as `Subtitles.fetch_missing/3` (its
   `fetch_one/6`) or a poller's `poll/1` (`isolate/2` in `Cinder.Download.PollerSkeleton`), stubs
   the action to succeed and to send the test process a message, then runs `refute_received` on
