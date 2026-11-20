@@ -459,6 +459,13 @@ defmodule Cinder.Download do
           order_by: [asc: i.id]
       )
 
+    # Each result is dropped. On a permanent submission error, `abandon_reserved/2` has already
+    # tried to hold a book target or block a TV release, where its comments say. A movie is not
+    # parked here, on purpose (#1491). A `:requested` or `:searching` movie goes back to its
+    # poller's search pass as a movie with no intent would: a release a later search grabs gets a
+    # freshly encrypted link, and a grab the client refuses for good goes to
+    # `MovieLifecycle.record_failure/2` while the movie is still searching, which parks it. A movie
+    # in another status keeps its status.
     Enum.each(intents, &reconcile_intent/1)
     :ok
   end

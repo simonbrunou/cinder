@@ -6,11 +6,15 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   book target or blocking a TV release first; then the movie or TV poller's own failure handling
   runs (#1449, #1492).
 
-  A reason the client returns on `add` reaches the movie and TV pollers on a fresh grab from their
-  search pass. `:invalid_intent_release` comes only from an intent stored on an earlier tick whose
-  saved download link `Download` cannot read back, so its cells start from such an intent (its
-  stored release holds no link ciphertext) and the poller's pending-intent pass submits it. A book
-  target has no search pass, so each of its cells starts from a stored intent that `BookPoller`'s
+  A reason the client returns on `add` reaches `abandon_reserved/2` on a fresh grab from the movie
+  or TV search pass, and on a stored intent's retry from either poller's pending-intent pass. Such
+  a reason on a retry from the pending-intent pass never reaches the poller's own failure
+  handling: a movie's is dropped (the `stored_movie_intent` cells), and a TV retry's is dropped
+  once `abandon_reserved/2` tries to block a release the search pass picked (the episode retry
+  tests below the table). `:invalid_intent_release` comes from a stored intent whose saved
+  download link `Download` cannot read back, so its cells start from such an intent (its stored
+  release holds no link ciphertext) and the poller's pending-intent pass submits it. A book target
+  has no search pass, so each of its cells starts from a stored intent that `BookPoller`'s
   pending-intent pass submits.
   """
   use Cinder.DataCase, async: false
@@ -51,7 +55,12 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   # the second poll adds the other release and the episodes stay wanted (#1492). A stored intent
   # whose link cannot be read back is dropped by the movie and TV pending-intent pass, and the
   # search pass that follows grabs the release its search finds (one add), so neither the movie nor
-  # the episodes record a failure or a block (#1491).
+  # the episodes record a failure or a block (#1491). A movie whose first add fails with a transient
+  # error keeps its intent; when the client refuses that intent's release for good on the next
+  # poll, the pending-intent pass drops it without parking the movie, the search pass of the same
+  # poll adds the release its search finds, and that refusal parks the movie (#1491).
+  @movie_stored "Inception.2010.1080p.WEB-DL-STORED"
+  @movie_found "Inception.2010.1080p.BluRay.x264-GRP"
   @episode_first "Show.S01E01.1080p.WEB-DL-GRP"
   @episode_second "Show.S01E01.1080p.WEB-DL-OTHER"
   @pack_first "Show.S01.1080p.WEB-DL-GRP"
@@ -65,6 +74,12 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
                {reason,
                 %{
                   movie: %{status: :search_failed, search_attempts: 0, adds: 1},
+                  stored_movie_intent: %{
+                    status: :search_failed,
+                    search_attempts: 1,
+                    added: [@movie_stored, @movie_stored, @movie_found],
+                    intents: 0
+                  },
                   episode: %{
                     states: [:wanted],
                     search_attempts: [2],
@@ -196,19 +211,27 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   # --- movie ---------------------------------------------------------------------------------------
 
   defp outcome(:movie, reason) do
-    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
-    if from_stored_intent?(reason), do: store_broken_intent(:movie, movie.id, [])
+    prepare =
+      if unreadable_intent?(reason),
+        do: &store_broken_intent(:movie, &1, []),
+        else: fn _movie_id -> :ok end
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
-      {:ok, [indexer_result("Inception.2010.1080p.BluRay.x264-GRP")]}
-    end)
-
-    stub_client(reason, "hash-movie")
-    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
-    assert :ok = Poller.poll()
-
-    %Movie{status: status, search_attempts: attempts} = Repo.get!(Movie, movie.id)
+    %{status: status, search_attempts: attempts} = movie_outcome(reason, prepare)
     %{status: status, search_attempts: attempts, adds: adds()}
+  end
+
+  # A first poll's add fails with a transient error and stores the intent. On the second poll the
+  # pending-intent pass submits that intent's release before the search pass runs.
+  defp outcome(:stored_movie_intent, reason) do
+    %{status: status, search_attempts: attempts} =
+      movie_outcome(reason, &poll_transient_failure/1)
+
+    %{
+      status: status,
+      search_attempts: attempts,
+      added: added(),
+      intents: Repo.aggregate(Intent, :count)
+    }
   end
 
   # --- TV episode, season pack and anime episode ---------------------------------------------------
@@ -238,7 +261,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
         release: release("Le Guin - The Dispossessed (EPUB)")
       })
 
-    if from_stored_intent?(reason), do: break_payload(intent)
+    if unreadable_intent?(reason), do: break_payload(intent)
 
     stub_client(reason, "hash-book")
     start_supervised!({BookPoller, interval: 60_000})
@@ -248,11 +271,53 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     %{status: status, hold_reason: hold_reason, adds: adds()}
   end
 
+  # --- movie helpers -------------------------------------------------------------------------------
+
+  # A poll of a requested movie whose search finds `@movie_found`. `prepare` runs once the poller
+  # has started and before that poll, to set up what an earlier poll left for the movie.
+  defp movie_outcome(reason, prepare) do
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    prepare.(movie.id)
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+      {:ok, [indexer_result(@movie_found)]}
+    end)
+
+    stub_client(reason, "hash-movie")
+    assert :ok = Poller.poll()
+
+    Repo.get!(Movie, movie.id)
+  end
+
+  # A poll whose search finds `@movie_stored` and whose add the client fails with a transient
+  # error: the search pass counts one search attempt and keeps the intent for a retry, which this
+  # helper then makes due.
+  defp poll_transient_failure(_movie_id) do
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+      {:ok, [indexer_result(@movie_stored)]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      send(test_pid, {:add, release.title})
+      {:error, :timeout}
+    end)
+
+    assert :ok = Poller.poll()
+
+    assert [%Intent{attempt_count: 1} = intent] = Repo.all(Intent)
+    intent |> Intent.changeset(%{next_attempt_at: DateTime.utc_now(:second)}) |> Repo.update!()
+  end
+
   # --- TV helpers ----------------------------------------------------------------------------------
 
   defp tv_outcome(reason, kind, media_profile, numbers, [first, second]) do
     %{series: series, episode_ids: ids} = wanted_episodes(numbers, media_profile)
-    if from_stored_intent?(reason), do: store_broken_intent(kind, hd(ids), ids)
+    if unreadable_intent?(reason), do: store_broken_intent(kind, hd(ids), ids)
     results = [indexer_result(first, 20), indexer_result(second, 10)]
 
     stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, _title, 1 -> {:ok, results} end)
@@ -303,7 +368,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
 
     stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
       send(test_pid, {:add, release.title})
-      if from_stored_intent?(reason), do: {:ok, remote_id}, else: {:error, reason}
+      if unreadable_intent?(reason), do: {:ok, remote_id}, else: {:error, reason}
     end)
 
     stub(Cinder.Download.ClientMock, :status, fn _id -> {:ok, %{state: :downloading}} end)
@@ -322,9 +387,9 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     end
   end
 
-  # The one reason no client returns: it comes from the stored intent itself, so its cells set one
-  # up and the client accepts every `add`.
-  defp from_stored_intent?(reason), do: reason == :invalid_intent_release
+  # The one reason no client returns: it comes from the stored intent itself, so its cells set up an
+  # intent whose link cannot be read back, and the client accepts every `add`.
+  defp unreadable_intent?(reason), do: reason == :invalid_intent_release
 
   # The intent an earlier tick reserved, whose saved download link cannot be read back.
   defp store_broken_intent(kind, target_id, episode_ids) do
