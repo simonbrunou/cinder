@@ -120,6 +120,13 @@ defmodule Cinder.TestPartitionsTest do
                    )
         end)
 
+      partitions = Path.join([ctx.tmp_dir, "_build", "test-partitions"])
+
+      # The fences first, alone, as one partition in partition 1's build folder.
+      assert_received {:started, 1, 1, args, fences_build}
+      assert args == ["--seed", "0", "test/code_health_test.exs", "test/code_health"]
+      assert fences_build == Path.join(partitions, "1")
+
       started =
         for _ <- 1..3 do
           assert_receive {:started, n, 3, ["--seed", "0"], dir}
@@ -130,7 +137,7 @@ defmodule Cinder.TestPartitionsTest do
       assert started |> Enum.map(&elem(&1, 0)) |> Enum.sort() == [1, 2, 3]
 
       for {n, dir} <- started do
-        assert dir == Path.join([ctx.tmp_dir, "_build", "test-partitions", "#{n}"])
+        assert dir == Path.join(partitions, "#{n}")
       end
 
       assert output =~ "mix test: partition 1 of 3: exit 0, Result: 1 passed\n"
@@ -165,7 +172,7 @@ defmodule Cinder.TestPartitionsTest do
         assert :ok =
                  TestPartitions.run([], "3", &unexpected_one_process/1,
                    build: build,
-                   start: start
+                   start: passing_fences(start)
                  )
       end)
     end
@@ -228,7 +235,10 @@ defmodule Cinder.TestPartitionsTest do
       output =
         capture_io(fn ->
           assert_raise Mix.Error, "mix test: 1 of 2 partitions failed: 1", fn ->
-            TestPartitions.run([], "2", &unexpected_one_process/1, build: build, start: start)
+            TestPartitions.run([], "2", &unexpected_one_process/1,
+              build: build,
+              start: passing_fences(start)
+            )
           end
         end)
 
@@ -252,7 +262,10 @@ defmodule Cinder.TestPartitionsTest do
       output =
         capture_io(fn ->
           assert_raise Mix.Error, "mix test: 1 of 2 partitions failed: 2", fn ->
-            TestPartitions.run([], "2", &unexpected_one_process/1, build: build, start: start)
+            TestPartitions.run([], "2", &unexpected_one_process/1,
+              build: build,
+              start: passing_fences(start)
+            )
           end
         end)
 
@@ -270,7 +283,10 @@ defmodule Cinder.TestPartitionsTest do
       output =
         capture_io(fn ->
           assert_raise Mix.Error, "mix test: 2 of 2 partitions failed: 1, 2", fn ->
-            TestPartitions.run([], "2", &unexpected_one_process/1, build: build, start: start)
+            TestPartitions.run([], "2", &unexpected_one_process/1,
+              build: build,
+              start: passing_fences(start)
+            )
           end
         end)
 
@@ -292,7 +308,10 @@ defmodule Cinder.TestPartitionsTest do
 
       capture_io(fn ->
         assert_raise Mix.Error, "mix test: 1 of 2 partitions failed: 2", fn ->
-          TestPartitions.run([], "2", &unexpected_one_process/1, build: build, start: start)
+          TestPartitions.run([], "2", &unexpected_one_process/1,
+            build: build,
+            start: passing_fences(start)
+          )
         end
       end)
 
@@ -319,10 +338,51 @@ defmodule Cinder.TestPartitionsTest do
       end
 
       capture_io(fn ->
-        TestPartitions.run([], "2", &unexpected_one_process/1, build: build, start: start)
+        TestPartitions.run([], "2", &unexpected_one_process/1,
+          build: build,
+          start: passing_fences(start)
+        )
       end)
 
       assert read_manifest(base) == {1, %{{B, :"test b"} => "test/b_test.exs"}}
+    end
+
+    test "a red fence stops the run before any partition starts", ctx do
+      build = build!(ctx.tmp_dir)
+      base = Path.join(build, "lib/cinder/.mix/.mix_test_failures")
+      me = self()
+
+      start = fn partition, total, args ->
+        send(me, {:started, partition.n, total, args})
+        manifest = Path.join(partition.build, "lib/cinder/.mix/.mix_test_failures")
+        write_manifest!(manifest, {1, %{{F, :"test fence"} => "test/code_health_test.exs"}})
+
+        File.write!(
+          partition.log,
+          "  1) test fence (Cinder.CodeHealthTest)\nResult: 1/2 passed\n"
+        )
+
+        2
+      end
+
+      output =
+        capture_io(fn ->
+          assert_raise Mix.Error,
+                       "mix test: the fences (test/code_health_test.exs test/code_health) " <>
+                         "exited 2, so no partition started",
+                       fn ->
+                         TestPartitions.run([], "2", &unexpected_one_process/1,
+                           build: build,
+                           start: start
+                         )
+                       end
+        end)
+
+      assert_received {:started, 1, 1, ["test/code_health_test.exs", "test/code_health"]}
+      refute_received {:started, _, _, _}
+      assert output =~ "==> mix test: the fences exited 2\n"
+      assert output =~ "1) test fence (Cinder.CodeHealthTest)"
+      assert read_manifest(base) == {1, %{{F, :"test fence"} => "test/code_health_test.exs"}}
     end
   end
 
@@ -501,6 +561,18 @@ defmodule Cinder.TestPartitionsTest do
     case Agent.get(room, & &1) do
       nil -> await_pid(room)
       pid -> pid
+    end
+  end
+
+  # `start` for the partitions, with the fences run before them passing.
+  defp passing_fences(start) do
+    fn partition, total, args ->
+      if Path.basename(partition.log) == "fences.log" do
+        File.write!(partition.log, "Result: 1 passed\n")
+        0
+      else
+        start.(partition, total, args)
+      end
     end
   end
 

@@ -6,8 +6,16 @@
 <mutants.json> holds a non-empty list of {"label": ..., "old": ..., "new": ...}, each value a
 string. The script first checks that each `old` occurs exactly once in <file>, counting
 overlapping matches; when one does not, it names each such label with its count, runs nothing
-and exits 2. It then runs `mix test.unchecked <test path>...` (docs/agents/testing.md) on the
-unchanged file as a control, which must pass at least one test. Then, for each mutant, it writes
+and exits 2. It also runs nothing and exits 2 when a `<path>.exs:<line>` argument (or
+`<path>.exs:<line>:<line>...`) names a line that does not start a `test` or `describe` block, and
+names the closest `test` line above it, which ExUnit would run instead (docs/agents/testing.md).
+A line inside a test's body below its first line selects that test in ExUnit, but the script
+refuses it too. A path it cannot read passes on to mix. It then runs
+`mix test.unchecked <test path>...` (docs/agents/testing.md) on the unchanged file as a control,
+which must pass at least one test, and at least as many as it has `--only test:<name>` options
+(`--only X` or `--only=X`): a mistyped name among several drops its test. A `parameterize:`
+module runs each test once per parameter, so a mistyped name can pass that count there. Then,
+for each mutant, it writes
 <file> as the original text with `old` replaced by `new` and runs the same command. It restores
 <file> after the last mutant, or when a SIGINT or SIGTERM stops the run. It prints one line per
 mutant with its verdict, then each line the edit removed (`-`) and added (`+`): an edit that
@@ -54,12 +62,13 @@ anew for each run, so a process an earlier run left behind writes to that run's 
              rewrite the mutant or the test arguments;
   HUNG       the run passed the time limit, whatever it printed before.
 
-Exit 0: every mutant killed. 1: a mutant survived, had no result or hung. 2: wrong arguments, a
-file or mutant list it cannot read, an `old` that does not occur exactly once, a
-MUTATION_CHECK_TIMEOUT that is not a whole number from 1 to 86400, no `mix` on PATH (run it
-through `nix develop`), a record folder it cannot make, a control run that does not pass or
-passes the limit, a <file> it cannot write or restore, a failure record it cannot empty, or a
-stdout closed early (as by `| head`). 130: a signal stopped the run.
+Exit 0: every mutant killed. 1: a mutant survived, had no result or hung. 2: wrong arguments, a file
+or mutant list it cannot read, an `old` that does not occur exactly once, a `<file>:<line>` off a
+test's or describe's first line, a MUTATION_CHECK_TIMEOUT that is not a whole number from 1 to
+86400, no `mix` on PATH (run it through `nix develop`), a record folder it cannot make, a control
+run that does not pass, runs past the limit or passes fewer tests than its `--only test:` names, a
+<file> it cannot write or restore, a failure record it cannot empty, or a stdout closed early (as by
+`| head`). 130: a signal stopped the run.
 """
 import difflib
 import json
@@ -84,7 +93,7 @@ NO_RECORD = "no failure record: Cinder.MutationFailures wrote no failure block"
 # ExUnit prints `N/M passed` only when a test failed, `N passed` when every test passed, and
 # `0 tests` when none ran; it appends `, N invalid` when a `setup_all` failed.
 KILLED = re.compile(r"^Result: (\d+/\d+ passed|.*, \d+ invalid)")
-PASSED = re.compile(r"^Result: \d+ passed")
+PASSED = re.compile(r"^Result: (\d+) passed")
 # ExUnit numbers each failed test or `setup_all` in a header whose number it pads to 3 columns,
 # `  1) test name (Module)` or `100) Module: failure on setup_all callback, ...`.
 FAILURE = re.compile(r"^(  \d| \d\d|\d{3,})\) .*( \(\S+\)|: failure on setup_all callback, .*)$")
@@ -113,6 +122,36 @@ TOP = re.compile(r"^ {5}\S")
 CODE = re.compile(r"^ {5}code:")
 LABEL = re.compile(r"^ {5}(code|doctest|arguments|left|right|mailbox|stacktrace):")
 ERROR = re.compile(r"^\s*(error:|\*\* \()")
+# A test path with one or more lines, as `mix test` takes it (`x.exs:4`, `x.exs:4:9`).
+LINE_ARG = re.compile(r"^(.+\.exs)((?::\d+)+)$")
+BLOCK = re.compile(r"^\s*(test|describe)\b")
+TEST = re.compile(r"^\s*test\b")
+
+
+def off_block_lines(tests):
+    """Each `<file>:<line>` whose line starts no test or describe, with the closest test above."""
+    found = []
+    for arg in tests:
+        match = LINE_ARG.match(arg)
+        if not match:
+            continue
+        try:
+            lines = Path(match[1]).read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue  # mix names a path it cannot read itself
+        for line in (int(n) for n in match[2].split(":")[1:]):
+            if 1 <= line <= len(lines) and BLOCK.match(lines[line - 1]):
+                continue
+            above = [n for n in range(min(line, len(lines)), 0, -1) if TEST.match(lines[n - 1])]
+            found.append(f"{match[1]}:{line} (closest test above: {above[0] if above else 'none'})")
+    return found
+
+
+def test_names(tests):
+    """How many `--only test:<name>` options the test arguments hold."""
+    values = [b for a, b in zip(tests, tests[1:]) if a == "--only"]
+    values += [a.removeprefix("--only=") for a in tests if a.startswith("--only=")]
+    return sum(value.startswith("test:") for value in values)
 
 
 def occurrences(text, old):
@@ -289,6 +328,11 @@ def main(argv):
     if bad:
         print(f"`old` does not occur exactly once in {path}: {', '.join(bad)}", file=sys.stderr)
         return 2
+    off = off_block_lines(tests)
+    if off:
+        print(f"a line starts no test or describe, select the test by name: {', '.join(off)}",
+              file=sys.stderr)
+        return 2
     try:
         limit = time_limit()
     except ValueError as error:
@@ -332,6 +376,11 @@ def check(path, mutants, tests, text, original, record, limit):
     if code != 0 or not PASSED.match(result or ""):
         print(f"control run on the unchanged file did not pass: {status(code, result, limit)}",
               file=sys.stderr)
+        return 2
+    names = test_names(tests)
+    if int(PASSED.match(result)[1]) < names:
+        print(f"control passed fewer tests than its {names} --only test: names, so one matches"
+              f" no test: {result}", file=sys.stderr)
         return 2
 
     missed, failure = 0, None

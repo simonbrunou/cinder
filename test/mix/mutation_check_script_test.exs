@@ -654,6 +654,72 @@ defmodule Cinder.MutationCheckScriptTest do
     assert calls(ctx) == 0
   end
 
+  @tag :tmp_dir
+  test "runs nothing on a file:line off a test or describe, naming the test above", ctx do
+    tests = Path.join(ctx.dir, "t_test.exs")
+
+    File.write!(tests, """
+    defmodule T do
+      test "a" do
+        test_helper()
+      end
+
+      describe "d" do
+        test "b", do: :ok
+      end
+    end
+    """)
+
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+    latin1 = Path.join(ctx.dir, "latin1_test.exs")
+    File.write!(latin1, <<"# caf", 0xE9, "\n">>)
+
+    # A test line, a describe line, both in one argument, a path it cannot read, and a file
+    # that is not UTF-8: the last two pass on to mix.
+    for arg <- [
+          "#{tests}:2",
+          "#{tests}:6",
+          "#{tests}:2:7",
+          "#{ctx.dir}/missing_test.exs:3",
+          "#{latin1}:1"
+        ] do
+      {out, code} = run(ctx, [ctx.target, list, arg])
+      assert code == 0, "#{arg}: #{out}"
+    end
+
+    {out, code} =
+      run(ctx, [ctx.target, list, "#{tests}:5", "#{tests}:1", "#{tests}:7:99", "#{tests}:3"])
+
+    assert code == 2, out
+
+    assert out =~
+             "select the test by name: #{tests}:5 (closest test above: 2), " <>
+               "#{tests}:1 (closest test above: none), #{tests}:99 (closest test above: 7), " <>
+               "#{tests}:3 (closest test above: 2)"
+
+    # The five runs above made a control and a mutant call each; the refused one made none.
+    assert calls(ctx) == 10
+  end
+
+  @tag :tmp_dir
+  test "exits 2 when the control passes fewer tests than its --only test: names", ctx do
+    list = mutants(ctx, [{"k", "x + 1", "BROKEN"}])
+    two = ["t.exs", "--only", "test:test a", "--only=test:test b", "--only", "slow"]
+
+    {out, code} = run(ctx, [ctx.target, list | two])
+    assert code == 0, out
+
+    for third <- [["--only", "test:test c"], ["--only=test:test c"]] do
+      {out, code} = run(ctx, [ctx.target, list | two ++ third])
+
+      assert code == 2, out
+      assert out =~ "control passed fewer tests than its 3 --only test: names"
+      assert out =~ "Result: 2 passed"
+    end
+
+    assert calls(ctx) == 4
+  end
+
   for {marker, line} <- [
         {"BROKEN", "Result: 1/2 passed"},
         {"NONE", "Result: 0 tests"},

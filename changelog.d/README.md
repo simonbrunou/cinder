@@ -49,7 +49,8 @@ about 29 minutes from the first finding to the last fix.
 - that Cinder no longer hangs or waits forever, or what a later call does after a timeout;
 - what Cinder did before the fix, which must hold on the merge base;
 - which release or file names a parser reads;
-- what the callers of a shared mechanism do.
+- what the callers of a shared mechanism do;
+- an `### Internal` entry whose change keeps what Cinder does.
 
 Each sentence about what Cinder does holds on every path the fragment covers: each fallback or
 other writer that still runs, and each case the code handles another way (a file with no
@@ -215,6 +216,15 @@ From then on it counts under its root. More walks than the cap can be stuck at o
 cap's refusal lasts until fewer than two remain, not until one returns. On #948 the dashboard's
 stuck-read text and its fragment broke the first three of these: three review rounds, about 33
 minutes from the first finding to the last fix.
+
+An `### Internal` entry whose change keeps what Cinder does names the function it changed and
+says what that function does, such as "`Sidecars.files/1` lists ...". A sentence about what an
+import, a page or a user then gets is a claim about every caller, and a caller can skip the
+function. On #1470 the fragment and a code comment said a container added to the importers'
+list "gets its sidecars", false on a `:kept` import and on a single-file import, where
+`StagedImport.place_video/5` never calls `files/1`. The Spec and Standards reviews found the
+fragment and the comment claiming more than `files/1` does: about 17 minutes from the first
+finding to the last fix, with a re-check round.
 
 `mix test` parses every fragment (`test/code_health_test.exs`), so a malformed one fails on its
 own PR. A release runs `mix cinder.changelog.release`, which folds every fragment into the new

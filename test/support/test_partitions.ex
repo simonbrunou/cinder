@@ -19,6 +19,11 @@ defmodule Cinder.TestPartitions do
       recompiles the project into its build folder: with one shared folder, the other partitions
       lost their modules mid-run.
 
+  Before the partitions start, the fences of docs/agents/testing.md "The fence run" run alone, as
+  a one-partition run of those paths in partition 1's build folder, their output in
+  `test-partitions/fences.log`. When they exit non-zero, `run/4` prints that log and raises
+  `Mix.Error` before any partition starts.
+
   A partition's output goes to `test-partitions/<number>.log`. `run/4` prints a passed
   partition's log as it ends and a failed one's after every partition ended, then one summary
   line per partition, and raises `Mix.Error` when any partition exited non-zero. The exit status
@@ -77,6 +82,11 @@ defmodule Cinder.TestPartitions do
 
   @halt_env "CINDER_TEST_HALT_ON_STDIN_EOF"
   @halt_status 3
+
+  # The repo-wide fences of docs/agents/testing.md "The fence run". They run alone before the
+  # partitions start, so a red fence, such as a doc line over 100 characters, stops the run in
+  # seconds instead of after the slowest partition (#1416, #1466). The partitions run them again.
+  @fence_paths ["test/code_health_test.exs", "test/code_health"]
 
   @manifest_name ".mix_test_failures"
   @manifest_vsn 1
@@ -251,6 +261,8 @@ defmodule Cinder.TestPartitions do
       File.rm_rf!(partition.log)
     end
 
+    run_fences!(hd(partitions), root, build, args, start)
+
     ended =
       partitions
       |> Task.async_stream(&%{&1 | status: start.(&1, count, args)},
@@ -283,6 +295,29 @@ defmodule Cinder.TestPartitions do
         Mix.raise(
           "mix test: #{length(failed)} of #{count} partitions failed: " <>
             Enum.map_join(failed, ", ", & &1.n)
+        )
+    end
+  end
+
+  # Runs the fences as a one-partition run in the first partition's build folder and database,
+  # which that partition reuses after it. A red fence prints its log, folds its failures into the
+  # build folder's manifest for `mix test.unchecked --failed`, and stops the run.
+  defp run_fences!(first, root, build, args, start) do
+    fences = %{first | log: Path.join(root, "fences.log")}
+    File.rm_rf!(fences.log)
+
+    case start.(fences, 1, args ++ @fence_paths) do
+      0 ->
+        :ok
+
+      status ->
+        Mix.shell().info("==> mix test: the fences exited #{status}")
+        IO.write(File.read!(fences.log))
+        merge_failures!(manifest(build), [manifest(fences.build)])
+
+        Mix.raise(
+          "mix test: the fences (#{Enum.join(@fence_paths, " ")}) exited #{status}, " <>
+            "so no partition started"
         )
     end
   end

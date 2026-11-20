@@ -428,6 +428,16 @@ The choice sits in `Poller.import_one/1` and `record_import/2` (then
 `BookPoller.import_one/1` and `handle_import_result/3`. Read them before giving a new error its
 path.
 
+A permanent submission failure (`Download.permanent_submission_errors/0`) reaches
+`Download.abandon_reserved/2` on each path that submits a reserved intent: the grab call that
+reserved it, a grab or `Download.start/1` that finds a stored intent, and
+`Download.reconcile_pending_intents/1`'s retry of one, which discards the result. A rule for
+such a failure that must hold on every path goes in `abandon_reserved/2`, where the book
+hold and the TV block live, not in a poller's grab call. The movie park in
+`MovieLifecycle.record_failure/2` still sits on the grab call only (#1491). On #1492 the TV block
+first went into the TV poller's grab call, which the retry never reaches: about 23 minutes from
+the review finding to the fix.
+
 The completion content check (`ContentPolicy.vet_completed/4`) holds on a walk timeout too. The
 watch answers `:content_check_timeout`, and each poller's `advance/1` keeps the download in
 transit without spending any budget, so the next tick checks it again. `:enotdir`, a single-file

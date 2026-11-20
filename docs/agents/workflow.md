@@ -81,6 +81,16 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
   it with `rg -n <term> docs lib`, and point to the place that already says it. On #828 the
   Standards review found the new profile-guard bullet repeating ADR 0004 item 5 and the health
   paragraph repeating the `Cinder.Health` moduledoc.
+- When an edit lengthens a line of a bullet, rewrap the whole bullet: print it rewrapped with
+  `sed -n '<first>,<last>p' <file> | fmt -c -w 100 | sed -E "s/([.?!][])\"']*)  /\1 /g"` (`fmt`
+  puts two spaces after a sentence it joins across a line end, also one that ends in `)` or a
+  quote) and paste that over the bullet with Edit. Then fix three things `fmt` does not see:
+  a one-line bullet's new lines, which it leaves unindented, a line that starts with `- `,
+  `* `, `+ ` or `1. `, which Markdown reads as a new item, and a code span split across two lines,
+  which `test/code_health/agent_doc_line_length_test.exs` fails in `docs/agents`, `docs/adr`
+  and `changelog.d`. On #1502 three hand rewraps each pushed the overflow onto the next line,
+  past that fence's 100-character limit, and on #850 hand rewraps of comment blocks took about
+  12 minutes.
 
 ## Tool claims
 

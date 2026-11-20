@@ -109,20 +109,20 @@
 - Select each test a mutant must kill by name: after the test file, give one
   `--only "test:test <name>"` per test. `<name>` is what a `--trace` run prints after `* test `:
   the test's name, prefixed by its `describe` block's name and a space when it sits in one. Put
-  a `\` before each `$`, backtick or `"` in the name. Check that the control's `N passed` equals
-  the number of names: a mistyped name among several drops its test, and the control passes on
-  the rest. When no name matches, the control ends on `Result: 0 tests` and
-  `scripts/mutation-check` exits 2.
+  a `\` before each `$`, backtick or `"` in the name. A mistyped name among several drops its
+  test, so `scripts/mutation-check` exits 2 when the control passes fewer tests than it has
+  names. When no name matches, the control ends on `Result: 0 tests` and the script exits 2. The
+  script also runs nothing and exits 2 on a `<file>:<line>` that starts no test or `describe`.
 - A `<file>:<line>` runs the closest test that starts at or above that line, or the whole
-  `describe` when the line is the `describe` line itself. A line above the test's own, such as
-  the blank line before it, or one that an edit above the test shifted, runs a neighbour. A
-  mutation check then tests that neighbour, and the script prints no test names for a pass. A
-  line above a file's first test, other than a `describe` line, runs no test, and
-  `mix test.unchecked` exits 0 on `Result: 0 tests`. On #1479 (for #1460)
-  `requests_test.exs:129` named the blank line above that PR's new test at line 130. `--dry-run`
-  on `6a5cd9ea` shows that line selects the test at line 114, and #1502 records three mutation
-  runs there that checked the wrong test. Before a direct `mix test.unchecked <file>:<line>` run,
-  check that `--dry-run` lists the test's own line.
+  `describe` when the line is the `describe` line itself. A line above the test's own, such
+  as the blank line before it, or one that an edit above the test shifted, runs a neighbour.
+  `scripts/mutation-check` refuses a line that starts no test or `describe`, but a shifted
+  line that lands on another test's first line still tests that test. A line above a file's
+  first test, other than a `describe` line, runs no test, and `mix test.unchecked` exits 0 on
+  `Result: 0 tests`. On #1479 (for #1460) `requests_test.exs:129` named the blank line above
+  that PR's new test at line 130. `--dry-run` on `6a5cd9ea` shows that line selects the test
+  at line 114, and #1502 records three mutation runs there that checked the wrong test. Before
+  a direct `mix test.unchecked <file>:<line>` run, check that `--dry-run` lists the test's own line.
 - Mutation-check every negative assertion: break the guard it fences and watch the test go red.
   Pair a refute on a collection with a positive control that proves the collection is the right
   one and populated, and refute the stem, not a guessed inflection. After a rename that changes
@@ -290,6 +290,11 @@
   fence's header promised less than its walk enforced, the Spec review found a `defp stub(fun)`
   wrapper that hid 50 SABnzbd stubs from it, and three re-check rounds found its header's list of
   missed forms false or incomplete: about 33 minutes from the first finding to the last fix.
+- An Elixir source-walk fence on some functions of one module starts its form list from the
+  forms the header of `test/code_health/manifest_writers_test.exs` catches and misses. On #1481
+  a Spec review, a Standards review and a re-check found `require ..., as:`, the quoted atom,
+  `Kernel.defdelegate` and an `as:` alias of the quoted atom one round at a time: about
+  32 minutes from the first finding to the last fix.
 - Give each rule a fence's own parser applies a fixture at its edges and a mutant in
   `scripts/mutation-check` that the fixture kills: a list or range syntax gets an empty, a
   reversed and a mixed entry (`fun/4..1`, `fun/1..4,3..1`); a joiner of wrapped lines gets each
@@ -311,7 +316,9 @@
   finding to the last fix.
 - The fence run is the alias's compile, format and Credo gates with the repo-wide fences:
   `mix test test/code_health_test.exs test/code_health` (under 30 s). Before a branch's first
-  full `mix test`, do the fence run with each test file the branch added or changed appended.
+  full `mix test`, do the fence run with each test file the branch added or changed appended. A
+  bare `mix test` runs the fences first too (AGENTS.md "Commands"), but it runs the branch's own
+  test files only in its partitions.
 - A docs-only branch does the fence run before its first push, in place of a full `mix test`. Each
   file it changes fits the first case of the review-fix bullet below; despite the term, that case
   also takes in scripts, workflows and `.agents/skills/` files. Append the test files that case
@@ -333,7 +340,12 @@
   not touch, on time limits and lost database connections, and each passed when run again outside
   the full suite (#1456, #1510 to #1512). After a full run that failed tests,
   `mix test.unchecked --failed` runs only those tests again; [ci.md](ci.md) "Flake" says when a
-  failure counts as a flake.
+  failure counts as a flake. To diagnose a flake that only full runs have shown, loop the failing
+  file with `mix test.unchecked --repeat-until-failure <count> <file>` beside the contention you
+  suspect (a logger flood or log captures turned on and off from a throwaway test, a CPU hog),
+  with a probe that prints the awaited message's latency. More full runs make no loop: on #1463
+  a one-process and a partitioned run took 18 and 10 minutes at a load of 20 to 65 and never
+  repeated the failure.
 - Once a full `mix test` passed on the branch, a review fix commit needs no second full suite
   before its push when each file it changes fits one of the three cases below. Do the fence run
   with the test files each case adds. CI runs the full suite on the push, which runs every file

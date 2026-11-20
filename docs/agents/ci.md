@@ -12,7 +12,8 @@
   `mix-test-output` artifact, kept 14 days. Once the gates pass, a partitioned run's output
   holds each partition's log under a
   `==> mix test: partition <n> of <count> exited <status>` line, the failed partitions last,
-  then one summary line per partition (AGENTS.md "Commands").
+  then one summary line per partition (AGENTS.md "Commands"). A red fence holds instead the
+  fences' log under `==> mix test: the fences exited <status>`, and no partition ran.
 - `container` builds the image, boots it, runs `Disk.exchange/2`'s `mv --exchange` fallback in
   the running node (`.github/scripts/mv_exchange_check.exs`, the only CI run of a real
   `mv --exchange`: the `test` job's coreutils lacks it), runs the Playwright browser smoke

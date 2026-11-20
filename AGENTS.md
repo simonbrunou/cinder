@@ -12,13 +12,15 @@ Audiobookshelf.
   does the fence run instead ([testing.md](docs/agents/testing.md)). The alias runs
   `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, then
   `test --warnings-as-errors`, which also fails on a compiler warning from a test file.
-- A bare `mix test` runs those gates once, then the suite in `CINDER_TEST_PARTITIONS` partitions
-  (default 4), each a process with its own database file and its own copy of the build folder.
+- A bare `mix test` runs those gates once, then the fences of [testing.md](docs/agents/testing.md)
+  "The fence run" alone, and stops there when one fails. Then it runs the suite in
+  `CINDER_TEST_PARTITIONS` partitions (default 4), each a process with its own database file and
+  its own copy of the build folder.
   It prints a failed partition's output last and exits non-zero, and `mix test.unchecked
   --failed` then reads the failures manifest one process would have left.
   `CINDER_TEST_PARTITIONS=1`, a path argument, or a switch outside the
   pass-through list in `Cinder.TestPartitions` (`test/support/test_partitions.ex`) runs one
-  process.
+  process, with no separate fence run.
 - Mix and Hex manage dependencies. The Elixir/OTP toolchain comes from the Nix flake dev shell;
   if `mix` is not on `PATH`, run `nix develop --command mix test`.
 - Before the first `mix` task in a fresh worktree, install its dependencies with
@@ -33,7 +35,8 @@ Read the matching doc before you act:
   request, adds a table or column, or runs in the background.
 - [Configuration](docs/agents/configuration.md): before adding a setting or env var, or touching
   secrets, a sign-in flow, `/settings`, the auth plugs or `/api/v1`.
-- [Testing](docs/agents/testing.md): before writing a test or calling a task done.
+- [Testing](docs/agents/testing.md): before writing a test, running `mix test` again after a
+  review fix, or calling a task done.
 - [Workflow](docs/agents/workflow.md): before starting a feature, an audit or a review, filing an
   issue, opening a PR, or cutting a release.
 - The `writing-for-agents` skill, then [workflow.md](docs/agents/workflow.md) "Agent docs":
