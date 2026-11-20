@@ -83,10 +83,13 @@
             # inotify-tools drives Phoenix live-reload on Linux (macOS uses fs_events).
             # cmake builds lazy_html's NIF from source (lexbor) when elixir_make cannot download
             # the precompiled one, which fails the same :httpc way as Tailwind (#889).
+            # nodejs_24 runs the hook tests under test/js (test/cinder_web/js_hooks_test.exs);
+            # CI's act-26.04 image has node 24 on PATH.
             packages = [
               elixir
               pkgs.git
               pkgs.cmake
+              pkgs.nodejs_24
               python
               tailwindcss
             ]

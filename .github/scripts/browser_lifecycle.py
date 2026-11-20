@@ -271,13 +271,13 @@ KINDLE_OBSERVER_INIT_SCRIPT = """
 })();
 """
 
-# Case 11's software authenticator (#1560). It replaces navigator.credentials.create and .get
-# with an ES256 key made by WebCrypto, so the passkey hooks in app.js and the release's WebAuthn
-# check (Wax) run end to end in headless Chromium, which shows no passkey dialog. Chromium
-# refuses an IP address as a relying party ID, and CI serves Cinder as PHX_HOST=127.0.0.1, so a
-# real ceremony cannot run here. The stub writes the origin the server expects,
-# `https://<rp id>` (prod serves https on port 443), into its client data. Its credential lives
-# in localStorage, so a sign-in after the cookies are cleared finds it.
+# Case 11's software authenticator (#1560). It replaces navigator.credentials.create and .get with
+# an ES256 key made by WebCrypto, so the passkey hooks (assets/js/passkeys.js) and the release's
+# WebAuthn check (Wax) run end to end in headless Chromium, which shows no passkey dialog.
+# Chromium refuses an IP address as a relying party ID, and CI serves Cinder as
+# PHX_HOST=127.0.0.1, so a real ceremony cannot run here. The stub writes the origin the server
+# expects, `https://<rp id>` (prod serves https on port 443), into its client data. Its credential
+# lives in localStorage, so a sign-in after the cookies are cleared finds it.
 SOFT_AUTHENTICATOR_INIT_SCRIPT = """
 (() => {
   const KEY = "cinder-ci-passkey";
@@ -853,9 +853,9 @@ def flash_texts(page):
 
 def case_11_passkey_add_then_sign_in(page):
     """A user adds a passkey in Account settings, then signs in with it from a fresh cookie jar
-    (#1560). It runs app.js's PasskeyRegister and PasskeySignIn hooks against the release's
-    WebAuthn check, through SOFT_AUTHENTICATOR_INIT_SCRIPT. Its own browser context keeps the
-    sign-out away from the other cases' page."""
+    (#1560). It runs the PasskeyRegister and PasskeySignIn hooks of assets/js/passkeys.js against
+    the release's WebAuthn check, through SOFT_AUTHENTICATOR_INIT_SCRIPT. Its own browser context
+    keeps the sign-out away from the other cases' page."""
     context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
     try:
         passkey_page = context.new_page()

@@ -47,9 +47,15 @@
   to the second fix. A re-check's table of 41 Locations over both versions found the last.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
-- A fix or a feature in client JS (`assets/js/`) gets its test as a case in a browser script
-  under `.github/scripts/`, which `mix test` does not run: [ci.md](ci.md) "Browser scripts
-  locally" says how to run one.
+- A fix or a feature in client JS (`assets/js/`) gets a test where it can run. A hook's logic
+  that stubs can drive (its pushes and their replies or failures, a rejoin, the browser dialog)
+  lives in its own module, such as `assets/js/passkeys.js`, and gets a Node test in
+  `test/js/<module>_test.mjs`. `mix test` runs each such file through
+  `test/cinder_web/js_hooks_test.exs`; run one alone with `node --test <file>` in the dev shell.
+  On #1568 each bug in the passkey hooks surfaced only in a review round, then in a throwaway
+  probe. Behaviour that needs a real page (a patch, focus, a WebAuthn ceremony) gets a case in a
+  browser script under `.github/scripts/`, which `mix test` does not run: [ci.md](ci.md)
+  "Browser scripts locally" says how to run one.
 - A LiveView test asserts on an element, never on the whole view's HTML
   (`deps/phoenix/usage-rules/liveview.md`): `has_element?(view, selector, text)` or
   `view |> element(selector, text) |> has_element?()`. An `assert render(view) =~ text` passes on

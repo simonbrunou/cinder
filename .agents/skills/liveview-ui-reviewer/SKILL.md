@@ -79,11 +79,11 @@ badge ranks Available over a stale Denied — preserve that.
 - The house fixes: a lone stateful input gets an `id` and `phx-update="ignore"`, a `<details>`
   gets an `id` and `phx-hook="DisclosureState"`, a form whose unsaved edits must survive gets an
   `id`, `phx-hook="FormState"` and `data-form-revision={@form_revision}`, with the assign bumped
-  on a successful save so the server's values win (both hooks live in `assets/js/app.js`; see
-  `settings_live.ex` for `FormState`). A list of forms gives each form its own revision, such as
-  `data-form-revision={passkey.name}` in `user_live/settings.ex`. Flag new browser-held state
-  with none of these fixes when it sits in no root, or in a root that reads or is passed an assign
-  that another event changes.
+  on a successful save so the server's values win (`DisclosureState` lives in `assets/js/app.js`,
+  `FormState` in `assets/js/form_state.js`; see `settings_live.ex` for `FormState`). A list of
+  forms gives each form its own revision, such as `data-form-revision={passkey.name}` in
+  `user_live/settings.ex`. Flag new browser-held state with none of these fixes when it sits in no
+  root, or in a root that reads or is passed an assign that another event changes.
 - LiveViewTest runs no morphdom, so a test only pins the attributes. The reset shows only in a
   real browser.
 
