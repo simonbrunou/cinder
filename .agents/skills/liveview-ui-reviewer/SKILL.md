@@ -61,14 +61,29 @@ badge ranks Available over a stale Denied — preserve that.
 - A catch-all `handle_event(_event, _params, socket)` must exist (phx-value is client-forged).
 
 **Browser-only state:**
-- Any LiveView patch, even one that never touches the element, lets morphdom reset state only the
-  browser holds: it copies the server's unchecked state onto a checkbox (the `#nav-drawer`
-  toggle), strips a user-set `open` from `<details>`, and overwrites unsaved form edits. The
-  house fixes: a lone stateful input gets an `id` and `phx-update="ignore"`, a `<details>` gets
-  an `id` and `phx-hook="DisclosureState"`, a form whose unsaved edits must survive gets an `id`,
-  `phx-hook="FormState"` and `data-form-revision={@form_revision}`, with the assign bumped on a
-  successful save so the server's values win (both hooks live in `assets/js/app.js`; see
-  `settings_live.ex` for `FormState`). Flag new browser-held state that has none of them.
+- A patch that changes a LiveView's assigns re-renders its page, and morphdom patches every
+  element it reaches. Inside a HEEx root the patch did not reach, it touches nothing: that root
+  comes back as a `data-phx-skip` placeholder (`toOutputBuffer` in LiveView's `rendered.js`).
+  A root is a template or function component whose whole body is one tag with no `:if` or `:for`
+  on it, such as `<.input>`'s fieldset `div` or `<.form>`'s `form`. The innermost root around an
+  element decides, and a patch reaches it when an assign that root reads or is passed changes.
+  Markup in no root is reached by every patch that re-renders the page: a `render/1` that opens
+  with `<Layouts.app>` is no root, and neither is `Layouts.app`, whose template has several
+  top-level tags. A reached element loses state only the browser holds: morphdom copies the
+  server's unchecked state onto a checkbox (the `#nav-drawer` toggle, before it got
+  `phx-update="ignore"`), strips a user-set `open` from `<details>`, and overwrites unsaved edits
+  in an input without focus. On #1568, before the `FormState` hooks went on the passkey forms, a
+  flash-only patch kept typed names, each in its own `<.input>` root. A refused rename set
+  `@passkey_errors`, which each row's `<.input>` and the add field's `<.input>` are passed, and on
+  the release image it turned another row's draft into its saved name and emptied the add field.
+- The house fixes: a lone stateful input gets an `id` and `phx-update="ignore"`, a `<details>`
+  gets an `id` and `phx-hook="DisclosureState"`, a form whose unsaved edits must survive gets an
+  `id`, `phx-hook="FormState"` and `data-form-revision={@form_revision}`, with the assign bumped
+  on a successful save so the server's values win (both hooks live in `assets/js/app.js`; see
+  `settings_live.ex` for `FormState`). A list of forms gives each form its own revision, such as
+  `data-form-revision={passkey.name}` in `user_live/settings.ex`. Flag new browser-held state
+  with none of these fixes when it sits in no root, or in a root that reads or is passed an assign
+  that another event changes.
 - LiveViewTest runs no morphdom, so a test only pins the attributes. The reset shows only in a
   real browser.
 
