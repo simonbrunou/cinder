@@ -226,5 +226,8 @@ defmodule CinderWeb.Router do
     get "/auth/oidc/callback", OIDCAuthController, :callback
 
     post "/auth/jellyfin", JellyfinAuthController, :create
+
+    post "/users/log-in/passkey/options", PasskeyAuthController, :options
+    post "/users/log-in/passkey", PasskeyAuthController, :create
   end
 end

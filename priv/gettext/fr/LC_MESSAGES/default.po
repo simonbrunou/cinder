@@ -358,6 +358,7 @@ msgstr "Tableau de bord"
 #: lib/cinder_web/live/profiles_live.ex
 #: lib/cinder_web/live/requests_live.ex
 #: lib/cinder_web/live/series_detail_components.ex
+#: lib/cinder_web/live/user_live/settings.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
 msgid "Delete"
@@ -1246,6 +1247,7 @@ msgstr "Souhaité"
 msgid "We can't find the internet"
 msgstr "Connexion Internet introuvable"
 
+#: lib/cinder_web/controllers/passkey_auth_controller.ex
 #: lib/cinder_web/controllers/user_session_controller.ex
 #, elixir-autogen
 msgid "Welcome back!"
@@ -7920,3 +7922,130 @@ msgstr "Vérifie que plex.tv renvoie le compte du propriétaire et la liste des 
 #, elixir-autogen, elixir-format
 msgid "Email changes need mail set up. Ask an admin to set an SMTP host in Settings."
 msgstr "Le changement d'e-mail nécessite un envoi de mails configuré. Demandez à un administrateur de renseigner un hôte SMTP dans Paramètres."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "A passkey name needs 1 to %{count} characters."
+msgstr "Le nom d’une clé d’accès doit compter de 1 à %{count} caractères."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Add a passkey"
+msgstr "Ajouter une clé d’accès"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Added %{date}"
+msgstr "Ajoutée le %{date}"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Delete passkey %{name}"
+msgstr "Supprimer la clé d’accès %{name}"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Delete this passkey? You can no longer sign in with it."
+msgstr "Supprimer cette clé d’accès ? Vous ne pourrez plus vous connecter avec."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "For example: Phone"
+msgstr "Par exemple : Téléphone"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Name for the new passkey"
+msgstr "Nom de la nouvelle clé d’accès"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey added."
+msgstr "Clé d’accès ajoutée."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey deleted."
+msgstr "Clé d’accès supprimée."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey name"
+msgstr "Nom de la clé d’accès"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey renamed."
+msgstr "Clé d’accès renommée."
+
+#: lib/cinder_web/controllers/passkey_auth_controller.ex
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey sign-in failed. Please try again."
+msgstr "La connexion par clé d’accès a échoué. Veuillez réessayer."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkeys"
+msgstr "Clés d’accès"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Rename"
+msgstr "Renommer"
+
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with a passkey"
+msgstr "Se connecter avec une clé d’accès"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with your fingerprint, face or device PIN instead of a password. Your other sign-in methods keep working."
+msgstr "Connectez-vous avec votre empreinte, votre visage ou le code de votre appareil au lieu d’un mot de passe. Vos autres méthodes de connexion restent disponibles."
+
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Stay logged in"
+msgstr "Rester connecté"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "That passkey no longer exists."
+msgstr "Cette clé d’accès n’existe plus."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "The passkey was not added. Please try again."
+msgstr "La clé d’accès n’a pas été ajoutée. Veuillez réessayer."
+
+#: lib/cinder_web/live/user_live/login.ex
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "This browser cannot use passkeys."
+msgstr "Ce navigateur ne peut pas utiliser de clés d’accès."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Too many passkey requests. Try again in a minute."
+msgstr "Trop de demandes de clé d’accès. Réessayez dans une minute."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "You have no passkeys yet."
+msgstr "Vous n’avez encore aucune clé d’accès."
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "last used %{date}"
+msgstr "dernière utilisation le %{date}"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey name (%{name})"
+msgstr "Nom de la clé d’accès (%{name})"
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Rename passkey %{name}"
+msgstr "Renommer la clé d’accès %{name}"

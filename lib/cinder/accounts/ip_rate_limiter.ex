@@ -32,6 +32,12 @@ defmodule Cinder.Accounts.IpRateLimiter do
       keyed on the user id: 1 per hour, so a member retrying eight times in a few minutes sends
       one notice. Honors `:ip_rate_limiting` like the IP buckets (user ids repeat across
       sandboxed tests).
+    * `:passkey_options` — the passkey challenges a client asks for
+      (`Cinder.Accounts.Passkeys`), keyed on `network_key/1` (an IPv6 /48) for a sign-in and on
+      `{:user, user_id}` for a registration, 1-minute window. Each request stores a challenge in
+      `Cinder.Accounts.PasskeyChallenges`, so each network holds at most 40 live sign-in
+      challenges there at the default 3-minute lifetime, against a 10,000 cap. The passkey
+      sign-in itself counts against `:login`.
 
   The other buckets are config-gated via `Application.get_env(:cinder,
   :ip_rate_limiting, true)` (default ON; `config/test.exs` defaults it OFF) because every
@@ -75,7 +81,8 @@ defmodule Cinder.Accounts.IpRateLimiter do
     request_cancel: 60 * 60 * 1000,
     user_password: 15 * 60 * 1000,
     user_email: 60 * 60 * 1000,
-    sign_in_refused: 60 * 60 * 1000
+    sign_in_refused: 60 * 60 * 1000,
+    passkey_options: 60_000
   }
   @sweep_ms 60_000
 
@@ -95,6 +102,20 @@ defmodule Cinder.Accounts.IpRateLimiter do
     do: {a, b, c, d, 0, 0, 0, 0} |> :inet.ntoa() |> to_string() |> Kernel.<>("/64")
 
   def client_key({_, _, _, _} = ipv4), do: ipv4 |> :inet.ntoa() |> to_string()
+
+  @doc """
+  A coarser key than `client_key/1` for a bucket whose requests take room in a shared store
+  (`:passkey_options`): IPv4 and IPv4-mapped IPv6 as the address, any other IPv6 masked to its
+  /48. An ISP or a host commonly hands one customer a /48 or a /56, which holds 65,536 or 256
+  /64s, so a /64 key would give one customer that many budgets.
+  """
+  @spec network_key(:inet.ip_address()) :: String.t()
+  def network_key({0, 0, 0, 0, 0, 0xFFFF, _, _} = mapped), do: client_key(mapped)
+
+  def network_key({a, b, c, _, _, _, _, _}),
+    do: {a, b, c, 0, 0, 0, 0, 0} |> :inet.ntoa() |> to_string() |> Kernel.<>("/48")
+
+  def network_key({_, _, _, _} = ipv4), do: client_key(ipv4)
 
   @doc """
   Atomically records an attempt and reports whether `bucket`/`id` is now over budget.

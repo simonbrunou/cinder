@@ -353,6 +353,7 @@ msgstr ""
 #: lib/cinder_web/live/profiles_live.ex
 #: lib/cinder_web/live/requests_live.ex
 #: lib/cinder_web/live/series_detail_components.ex
+#: lib/cinder_web/live/user_live/settings.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
 msgid "Delete"
@@ -1234,6 +1235,7 @@ msgstr ""
 msgid "We can't find the internet"
 msgstr ""
 
+#: lib/cinder_web/controllers/passkey_auth_controller.ex
 #: lib/cinder_web/controllers/user_session_controller.ex
 #, elixir-autogen
 msgid "Welcome back!"
@@ -7562,4 +7564,131 @@ msgstr ""
 #: lib/cinder_web/live/user_live/settings.ex
 #, elixir-autogen, elixir-format
 msgid "Email changes need mail set up. Ask an admin to set an SMTP host in Settings."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "A passkey name needs 1 to %{count} characters."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Add a passkey"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Added %{date}"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Delete passkey %{name}"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Delete this passkey? You can no longer sign in with it."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "For example: Phone"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Name for the new passkey"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey added."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey deleted."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey name"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey renamed."
+msgstr ""
+
+#: lib/cinder_web/controllers/passkey_auth_controller.ex
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey sign-in failed. Please try again."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkeys"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Rename"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with a passkey"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with your fingerprint, face or device PIN instead of a password. Your other sign-in methods keep working."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/login.ex
+#, elixir-autogen, elixir-format
+msgid "Stay logged in"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "That passkey no longer exists."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "The passkey was not added. Please try again."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/login.ex
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "This browser cannot use passkeys."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Too many passkey requests. Try again in a minute."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "You have no passkeys yet."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "last used %{date}"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Passkey name (%{name})"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Rename passkey %{name}"
 msgstr ""

@@ -29,6 +29,22 @@ defmodule Cinder.Accounts.IpRateLimiterTest do
     assert IpRateLimiter.check_and_register(:login, @ip) == :blocked
   end
 
+  test "the :passkey_options window lasts one minute from its first request" do
+    key = {:passkey_options, @ip}
+    started = fn ago -> :ets.update_element(:cinder_ip_attempts, key, {3, now() - ago}) end
+
+    for _ <- 1..10, do: assert(IpRateLimiter.check_and_register(:passkey_options, @ip) == :ok)
+    assert IpRateLimiter.check_and_register(:passkey_options, @ip) == :blocked
+
+    started.(59_000)
+    assert IpRateLimiter.check_and_register(:passkey_options, @ip) == :blocked
+
+    started.(60_001)
+    assert IpRateLimiter.check_and_register(:passkey_options, @ip) == :ok
+  end
+
+  defp now, do: System.monotonic_time(:millisecond)
+
   test "check_and_register is atomic under a concurrent burst (no bypass)" do
     parent = self()
 
@@ -103,6 +119,17 @@ defmodule Cinder.Accounts.IpRateLimiterTest do
 
     refute IpRateLimiter.client_key({0x2001, 0xDB8, 0, 1, 0, 0, 0, 1}) ==
              IpRateLimiter.client_key({0x2001, 0xDB8, 0, 2, 0, 0, 0, 1})
+  end
+
+  test "network_key/1 keeps IPv4 and IPv4-mapped IPv6 per address, and masks other IPv6 to /48" do
+    assert IpRateLimiter.network_key({203, 0, 113, 7}) == "203.0.113.7"
+    assert IpRateLimiter.network_key({0, 0, 0, 0, 0, 0xFFFF, 0xCB00, 0x7107}) == "203.0.113.7"
+    refute IpRateLimiter.network_key({0, 0, 0, 0, 0, 0xFFFF, 0xCB00, 0x7108}) == "203.0.113.7"
+
+    # Two /64s of one /48 share a key; another /48 has its own.
+    assert IpRateLimiter.network_key({0x2001, 0xDB8, 0, 1, 1, 2, 3, 4}) == "2001:db8::/48"
+    assert IpRateLimiter.network_key({0x2001, 0xDB8, 0, 0xFF, 0, 0, 0, 9}) == "2001:db8::/48"
+    assert IpRateLimiter.network_key({0x2001, 0xDB8, 1, 1, 0, 0, 0, 1}) == "2001:db8:1::/48"
   end
 
   # Fills the bucket's whole budget so the next attempt is the over-budget one.

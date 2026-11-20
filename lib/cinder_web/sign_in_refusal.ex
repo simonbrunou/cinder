@@ -1,7 +1,7 @@
 defmodule CinderWeb.SignInRefusal do
   @moduledoc """
-  The one warning line a refused Plex, Jellyfin or OIDC sign-in or link writes, so the next
-  sign-in outage takes one log search to diagnose (#1206):
+  The one warning line a refused Plex, Jellyfin or OIDC sign-in or link, or a refused passkey
+  sign-in POST, writes, so the next sign-in outage takes one log search to diagnose (#1206):
 
       plex_signin refused intent=login step=server_access plex_id=42 shares=3 reason=forbidden
 
@@ -39,7 +39,12 @@ defmodule CinderWeb.SignInRefusal do
   @typedoc "A refused step: its name, the reason it gave, and any extra fields to log."
   @type t :: {:refused, step :: atom(), reason :: term(), fields :: keyword()}
 
-  @prefixes %{plex: "plex_signin", jellyfin: "jellyfin_signin", oidc: "oidc_signin"}
+  @prefixes %{
+    plex: "plex_signin",
+    jellyfin: "jellyfin_signin",
+    oidc: "oidc_signin",
+    passkey: "passkey_signin"
+  }
 
   @doc """
   Tags the result of the step named `step`. `{:ok, value}` passes through, `{:error, reason}`
@@ -60,7 +65,7 @@ defmodule CinderWeb.SignInRefusal do
   Writes the warning line of `refusal` for `provider`: the provider's prefix, then `context`
   (`intent:`), `step=`, the refusal's own fields and last `reason=`.
   """
-  @spec warn(:plex | :jellyfin | :oidc, t(), keyword()) :: :ok
+  @spec warn(:plex | :jellyfin | :oidc | :passkey, t(), keyword()) :: :ok
   def warn(provider, {:refused, step, reason, fields}, context \\ []) do
     pairs = context ++ [step: step] ++ fields ++ [reason: reason]
     line = Enum.map_join(pairs, " ", fn {key, value} -> "#{key}=#{render(value)}" end)

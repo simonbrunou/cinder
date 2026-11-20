@@ -6,7 +6,10 @@ defmodule CinderWeb.UserLive.Settings do
   alias Cinder.Accounts
   alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.JellyfinAuth
+  alias Cinder.Accounts.Passkeys
   alias Cinder.Accounts.PlexAuth
+  alias Cinder.Accounts.UserPasskey
+  alias CinderWeb.LiveHelpers
   alias CinderWeb.UserAuth
 
   @impl true
@@ -261,6 +264,100 @@ defmodule CinderWeb.UserLive.Settings do
 
       <div class="divider" />
 
+      <section id="passkeys" class="text-left" aria-labelledby="passkeys_heading">
+        <h3 id="passkeys_heading" class="text-lg font-semibold">{gettext("Passkeys")}</h3>
+        <p class="mt-2">
+          {gettext(
+            "Sign in with your fingerprint, face or device PIN instead of a password. Your other sign-in methods keep working."
+          )}
+        </p>
+
+        <ul :if={@passkeys != []} id="passkey_list" class="mt-2 space-y-3">
+          <li :for={passkey <- @passkeys} id={"passkey-#{passkey.id}"}>
+            <.form
+              for={to_form(%{"name" => passkey.name}, as: "passkey_name")}
+              id={"rename_passkey_#{passkey.id}"}
+              phx-submit="rename_passkey"
+              phx-hook="FormState"
+              data-form-revision={passkey.name}
+              class="flex flex-wrap items-end gap-2"
+            >
+              <input type="hidden" name="passkey_id" value={passkey.id} />
+              <%!-- Each row names its passkey in its accessible names: with several rows, a
+              screen reader otherwise hears the same field and buttons on every one. --%>
+              <div class="grow">
+                <.input
+                  id={"passkey_name_#{passkey.id}"}
+                  name="name"
+                  value={passkey.name}
+                  type="text"
+                  label={gettext("Passkey name")}
+                  aria-label={gettext("Passkey name (%{name})", name: passkey.name)}
+                  errors={Map.get(@passkey_errors, passkey.id, [])}
+                  maxlength={Cinder.Accounts.UserPasskey.max_name_length()}
+                  required
+                />
+              </div>
+              <.button
+                variant="neutral"
+                phx-disable-with={gettext("Saving…")}
+                aria-label={gettext("Rename passkey %{name}", name: passkey.name)}
+              >
+                {gettext("Rename")}
+              </.button>
+              <.button
+                type="button"
+                variant="danger"
+                phx-click="delete_passkey"
+                phx-value-id={passkey.id}
+                aria-label={gettext("Delete passkey %{name}", name: passkey.name)}
+                data-confirm={gettext("Delete this passkey? You can no longer sign in with it.")}
+              >
+                {gettext("Delete")}
+              </.button>
+            </.form>
+            <p class="text-sm opacity-70">
+              {gettext("Added %{date}", date: LiveHelpers.format_date_year(passkey.inserted_at))}
+              <span :if={passkey.last_used_at}>
+                · {gettext("last used %{date}",
+                  date: LiveHelpers.format_date_year(passkey.last_used_at)
+                )}
+              </span>
+            </p>
+          </li>
+        </ul>
+        <p :if={@passkeys == []} id="passkey_empty" class="mt-2 text-sm opacity-70">
+          {gettext("You have no passkeys yet.")}
+        </p>
+
+        <%!-- The PasskeyRegister hook asks for the options, runs the browser's passkey dialog
+        and sends the result back; nothing here is submitted as a form. Like FormState, it keeps
+        the typed name across a patch until a new passkey bumps the revision. --%>
+        <form
+          id="add_passkey_form"
+          phx-hook="PasskeyRegister"
+          data-form-revision={@passkeys_added}
+          class="mt-3"
+        >
+          <.input
+            id="new_passkey_name"
+            name="name"
+            value=""
+            type="text"
+            label={gettext("Name for the new passkey")}
+            placeholder={gettext("For example: Phone")}
+            errors={Map.get(@passkey_errors, :new, [])}
+            maxlength={Cinder.Accounts.UserPasskey.max_name_length()}
+            required
+          />
+          <.button id="add_passkey_button" variant="primary">
+            {gettext("Add a passkey")}
+          </.button>
+        </form>
+      </section>
+
+      <div class="divider" />
+
       <div class="text-left">
         <h3 class="text-lg font-semibold">{gettext("Your data")}</h3>
         <p class="mt-2">
@@ -336,6 +433,9 @@ defmodule CinderWeb.UserLive.Settings do
       |> assign(:delete_form, to_form(%{}, as: "delete_account"))
       |> assign(:jellyfin_form, to_form(%{}, as: "jellyfin"))
       |> assign(:trigger_submit, false)
+      |> assign(:passkey_errors, %{})
+      |> assign(:passkeys_added, 0)
+      |> assign_passkeys()
 
     {:ok, socket}
   end
@@ -506,8 +606,186 @@ defmodule CinderWeb.UserLive.Settings do
     end)
   end
 
+  # The PasskeyRegister hook's first step: a sensitive change, so sudo is rechecked here and again
+  # on "passkey_register". The reply carries the challenge's handle and the WebAuthn options; the
+  # socket keeps neither.
+  def handle_event("passkey_registration_options", params, socket) do
+    user = socket.assigns.current_scope.user
+    # A frame of another shape is forgeable: it reads as no name, which the check below refuses.
+    name =
+      case params do
+        %{"passkey" => %{"name" => name}} when is_binary(name) -> name
+        _ -> nil
+      end
+
+    cond do
+      not Accounts.sudo_mode?(user) ->
+        {:reply, %{ok: false}, require_reauth(socket)}
+
+      not (%UserPasskey{} |> UserPasskey.rename_changeset(%{"name" => name})).valid? ->
+        {:reply, %{ok: false}, put_passkey_name_error(socket, :new)}
+
+      true ->
+        # An accepted name drops the error an earlier name left on the field.
+        socket |> clear_passkey_name_error(:new) |> passkey_registration_options(user)
+    end
+  end
+
+  # Replies `ok` so the hook clears the name field only once the passkey is stored.
+  def handle_event("passkey_register", params, socket) do
+    user = socket.assigns.current_scope.user
+
+    passkey =
+      case params do
+        %{"passkey" => %{} = passkey} -> passkey
+        _ -> %{}
+      end
+
+    if Accounts.sudo_mode?(user) do
+      case Passkeys.register(user, passkey["handle"], passkey["response"], passkey["name"]) do
+        {:ok, _passkey} ->
+          {:reply, %{ok: true},
+           socket
+           |> assign_passkeys()
+           |> update(:passkeys_added, &(&1 + 1))
+           |> clear_passkey_name_error(:new)
+           |> passkey_flash(:info, gettext("Passkey added."))}
+
+        {:error, %Ecto.Changeset{}} ->
+          {:reply, %{ok: false}, put_passkey_name_error(socket, :new)}
+
+        {:error, _reason} ->
+          {:reply, %{ok: false}, passkey_flash(socket, :error, passkey_add_failed())}
+      end
+    else
+      {:reply, %{ok: false}, require_reauth(socket)}
+    end
+  end
+
+  # The hook reports a ceremony that ended in the browser (cancelled, unsupported).
+  def handle_event("passkey_failed", params, socket) do
+    message =
+      case params do
+        %{"reason" => "unsupported"} -> gettext("This browser cannot use passkeys.")
+        _ -> passkey_add_failed()
+      end
+
+    {:noreply, passkey_flash(socket, :error, message)}
+  end
+
+  # Renaming changes nothing about who can sign in, so like the toggles above it needs no sudo
+  # recheck; the page itself needs sudo at mount.
+  def handle_event("rename_passkey", %{"passkey_id" => id, "name" => name}, socket) do
+    user = socket.assigns.current_scope.user
+
+    with {:ok, id} <- parse_id(id),
+         {:ok, _passkey} <- rename_or_mark(user, id, name) do
+      {:noreply,
+       socket
+       |> assign_passkeys()
+       |> clear_passkey_name_error(id)
+       |> passkey_flash(:info, gettext("Passkey renamed."))}
+    else
+      {:invalid_name, id} ->
+        {:noreply, put_passkey_name_error(socket, id)}
+
+      _ ->
+        {:noreply, socket |> assign_passkeys() |> passkey_flash(:error, passkey_not_found())}
+    end
+  end
+
+  def handle_event("delete_passkey", %{"id" => id}, socket) do
+    with_sudo_mode(socket, fn ->
+      with {:ok, id} <- parse_id(id),
+           :ok <- Passkeys.delete(socket.assigns.current_scope.user, id) do
+        {:noreply,
+         socket
+         |> assign_passkeys()
+         |> clear_passkey_name_error(id)
+         |> passkey_flash(:info, gettext("Passkey deleted."))}
+      else
+        _ -> {:noreply, socket |> assign_passkeys() |> passkey_flash(:error, passkey_not_found())}
+      end
+    end)
+  end
+
   # Client event frames are forgeable — ignore anything unrecognized rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # Only what the page shows: the credential id and the public key stay out of the socket.
+  defp assign_passkeys(socket) do
+    passkeys =
+      socket.assigns.current_scope.user
+      |> Passkeys.list()
+      |> Enum.map(&Map.take(&1, [:id, :name, :inserted_at, :last_used_at]))
+
+    assign(socket, :passkeys, passkeys)
+  end
+
+  defp parse_id(id) when is_integer(id), do: {:ok, id}
+
+  defp parse_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {id, ""} -> {:ok, id}
+      _ -> :error
+    end
+  end
+
+  defp parse_id(_id), do: :error
+
+  defp passkey_name_error do
+    gettext("A passkey name needs 1 to %{count} characters.",
+      count: UserPasskey.max_name_length()
+    )
+  end
+
+  defp rename_or_mark(user, id, name) do
+    case Passkeys.rename(user, id, %{"name" => name}) do
+      {:error, %Ecto.Changeset{}} -> {:invalid_name, id}
+      other -> other
+    end
+  end
+
+  # A passkey action's outcome replaces the one before it, so a success never shows beside the
+  # error of an earlier attempt.
+  defp passkey_flash(socket, kind, message) do
+    socket |> clear_flash(:info) |> clear_flash(:error) |> put_flash(kind, message)
+  end
+
+  defp passkey_registration_options(socket, user) do
+    if IpRateLimiter.check_and_register(:passkey_options, {:user, user.id}) == :blocked do
+      {:reply, %{ok: false},
+       passkey_flash(socket, :error, gettext("Too many passkey requests. Try again in a minute."))}
+    else
+      case Passkeys.registration_options(user, CinderWeb.Passkey.relying_party()) do
+        {:ok, %{handle: handle, options: options}} ->
+          {:reply, %{ok: true, handle: handle, publicKey: options}, socket}
+
+        {:error, _reason} ->
+          {:reply, %{ok: false}, passkey_flash(socket, :error, passkey_add_failed())}
+      end
+    end
+  end
+
+  # The name error shows on the field (`:new` for the add form, a passkey id for its row) and in
+  # the flash.
+  defp put_passkey_name_error(socket, key) do
+    socket
+    |> update(:passkey_errors, &Map.put(&1, key, [passkey_name_error()]))
+    |> passkey_flash(:error, passkey_name_error())
+  end
+
+  defp clear_passkey_name_error(socket, key),
+    do: update(socket, :passkey_errors, &Map.delete(&1, key))
+
+  defp passkey_add_failed, do: gettext("The passkey was not added. Please try again.")
+  defp passkey_not_found, do: gettext("That passkey no longer exists.")
+
+  defp require_reauth(socket) do
+    socket
+    |> put_flash(:error, gettext("You must re-authenticate to access this page."))
+    |> redirect(to: ~p"/users/log-in")
+  end
 
   defp update_email(socket, %{"user" => user_params}) do
     user = socket.assigns.current_scope.user
@@ -560,18 +838,16 @@ defmodule CinderWeb.UserLive.Settings do
   end
 
   # Per-event sudo recheck for the sensitive settings actions (email/password change, Plex
-  # unlink). The mount-time :require_sudo_mode gate only covers the moment the socket connects;
-  # a LiveView can stay open past the sudo window, so each sensitive event rechecks freshness
-  # against the same shared window (`Accounts.sudo_mode?/1`) and — on expiry — redirects to
-  # reauthentication instead of crashing the process on a failed `true = ...` match.
+  # unlink, adding or deleting a passkey). The mount-time :require_sudo_mode gate only covers the
+  # moment the socket connects; a LiveView can stay open past the sudo window, so each sensitive
+  # event rechecks freshness against the same shared window (`Accounts.sudo_mode?/1`) and — on
+  # expiry — redirects to reauthentication instead of crashing the process on a failed
+  # `true = ...` match.
   defp with_sudo_mode(socket, fun) do
     if Accounts.sudo_mode?(socket.assigns.current_scope.user) do
       fun.()
     else
-      {:noreply,
-       socket
-       |> put_flash(:error, gettext("You must re-authenticate to access this page."))
-       |> redirect(to: ~p"/users/log-in")}
+      {:noreply, require_reauth(socket)}
     end
   end
 end

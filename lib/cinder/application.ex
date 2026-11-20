@@ -65,6 +65,7 @@ defmodule Cinder.Application do
         # Owns the auth rate-limit ETS table (the {ip, email} login guard plus the IP-only
         # registration and login floors); must be up before the Endpoint serves logins.
         Cinder.Accounts.IpRateLimiter,
+        Cinder.Accounts.PasskeyChallenges,
         CinderWeb.Endpoint
       ] ++
       [

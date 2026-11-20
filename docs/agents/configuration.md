@@ -6,6 +6,10 @@ Only boot-only keys are environment variables, because they are needed before th
 is up or are fixed per deployment: `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST`, `PHX_SERVER`,
 `PORT`, `POOL_SIZE`, `RELEASE_NAME`.
 
+`PHX_HOST` also binds passkeys: `CinderWeb.Passkey.relying_party/1` takes the RP ID and origin
+from the endpoint URL, `https://<PHX_HOST>` in production, so an install served under another host
+name sets `PHX_HOST` to that name, or adding and using passkeys fail there.
+
 Everything else (external-service URLs, API keys, the media-server choice) lives in the
 `Cinder.Settings` store: DB-backed, editable in `/settings`, overlaid on env as bootstrap. A new
 service config value gets a setting definition in `Cinder.Settings.Registry`, never a new
@@ -72,8 +76,14 @@ site:
 
 - Secret rows are Cloak-encrypted at rest, with a key derived from `SECRET_KEY_BASE`.
 - A secret never appears in a form value, a socket assign or a log line.
-- A refused Plex, Jellyfin or OIDC sign-in or link logs through `CinderWeb.SignInRefusal`, whose
-  `render/1` prints only the closed set of shapes its moduledoc lists. An identity provider's
+- A passkey's credential id, public key, challenge and user handle are logged nowhere: the
+  WebAuthn fields travel under a `passkey` key, which `config :phoenix, :filter_parameters`
+  filters from request and LiveView event logs, and `Cinder.Accounts.Passkeys` runs its queries
+  that carry them with `log: false`.
+- A refused Plex, Jellyfin or OIDC sign-in or link, and a refused passkey sign-in POST
+  (`CinderWeb.PasskeyAuthController.create/2`), log through
+  `CinderWeb.SignInRefusal`, whose `render/1` prints only the closed set of shapes its moduledoc
+  lists. An identity provider's
   library writes what it rejected into its message text (Assent's
   `Invalid issuer "<iss>" in ID Token`) and the whole HTTP response into an exception's
   `message/1`, so neither `HTTPPolicy.sanitize_log/1` nor a mask over that text keeps a claim's

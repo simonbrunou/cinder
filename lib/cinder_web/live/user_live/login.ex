@@ -59,9 +59,42 @@ defmodule CinderWeb.UserLive.Login do
           </.button>
         </.form>
 
-        <%= if @plex_login_available? or @jellyfin_login_available? or @oidc_login_available? do %>
-          <div class="divider">{gettext("or")}</div>
-        <% end %>
+        <div class="divider">{gettext("or")}</div>
+
+        <%!-- The PasskeySignIn hook fetches the options, asks the browser for the passkey, fills
+        the hidden fields and submits the form. phx-update="ignore" keeps a re-render from
+        clearing what it filled. --%>
+        <.form
+          for={@passkey_form}
+          id="passkey_login_form"
+          action={~p"/users/log-in/passkey"}
+          method="post"
+          phx-hook="PasskeySignIn"
+          data-options-url={~p"/users/log-in/passkey/options"}
+        >
+          <div id="passkey_login_fields" phx-update="ignore">
+            <input
+              :for={field <- ~w(id authenticatorData clientDataJSON signature userHandle)}
+              type="hidden"
+              name={"passkey[#{field}]"}
+              data-passkey-field={field}
+            />
+          </div>
+          <label :if={!@current_scope} class="label cursor-pointer justify-start gap-2">
+            <input type="checkbox" name="passkey[remember_me]" value="true" class="checkbox" />
+            <span class="label-text">{gettext("Stay logged in")}</span>
+          </label>
+          <.button
+            type="button"
+            id="passkey_login_button"
+            variant="neutral"
+            class="w-full mt-2"
+            data-passkey-start
+          >
+            <.icon name="hero-finger-print" class="size-4" />
+            {gettext("Sign in with a passkey")}
+          </.button>
+        </.form>
 
         <%= if @plex_login_available? do %>
           <.plex_button href={~p"/auth/plex"} label={gettext("Sign in with Plex")} />
@@ -122,6 +155,7 @@ defmodule CinderWeb.UserLive.Login do
      assign(socket,
        form: form,
        jellyfin_form: to_form(%{}, as: "jellyfin"),
+       passkey_form: to_form(%{}, as: "passkey"),
        trigger_submit: false,
        plex_login_available?: PlexAuth.configured?(),
        jellyfin_login_available?: JellyfinAuth.configured?(),
@@ -132,6 +166,19 @@ defmodule CinderWeb.UserLive.Login do
   @impl true
   def handle_event("submit_password", _params, socket) do
     {:noreply, assign(socket, :trigger_submit, true)}
+  end
+
+  # The PasskeySignIn hook reports a ceremony that ended in the browser: the user cancelled, the
+  # browser has no passkey support, or the options request failed. Only these reasons get their
+  # own text; any other value gets the generic one.
+  def handle_event("passkey_failed", params, socket) do
+    message =
+      case params do
+        %{"reason" => "unsupported"} -> gettext("This browser cannot use passkeys.")
+        _ -> gettext("Passkey sign-in failed. Please try again.")
+      end
+
+    {:noreply, socket |> clear_flash() |> put_flash(:error, message)}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.

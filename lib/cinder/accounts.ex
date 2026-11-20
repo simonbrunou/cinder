@@ -6,7 +6,7 @@ defmodule Cinder.Accounts do
   import Ecto.Query, warn: false
   alias Cinder.Repo
 
-  alias Cinder.Accounts.{IpRateLimiter, User, UserNotifier, UserToken}
+  alias Cinder.Accounts.{IpRateLimiter, Passkeys, User, UserNotifier, UserToken}
   alias Cinder.Audit
   alias Cinder.Audit.AdminAudit
   alias Cinder.Library.MediaServer
@@ -936,7 +936,8 @@ defmodule Cinder.Accounts do
       request_quota: user.request_quota,
       active: user.active,
       confirmed_at: iso(user.confirmed_at),
-      inserted_at: iso(user.inserted_at)
+      inserted_at: iso(user.inserted_at),
+      passkeys: Passkeys.export(user)
     }
   end
 

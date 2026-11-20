@@ -26,6 +26,9 @@ defmodule Cinder.Accounts.User do
     field :oidc_issuer, :string
     field :oidc_subject, :string
     field :oidc_name, :string
+    # The WebAuthn user handle of this user's passkeys (`Cinder.Accounts.Passkeys`): 32 random
+    # bytes set on the first passkey registration, never exported or rendered.
+    field :passkey_handle, :binary, redact: true
 
     timestamps(type: :utc_datetime)
   end

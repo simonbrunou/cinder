@@ -158,12 +158,32 @@ terminate at a reverse proxy):
   ownership, so Cinder will not link the two for you. Repair it by hand from `/users`: **Reset
   password** on the original account, let its owner sign in with that password and link Jellyfin
   from Account settings, then deny the duplicate.
+- **Sign in with a passkey:** any signed-in user, admins included, can add passkeys from Account
+  settings (`/users/settings`, section **Passkeys**): type a name such as "Phone", press **Add a
+  passkey**, and confirm in the browser's or the phone's passkey dialog. Account settings opens
+  only after a recent sign-in. On a settings page left open past that window, adding or deleting
+  a passkey asks for a new sign-in, like the other sensitive account changes; renaming on that
+  page does not.
+  The log-in page offers **Sign in with a passkey** to everyone, with no email to type first; it
+  signs in only with a passkey added here. A passkey is an extra way to sign in, next to the
+  methods the install already offers: it replaces none of them and is not a second factor. Cinder
+  refuses a passkey, when it is added or used, unless the authenticator verified the user (a PIN,
+  a fingerprint or a face). A signed-in user whose recent-sign-in window lapsed can use their own
+  passkey on the log-in page to renew it. A passkey works only at `https://$PHX_HOST`: browsers
+  must reach Cinder over https, on port 443, under the domain name `PHX_HOST` holds. Browsers
+  refuse an IP address as a passkey's host, and Cinder refuses a passkey made at any other
+  address, so a second domain or plain http, such as the quickstart's `http://localhost:4000`,
+  cannot add or use one. Changing `PHX_HOST` later leaves the passkeys made for the old name
+  unusable; add new ones. Each passkey sign-in attempt counts against the same per-address limit
+  as password login. Each IPv4 address or IPv6 /48 may start 10 passkey sign-ins a minute.
 
 ## Privacy & GDPR
 
 The instance operator is the data controller. Cinder stores user emails, hashed passwords,
 locales, email-notification preferences (`notify_email`), and Plex identifiers/usernames
-(`plex_id`, `plex_username`), Jellyfin identifiers/usernames, and OIDC issuer/subject/display name;
+(`plex_id`, `plex_username`), Jellyfin identifiers/usernames, OIDC issuer/subject/display name,
+each passkey's name, dates, sign count, credential id and public key (never a private key), and
+the random passkey user handle stored from a user's first request to add a passkey;
 session and email-change tokens (including a `sent_to` copy of the email); requests attributed by
 `user_id`; and an append-only `admin_audit` trail containing actor ids only.
 

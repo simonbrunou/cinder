@@ -9,7 +9,7 @@ The other five of the first seven cases cover the rest of each lifecycle's real 
 future change to either has the same chance of being caught before review as everything else in
 this app. Cases 8 to 10 cover #702: a failed poster whose card a live update re-renders, a
 poster whose `src` a live update changes, and a stalled poster whose 3-second reveal must
-survive a re-render.
+survive a re-render. Case 11 adds a passkey and signs in with it (#1560).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -268,6 +268,110 @@ KINDLE_OBSERVER_INIT_SCRIPT = """
     }
     return result;
   };
+})();
+"""
+
+# Case 11's software authenticator (#1560). It replaces navigator.credentials.create and .get
+# with an ES256 key made by WebCrypto, so the passkey hooks in app.js and the release's WebAuthn
+# check (Wax) run end to end in headless Chromium, which shows no passkey dialog. Chromium
+# refuses an IP address as a relying party ID, and CI serves Cinder as PHX_HOST=127.0.0.1, so a
+# real ceremony cannot run here. The stub writes the origin the server expects,
+# `https://<rp id>` (prod serves https on port 443), into its client data. Its credential lives
+# in localStorage, so a sign-in after the cookies are cleared finds it.
+SOFT_AUTHENTICATOR_INIT_SCRIPT = """
+(() => {
+  const KEY = "cinder-ci-passkey";
+  const enc = new TextEncoder();
+  const concat = (...parts) => {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) { out.set(p, at); at += p.length; }
+    return out;
+  };
+  const b64url = bytes => btoa(String.fromCharCode(...bytes))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
+  const unb64url = text => {
+    const b = text.replace(/-/g, "+").replace(/_/g, "/");
+    return Uint8Array.from(atob(b + "=".repeat((4 - b.length % 4) % 4)), c => c.charCodeAt(0));
+  };
+  const bytesOf = value => new Uint8Array(value instanceof ArrayBuffer ? value : value.buffer
+    .slice(value.byteOffset, value.byteOffset + value.byteLength));
+  const sha256 = async bytes => new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  // CBOR heads for the few shapes an attestation needs (RFC 8949 section 3).
+  const head = (major, length) => length < 24 ? Uint8Array.of(major << 5 | length)
+    : length < 256 ? Uint8Array.of(major << 5 | 24, length)
+    : Uint8Array.of(major << 5 | 25, length >> 8, length & 255);
+  const cborBytes = bytes => concat(head(2, bytes.length), bytes);
+  const cborText = text => concat(head(3, enc.encode(text).length), enc.encode(text));
+  const u32 = n => Uint8Array.of(n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255);
+  // WebCrypto signs ECDSA as raw r || s; WebAuthn's ES256 signature is DER.
+  const derInt = bytes => {
+    let i = 0;
+    while (i < bytes.length - 1 && bytes[i] === 0) i++;
+    const v = bytes.slice(i);
+    return v[0] & 128 ? concat(Uint8Array.of(2, v.length + 1, 0), v)
+      : concat(Uint8Array.of(2, v.length), v);
+  };
+  const der = raw => {
+    const body = concat(derInt(raw.slice(0, 32)), derInt(raw.slice(32)));
+    return concat(Uint8Array.of(48, body.length), body);
+  };
+  const clientData = (type, challenge, rpId) => enc.encode(JSON.stringify({
+    type, challenge: b64url(bytesOf(challenge)), origin: `https://${rpId}`, crossOrigin: false,
+  }));
+  const credential = (rawId, response) => ({
+    id: b64url(rawId), rawId: rawId.buffer, type: "public-key", response,
+    getClientExtensionResults: () => ({}),
+  });
+
+  async function create({publicKey}) {
+    const rpId = publicKey.rp.id;
+    const pair = await crypto.subtle.generateKey(
+      {name: "ECDSA", namedCurve: "P-256"}, true, ["sign"]);
+    const point = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    // COSE key {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}.
+    const coseKey = concat(Uint8Array.of(0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21),
+      cborBytes(point.slice(1, 33)), Uint8Array.of(0x22), cborBytes(point.slice(33)));
+    const rawId = crypto.getRandomValues(new Uint8Array(16));
+    // Flags UP | UV | AT, sign count 0, a zero AAGUID.
+    const authData = concat(await sha256(enc.encode(rpId)), Uint8Array.of(0x45), u32(0),
+      new Uint8Array(16), Uint8Array.of(0, rawId.length), rawId, coseKey);
+    const attestationObject = concat(Uint8Array.of(0xa3), cborText("fmt"), cborText("none"),
+      cborText("attStmt"), Uint8Array.of(0xa0), cborText("authData"), cborBytes(authData));
+    localStorage.setItem(KEY, JSON.stringify({
+      rawId: b64url(rawId), userHandle: b64url(bytesOf(publicKey.user.id)), signCount: 0,
+      key: await crypto.subtle.exportKey("jwk", pair.privateKey),
+    }));
+    return credential(rawId, {
+      clientDataJSON: clientData("webauthn.create", publicKey.challenge, rpId).buffer,
+      attestationObject: attestationObject.buffer,
+    });
+  }
+
+  async function get({publicKey}) {
+    const stored = JSON.parse(localStorage.getItem(KEY) || "null");
+    if (!stored) throw new DOMException("no credential", "NotAllowedError");
+    stored.signCount += 1;
+    localStorage.setItem(KEY, JSON.stringify(stored));
+    const key = await crypto.subtle.importKey(
+      "jwk", stored.key, {name: "ECDSA", namedCurve: "P-256"}, false, ["sign"]);
+    const clientDataJSON = clientData("webauthn.get", publicKey.challenge, publicKey.rpId);
+    // Flags UP | UV.
+    const authData = concat(await sha256(enc.encode(publicKey.rpId)), Uint8Array.of(0x05),
+      u32(stored.signCount));
+    const raw = new Uint8Array(await crypto.subtle.sign({name: "ECDSA", hash: "SHA-256"}, key,
+      concat(authData, await sha256(clientDataJSON))));
+    return credential(unb64url(stored.rawId), {
+      clientDataJSON: clientDataJSON.buffer, authenticatorData: authData.buffer,
+      signature: der(raw).buffer, userHandle: unb64url(stored.userHandle).buffer,
+    });
+  }
+
+  window.__softAuthenticatorCalls = [];
+  Object.defineProperty(navigator, "credentials", {configurable: true, value: {
+    create: options => { window.__softAuthenticatorCalls.push("create"); return create(options); },
+    get: options => { window.__softAuthenticatorCalls.push("get"); return get(options); },
+  }});
 })();
 """
 
@@ -743,6 +847,56 @@ def case_10_stalled_poster_stays_revealed_across_live_rerender(page):
         )
 
 
+def flash_texts(page):
+    return page.locator("#flash-info, #flash-error").all_inner_texts()
+
+
+def case_11_passkey_add_then_sign_in(page):
+    """A user adds a passkey in Account settings, then signs in with it from a fresh cookie jar
+    (#1560). It runs app.js's PasskeyRegister and PasskeySignIn hooks against the release's
+    WebAuthn check, through SOFT_AUTHENTICATOR_INIT_SCRIPT. Its own browser context keeps the
+    sign-out away from the other cases' page."""
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        passkey_page = context.new_page()
+        passkey_page.add_init_script(SOFT_AUTHENTICATOR_INIT_SCRIPT)
+        login(passkey_page)
+
+        passkey_page.goto(f"{BASE_URL}/users/settings")
+        wait_for_liveview(passkey_page)
+        passkey_page.locator("#new_passkey_name").fill("CI key")
+        passkey_page.locator("#add_passkey_button").click()
+        try:
+            # The name shows as the value of the passkey's rename field.
+            expect(passkey_page.locator("#passkey_list input[name=name]")).to_have_value(
+                "CI key", timeout=10_000
+            )
+            # The hook clears the field only once the server's reply says the passkey is stored.
+            expect(passkey_page.locator("#new_passkey_name")).to_have_value("", timeout=5_000)
+        except AssertionError as error:
+            raise CaseFailure(
+                "case 11 (add a passkey): expected one 'CI key' row in #passkey_list, got flash "
+                f"{flash_texts(passkey_page)!r} and authenticator "
+                f"calls {passkey_page.evaluate('window.__softAuthenticatorCalls')!r}"
+            ) from error
+
+        context.clear_cookies()
+        response = passkey_page.goto(f"{BASE_URL}/users/log-in")
+        assert response and response.ok, "login page did not render"
+        wait_for_liveview(passkey_page)
+        passkey_page.locator("#passkey_login_button").click()
+        try:
+            expect(passkey_page).to_have_url(re.compile(r"/$"), timeout=15_000)
+            expect(passkey_page.get_by_text("Welcome back!")).to_be_visible()
+        except AssertionError as error:
+            raise CaseFailure(
+                "case 11 (sign in with the passkey): expected '/' and 'Welcome back!', got "
+                f"{passkey_page.url} with flash {flash_texts(passkey_page)!r}"
+            ) from error
+    finally:
+        context.close()
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -757,6 +911,7 @@ CASES = [
         "case10_stalled_poster_stays_revealed_across_live_rerender",
         case_10_stalled_poster_stays_revealed_across_live_rerender,
     ),
+    ("case11_passkey_add_then_sign_in", case_11_passkey_add_then_sign_in),
 ]
 
 
