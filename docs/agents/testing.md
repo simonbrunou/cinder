@@ -322,11 +322,12 @@
 - A docs-only branch does the fence run before its first push, in place of a full `mix test`. Each
   file it changes fits the first case of the review-fix bullet below; despite the term, that case
   also takes in scripts, workflows and `.agents/skills/` files. Append the test files that case
-  adds for each changed file. CI's full run on the PR's pushed SHA then meets a done-when that asks
-  for `mix test`, and `scripts/merge-pr` merges only once that run is green. A review fix commit or
-  a merge of `origin/main` that leaves the branch docs-only takes the same fence run before its
-  push. A changed file that case sends to the full suite, or any other changed file, makes the
-  branch owe a full `mix test` before its next push. The maintainer decided this on #1469.
+  adds for each changed file. CI's full run on the PR's pushed SHA then meets a done-when that
+  asks for `mix test`, and `scripts/merge-pr` merges only once that run is green. A review fix
+  commit or a merge of `origin/main` that leaves the branch docs-only takes the same fence run
+  before its push. A changed file outside that case, or one that case sends to the fourth case,
+  makes the branch owe its first full `mix test` before its next push. The maintainer decided
+  this on #1469.
 - A full `mix test` ends with its slowest partition, and the dev host's load lengthens it. On
   #1473, at a load average of 11 to 24 on its 16 CPUs, a 4-partition run of `mix test.unchecked`
   took 375 s, without the gates and before #1498 split its slowest module. On #1503 two full runs,
@@ -346,17 +347,18 @@
   with a probe that prints the awaited message's latency. More full runs make no loop: on #1463
   a one-process and a partitioned run took 18 and 10 minutes at a load of 20 to 65 and never
   repeated the failure.
-- Once a full `mix test` passed on the branch, a review fix commit needs no second full suite
-  before its push when each file it changes fits one of the three cases below. Do the fence run
-  with the test files each case adds. CI runs the full suite on the push, which runs every file
-  these short runs skip. On #905, #945 and #873, another full run on such a fix took 4 to
-  5.5 minutes of the CPU the host's agent threads share, and on #903 three took about
-  20 minutes. On #942, #986 and #1193, full runs after a fix to `.agents/skills/` Markdown, a
-  `docs/adr/` file or `ci.yml` cost each thread about 7 minutes, though no test outside the
-  fence run reads those files.
+- Once a full `mix test` passed on the branch, a review fix commit takes a short run before its
+  push, never a second full suite: the fence run with the test files the four cases below add for
+  each file it changes. CI runs the full suite on the push, which runs every file these short
+  runs skip, and the PR merges only once that run is green (AGENTS.md "Merge authority"). The
+  maintainer decided this for every thread on #1553. On #905, #945 and #873, another full run on
+  such a fix took 4 to 5.5 minutes of the CPU the host's agent threads share, and on #903 three
+  took about 20 minutes. On #942, #986 and #1193, full runs after a fix to `.agents/skills/`
+  Markdown, a `docs/adr/` file or `ci.yml` cost each thread about 7 minutes, though no test
+  outside the fence run reads those files.
   - A file that the suite neither compiles nor loads: one outside `lib/`, `test/`, `config/`,
     `priv/` and `deps/` that is not `mix.exs` or `mix.lock`, and not under `docs/audits/` or
-    `specs/` (full suite, below). Add each test file that reads it. A test can read a file via a
+    `specs/` (the fourth case). Add each test file that reads it. A test can read a file via a
     directory above it, as `ci_browser_wait_test.exs` globs `.github/scripts/**/*.py`, so
     search for the file's path and for each directory above it:
     `rg -l -F -e docs/adr/0001-x.md -e docs/adr -e docs test`. A listed file that the fence run
@@ -366,7 +368,7 @@
     `bounded_command_lookup_test.exs` looks up `scripts/seed-worktree` as an executable. A hit
     in prose (a comment, doc text, a message, a test name, a URL), a path to another file, a
     path under a temporary root or a map key adds nothing. When you cannot tell, add the file.
-    A hit in a `test/support/` file that reads the changed file runs the full suite (below),
+    A hit in a `test/support/` file that reads the changed file sends it to the fourth case,
     since any test that uses that file can read it. The search misses a root glob (`"*.exs"` in
     `comment_line_length_test.exs`), a glob that splits a directory name
     (`.{forgejo,github}/workflows/*.{yml,yaml}` in `beam_version_pins_test.exs`) and a read
@@ -383,11 +385,22 @@
     only the fences read the test sources. A test file can still break another one through
     shared state, such as an `async:` flag or a config key it no longer restores. On #1123, four
     full runs after test-only fixes took 21 minutes, and one on #1127 took 7 minutes.
-- A review fix commit runs the full `mix test` when it changes any other file, or one of these:
-  a file under `docs/audits/` or `specs/` (`books_b0_contract_test.exs` reads them), a file
-  that a `test/support/` file reads, the doc text of a module that a `doctest` names, a gettext
-  catalog. A merge of `origin/main` (AGENTS.md "Merge authority") into a branch that is not
-  docs-only, and a release, run it too.
+  - Any other file, such as code under `lib/`, `config/` or `priv/`, `mix.exs`, `mix.lock`,
+    a `test/support/` file, a file that a `test/support/` file reads, or the doc text of a
+    module that a `doctest` names. Add each test file that `rg -l` lists under `test` for the
+    changed module, function, config key or file name. A module aliased in a `{...}` group shows
+    only its last name segment, so search that segment too. A `test/support/` file the search
+    lists adds each test file that names its module. Add every file that `rg -l '"lib/' test`
+    lists for a change under `lib/`, `test/cinder/books_b0_contract_test.exs` for a file under
+    `docs/audits/` or `specs/`, and each file `rg -l -F priv/gettext test` lists for a gettext
+    catalog. For each changed string literal or msgstr, add each file that `rg -l -F` lists under
+    `test` for its old and its new text: `app_shell_test.exs` asserts the `Calendar` label of
+    `layouts.ex` through a `~w(...)` list that names neither the module nor the file. When you
+    cannot tell, add the file.
+- A merge of `origin/main` (AGENTS.md "Merge authority") into a branch that is not docs-only
+  runs the full `mix test` before its push: the cases above pick tests from a fix commit's own
+  files, not from the commits `main` brings in. A release runs it too ([workflow.md](workflow.md)
+  "Releasing" step 2).
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
   `priv/gettext/fr/LC_MESSAGES/default.po`. When an existing msgid is close enough, the merge
