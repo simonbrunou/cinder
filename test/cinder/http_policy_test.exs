@@ -8,6 +8,9 @@ defmodule Cinder.HTTPPolicyTest do
   alias Cinder.Test.RequestDeadlines
 
   @request_task_event [:cinder, :http, :request_task]
+  # How long both cancel tests hold their request task, above the elapsed bound of
+  # `assert_killed_at_deadline/2` (#1511).
+  @task_hold_ms 30_000
 
   @public_ipv4 {93, 184, 216, 34}
   @public_ipv6 {0x2606, 0x2800, 0x220, 0x1, 0x248, 0x1893, 0x25C8, 0x1946}
@@ -912,13 +915,14 @@ defmodule Cinder.HTTPPolicyTest do
       Req.Test.stub(Cinder.HTTPPolicyBlockedStub, fn conn ->
         send(parent, {:request_started, self()})
         # Block until the wall-clock deadline cancels (kills) this request task — the behavior
-        # under test — instead of sleeping a fixed span tuned above the deadline. The generous
-        # `after` is only a safety valve so a regressed deadline fails within seconds rather than
-        # hanging the suite; on the happy path the task is killed long before it elapses.
+        # under test — instead of sleeping a fixed span tuned above the deadline. The
+        # `@task_hold_ms` (30 s, #1511) `after` is only a safety valve, so a regressed deadline
+        # fails rather than hanging the suite; on the happy path the task is killed long before
+        # it elapses.
         receive do
           :never -> :ok
         after
-          10_000 -> :ok
+          @task_hold_ms -> :ok
         end
 
         Req.Test.text(conn, "late-secret")
@@ -958,12 +962,12 @@ defmodule Cinder.HTTPPolicyTest do
         Req.Test.text(conn, "late-secret")
       end)
 
-      # A request step holds the task for 10 s before Req's pipeline reaches the plug: the slow
-      # task start of #1092, made longer than every bound here. The deadline kills the task during
-      # the hold, and the elapsed bound below ends before the hold does, so a call that passes it
-      # killed the task before the stub ran and the test can refute the stub's message outright. A
-      # deadline that never cancels lets the hold end and the stub's body through, which fails the
-      # match and the bound.
+      # A request step holds the task for `@task_hold_ms` (30 s, #1511) before Req's pipeline
+      # reaches the plug: the slow task start of #1092, made longer than every bound here. The
+      # deadline kills the task during the hold, and the elapsed bound below ends before the hold
+      # does, so a call that passes it killed the task before the stub ran and the test can refute
+      # the stub's message outright. `assert_killed_at_deadline/2` says what fails when the deadline
+      # never cancels.
       request =
         [
           url: "https://public.example/slow-start",
@@ -975,7 +979,7 @@ defmodule Cinder.HTTPPolicyTest do
             receive do
               :never -> :ok
             after
-              10_000 -> :ok
+              @task_hold_ms -> :ok
             end
 
             request
@@ -1059,7 +1063,9 @@ defmodule Cinder.HTTPPolicyTest do
               plug: {Req.Test, Cinder.HTTPPolicyTelemetryOkStub}
             ],
             64,
-            5_000
+            # A call meant to finish gets the 10 s deadline of testing.md: a loaded host stalled
+            # this one past 5 s (#1511).
+            10_000
           )
         end)
 
@@ -1086,7 +1092,8 @@ defmodule Cinder.HTTPPolicyTest do
               plug: {Req.Test, Cinder.HTTPPolicyTelemetryErrorStub}
             ],
             4,
-            5_000
+            # 10 s, as the :ok case above: a loaded host stalled this one past 5 s too (#1511).
+            10_000
           )
         end)
 
@@ -1106,7 +1113,7 @@ defmodule Cinder.HTTPPolicyTest do
       # the :request_timeout tests above.
       capture_log(fn ->
         assert {:error, {%RuntimeError{message: "adapter crashed"}, _stacktrace}} =
-                 HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 5_000)
+                 HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 10_000)
       end)
     end
   end
@@ -1125,18 +1132,19 @@ defmodule Cinder.HTTPPolicyTest do
   # Checks a `bounded_request/3` call that the 500 ms deadline cancelled, from the
   # `{result, events}` of `Cinder.TelemetryHelpers.capture/2`, and returns its request task's pid.
   #
-  # The elapsed bound sits 5 s past the deadline, the house bound for a wall-clock load flake
-  # (docs/agents/ci.md "Wall-clock tests"). Loaded runners returned 336 ms (#908), then 875 ms
-  # (#1038) past the deadline, since each step around it (the task start, `Req.Test.allow`, the
-  # kill) waits for a shared process to reply or for the test process to run again. A deadline of
-  # 5.5 s or more still fails this bound. Both tests hold the task for 10 s, above the bound (the
-  # stub's valve, the slow-start step), so a request the deadline never cancels fails the bound
-  # too. A deadline past those 10 s also lets the stub's body through, which fails the result
-  # match.
+  # The elapsed bound sits at 20 s, well under the 30 s `@task_hold_ms` (the stub's valve, the
+  # slow-start step), since each step around the deadline (the task start, `Req.Test.allow`, the
+  # kill) waits for a shared process to reply or for the test process to run again.
+  # docs/agents/ci.md "Wall-clock tests" lists the slow runs behind it, up to 6575 ms in all
+  # (#1511). A caller that waits past its deadline still gets `{:error, :request_timeout}`, from
+  # the task's own deadline check once the hold ends, which fails this bound; so does a deadline
+  # from 20 s to the hold. A caller that returns at its deadline without killing the task fails
+  # `refute Process.alive?/1`. A deadline past the hold lets the stub's body through, which fails
+  # the result match after about 30 s, under ExUnit's 60 s test timeout.
   defp assert_killed_at_deadline({result, events}, started_at) do
     assert {:error, :request_timeout} = result
     elapsed = System.monotonic_time(:millisecond) - started_at
-    assert elapsed < 5_500
+    assert elapsed < 20_000
     assert [task_pid] = request_task_pids(events, self())
     refute Process.alive?(task_pid)
     task_pid

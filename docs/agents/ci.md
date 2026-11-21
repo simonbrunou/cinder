@@ -200,63 +200,63 @@ Calls below use the token and `$API` from [issue-tracker.md](issue-tracker.md).
      push. A local `mix test` of that tree is not this green run (#916). It misses failures that
      happen only on CI (**CI runs the suite as root**). Its timing also says nothing about a
      wall-clock bound on the loaded runner.
-- **Wall-clock tests.** When a test's match on its result already tells the expected ending from
-  a competing deadline, put its elapsed bound well under that deadline, not at a guess at runner
-  lag. `libre_translate_test.exs`'s 5.2 s bound failed eight CI attempts on #1441, #1487 and
-  `main` 5c24752f (#1443) until #1504 raised it to 30 s ([testing.md](testing.md), the
-  `Cinder.Test.SilentServer` bullet).
-  #637 (for #636) widened the subprocess bounds that raced process startup on the runner to 1 s.
-  `Cinder.HTTPPolicyTest` "cancels a request blocked before headers at the
-  wall-clock deadline" runs a 500 ms deadline. The test takes the request task's pid from
-  `bounded_request/3`'s `[:cinder, :http, :request_task]` event. It asserts that task dead and
-  accepts a missing `{:request_started, _}` from the stub. A runner slower than the deadline to
-  bring the task to its stub therefore passes the test. Before this, a 100 ms deadline (#960) and
-  then a 500 ms one (#1092) each failed on such a runner, since a wider deadline only moves the
-  start time that fails. After run 1082 (#1301) timed out a 500 ms deadline, "collects a trickling
-  response that completes within the total deadline" runs a 10 s one. Widening holds there: its
-  deadline must not fire and the call ends in about 6 ms, so only a 10 s stall on the runner times
-  it out, where a wider cancel deadline still fails at a later start. After loaded runners
-  returned 336 ms (#908), then 875 ms (#1038) past the deadline, the first cancel test asserts
-  the elapsed time under 5 s past it instead of 1 s, and its stub's safety valve sits at 10 s,
-  above that bound. "cancels a request whose task reaches the stub only after the deadline" holds
-  its task 10 s in a Req request step and asserts the same bound. After a 3458 ms run on `main`
-  (#984),
-  `Cinder.Library.MediaInfo.FfprobeTest` "extract_subtitle/2 still times out when the process
-  emits data faster than any poll tick" asserts the elapsed time under 5 s past its 1 s deadline
-  instead of 2 s. After a 3060 ms run on `main` (#1022),
-  `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout is reported
-  distinctly from a malformed helper, and the OS process is killed" asserts the elapsed time
-  under 5 s past its 1 s bound instead of 2 s, since its window times two helper spawns and two
-  kills. Every helper spawn of `DiskBoundedTest` runs a `/bin/sh` stub found on `PATH` as
-  `python3`. The module's "stub process never wrote its pid file" failures at the 1 s bound on
-  the runner most likely came from a Python start that missed that bound (#1024, #1372).
+- **Wall-clock tests.** When a test's match on its result already tells the expected ending
+  from a competing deadline, put its elapsed bound well under that deadline, not at a guess
+  at runner lag. `libre_translate_test.exs`'s 5.2 s bound failed eight CI attempts on #1441,
+  #1487 and `main` 5c24752f (#1443) until #1504 raised it to 30 s ([testing.md](testing.md),
+  the `Cinder.Test.SilentServer` bullet). #637 (for #636) widened the subprocess bounds that
+  raced process startup on the runner to 1 s. `Cinder.HTTPPolicyTest` "cancels a request
+  blocked before headers at the wall-clock deadline" runs a 500 ms deadline. The test takes
+  the request task's pid from `bounded_request/3`'s `[:cinder, :http, :request_task]` event. It
+  asserts that task dead and accepts a missing `{:request_started, _}` from the stub. A runner
+  slower than the deadline to bring the task to its stub therefore passes the test. Before this,
+  a 100 ms deadline (#960) and then a 500 ms one (#1092) each failed on such a runner, since a
+  wider deadline only moves the start time that fails. After run 1082 (#1301) timed out a 500 ms
+  deadline, "collects a trickling response that completes within the total deadline" runs a 10 s
+  one. Widening holds there: its deadline must not fire and the call ends in about 6 ms, so only
+  a 10 s stall on the runner times it out, where a wider cancel deadline still fails at a later
+  start. After loaded runners returned 336 ms (#908), then 875 ms (#1038) past the deadline,
+  and a loaded dev host 6575 ms in all (#1511), the first cancel test asserts the elapsed
+  time under 20 s, and its stub's safety valve sits at 30 s, well above that bound. "cancels
+  a request whose task reaches the stub only after the deadline" holds its task 30 s in a Req
+  request step and asserts the same bound. Each call of the module meant to finish runs under
+  a deadline of 10 s or more since #1511, after a loaded host stalled two of its 5 s ones past
+  the deadline. After a 3458 ms run on `main` (#984), `Cinder.Library.MediaInfo.FfprobeTest`
+  "extract_subtitle/2 still times out when the process emits data faster than any poll tick"
+  asserts the elapsed time under 5 s past its 1 s deadline instead of 2 s. After a 3060 ms run on
+  `main` (#1022), `Cinder.Library.Filesystem.DiskBoundedTest` "run_rooted's sync_parent timeout
+  is reported distinctly from a malformed helper, and the OS process is killed" asserts the
+  elapsed time under 5 s past its 1 s bound instead of 2 s, since its window times two helper
+  spawns and two kills. Every helper spawn of `DiskBoundedTest` runs a `/bin/sh` stub found on
+  `PATH` as `python3`. The module's "stub process never wrote its pid file" failures at the 1 s
+  bound on the runner most likely came from a Python start that missed that bound (#1024, #1372).
   `Cinder.Subtitles.Sync.EngineWorkspaceBoundedTest` serves every helper spawn from a `/bin/sh`
-  stub found on `PATH` as `python3`, because on the runner Python's start most likely missed the
-  1 s bound in its `hold` and before its `seal` stub's pid write (#1043). After a 3260 ms run on
-  `main` (run 1040, #1274), its "seal/1 still times out when the helper emits data faster than
-  any poll tick" asserts the elapsed time under 5 s past its 1 s bound instead of 2 s, and so does
-  the `DiskBoundedTest` test it mirrors, "run_rooted still times out when the helper emits data
-  faster than any poll tick". Each test's emitter writes forever, so a deadline its output
-  starves still fails at the 15 s test timeout. After a 6425 ms run on PR #1086
-  (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts kills the
-  OS process and returns its reason" asserts the elapsed time under 9 s instead of 3 s, since its
-  window times the stub's start. The bound stays below the call's 10 s timeout, so a halt that
-  waits for that timeout before it kills the stub still fails it. After a 5336 ms run on PR #1214
-  (run 900, #1216), "run/4 with :check a check interval longer than the timeout does not extend
-  the deadline" asserts the elapsed time under 9 s instead of 3 s. The bound stays below its
-  10 s check interval, which a deadline extended by that interval waits for. After a 12863 ms
-  run on PR #1259 (run 1005, #1260) that still returned the check's halt, "run/4 with :check
-  continuous output cannot starve the check" times only the check's own window against its 9 s
-  bound, from the start of the check's first call to the return of its third. The stub's start
-  and the kill fall outside that window. ExUnit's test timeout still counts them, so the test has
-  no tag timeout and runs under the 60 s default. The bound stays below the call's 10 s timeout,
-  so a second or third check that comes late, with the third starting 9 s or more after the
-  first but before that timeout, still fails it. The test
-  environment widens `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s
-  (#945), four times the production bound, to give a slow start on a loaded runner headroom. In a
-  test that does not set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}`
-  therefore means the subprocess did not answer for 20 s: look for a hang, or a runner far more
-  loaded than usual, before calling it a flake.
+  stub found on `PATH` as `python3`, because on the runner Python's start most likely missed
+  the 1 s bound in its `hold` and before its `seal` stub's pid write (#1043). After a 3260
+  ms run on `main` (run 1040, #1274), its "seal/1 still times out when the helper emits data
+  faster than any poll tick" asserts the elapsed time under 5 s past its 1 s bound instead
+  of 2 s, and so does the `DiskBoundedTest` test it mirrors, "run_rooted still times out when
+  the helper emits data faster than any poll tick". Each test's emitter writes forever, so a
+  deadline its output starves still fails at the 15 s test timeout. After a 6425 ms run on PR
+  #1086 (run 676, #1091), `Cinder.BoundedCommandTest` "run/4 with :check a check that halts
+  kills the OS process and returns its reason" asserts the elapsed time under 9 s instead of
+  3 s, since its window times the stub's start. The bound stays below the call's 10 s timeout,
+  so a halt that waits for that timeout before it kills the stub still fails it. After a 5336
+  ms run on PR #1214 (run 900, #1216), "run/4 with :check a check interval longer than the
+  timeout does not extend the deadline" asserts the elapsed time under 9 s instead of 3 s. The
+  bound stays below its 10 s check interval, which a deadline extended by that interval waits
+  for. After a 12863 ms run on PR #1259 (run 1005, #1260) that still returned the check's halt,
+  "run/4 with :check continuous output cannot starve the check" times only the check's own window
+  against its 9 s bound, from the start of the check's first call to the return of its third. The
+  stub's start and the kill fall outside that window. ExUnit's test timeout still counts them,
+  so the test has no tag timeout and runs under the 60 s default. The bound stays below the
+  call's 10 s timeout, so a second or third check that comes late, with the third starting 9 s
+  or more after the first but before that timeout, still fails it. The test environment widens
+  `Cinder.Library.Filesystem.Disk`'s `:disk_subprocess_timeout_ms` to 20 s (#945), four times
+  the production bound, to give a slow start on a loaded runner headroom. In a test that does
+  not set its own bound, a Disk timeout such as `{:error, :rooted_helper_timeout}` therefore
+  means the subprocess did not answer for 20 s: look for a hang, or a runner far more loaded
+  than usual, before calling it a flake.
 - **Loaded-runner A/B.** When a wall-clock bound fails on a PR's runs while other branches' runs
   pass it, time the failing test in the PR's head and in its base side by side under CPU load
   before you blame the diff. First move `tmp/` and `.elixir_ls/` out of both trees: on #1441,
