@@ -1142,6 +1142,9 @@ defmodule Cinder.Download do
         complete_intent(intent, grab)
 
       nil ->
+        # Only an operator's grab (a manual pick, the upgrade sweep) gives its episodes a fresh
+        # search budget. A sweep grab keeps the count, so a release that parks on every grab runs
+        # the budget out instead of being grabbed again forever (#1586).
         result =
           if is_nil(intent.mapping_snapshot) and is_nil(intent.release_policy_snapshot) do
             Catalog.create_grab(
@@ -1149,7 +1152,7 @@ defmodule Cinder.Download do
               intent.protocol,
               intent.episode_ids,
               intent.release["title"],
-              reset_attempts: true,
+              reset_attempts: operator_initiated?(intent),
               allow_available: operator_initiated?(intent),
               arbitrate_at_import: arbitrate_at_import?(intent)
             )

@@ -22,7 +22,7 @@ defmodule Cinder.Download.TvPollerTest do
 
   import Cinder.BoundedWalkHelpers
   import Cinder.CatalogFixtures
-  import Cinder.ConfigCase, only: [put_config: 2, put_env: 2]
+  import Cinder.ConfigCase, only: [put_config: 2, put_env: 1, put_env: 2, restore_env_on_exit: 1]
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
   import Cinder.Test.BarrierFilesystem, only: [fail_in_order: 1]
@@ -97,21 +97,15 @@ defmodule Cinder.Download.TvPollerTest do
     File.mkdir_p!(downloads)
     File.mkdir_p!(tv)
 
-    saved =
-      Map.new([:filesystem, :path_policy, :import_roots, :tv_library_path], fn key ->
-        {key, Application.get_env(:cinder, key)}
-      end)
+    # The tests set the barrier keys with raw writes.
+    restore_env_on_exit([:filesystem_barrier, :filesystem_failure])
 
-    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
-    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
-    Application.put_env(:cinder, :import_roots, [downloads])
-    Application.put_env(:cinder, :tv_library_path, tv)
-
-    on_exit(fn ->
-      Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
-      Application.delete_env(:cinder, :filesystem_barrier)
-      Application.delete_env(:cinder, :filesystem_failure)
-    end)
+    put_env(
+      filesystem: Cinder.Test.BarrierFilesystem,
+      path_policy: Cinder.Library.PathPolicy,
+      import_roots: [downloads],
+      tv_library_path: tv
+    )
 
     %{downloads: downloads, tv: tv}
   end
@@ -3555,6 +3549,64 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, e1.id).search_attempts == 10
   end
 
+  # #1586: each sweep grab zeroed the episode's count, so a release that parked on every grab was
+  # searched and grabbed again forever. The sweep's grab now keeps the count, and the park that
+  # follows spends the last attempt.
+  test "a sweep grab that parks spends the episode's search budget instead of resetting it" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1, %{search_attempts: 9})
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    Cinder.TestNotifier.subscribe()
+    parent = self()
+
+    # `poll/0` rescues a raise, so the search reports each call for `refute_received` below.
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      send(parent, :searched)
+
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "loop",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-loop"} end)
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-loop" ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    assert :ok = TvPoller.poll()
+    assert_received :searched
+    assert %Episode{grab_id: grab_id, search_attempts: 9} = Repo.get!(Episode, e1.id)
+    assert grab_id
+
+    # The download completes, and its import fails on its last attempt: a park with no blocklist.
+    grab = Repo.get!(Grab, grab_id)
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/loop")
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab_id)
+    parked = Repo.get!(Episode, e1.id)
+    assert %Episode{grab_id: nil, search_attempts: 10} = parked
+    assert Catalog.episode_state(parked) == :search_parked
+    assert_receive {:notify, {:episodes_search_exhausted, [%Episode{id: id}]}}
+    assert id == e1.id
+
+    # The sweep no longer searches it, so the release is not grabbed again.
+    assert :ok = TvPoller.poll()
+    refute_received :searched
+    assert Repo.all(Grab) == []
+  end
+
   test "a search-exhausted Anime story special stays in the wanted set but is skipped" do
     series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
     specials = season_fixture(series, %{season_number: 0})
@@ -3839,6 +3891,69 @@ defmodule Cinder.Download.TvPollerTest do
     assert gid == grab.id
     refute Repo.get(Grab, grab.id)
     assert Catalog.blocked_release_titles_for_series(series.id) == [release_title]
+  end
+
+  # #1586: on prod a usenet job that completed as one `.7z` was retried ten times as
+  # `:unsafe_source`, parked with no blocklist and its payload kept, then grabbed again: about 100
+  # copies per episode. It now parks on its first tick like a folder holding no video. The grab
+  # starts as one the client already reported complete, with the `.7z` as its content path.
+  @tag :tmp_dir
+  test "a downloaded usenet grab whose content is one .7z parks at once, is blocked and removed",
+       %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    put_env(:explicit_import_roots, [downloads])
+    put_env(:move_on_import, true)
+    {series, season} = series_tree()
+    e1 = episode(season, 1, %{search_attempts: 3})
+    release_title = "Show.S01E01.MULTI.1080p.WEB-DL-GRP"
+    job = Path.join(downloads, "#{release_title}.cinder-0b6a3c55-1d7e-4f43-9a6e-2d7f0c1b9e10")
+    archive = Path.join(job, Path.basename(job) <> ".7z")
+    File.mkdir_p!(job)
+    File.write!(archive, "7z")
+
+    {:ok, grab} = Catalog.create_grab("nzo-7z", :usenet, [e1.id], release_title)
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, archive)
+    parent = self()
+
+    stub(Cinder.Download.SabnzbdClientMock, :remove, fn id, opts ->
+      send(parent, {:removed, id, opts})
+      :ok
+    end)
+
+    # The sweep in the same tick, and the next one, find the same release again and do not grab
+    # it. `poll/0` rescues a raise, so the search and each client's add report their calls
+    # instead of failing.
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      send(parent, :searched)
+      {:ok, [%{title: release_title, size: 2_000_000_000, download_url: "again", seeders: 5}]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+
+    for client <- [Cinder.Download.ClientMock, Cinder.Download.SabnzbdClientMock] do
+      stub(client, :add, fn release, _opts ->
+        send(parent, {:added, release.title})
+        {:ok, "nzo-again"}
+      end)
+    end
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.blocked_release_titles_for_series(series.id) == [release_title]
+    assert_receive {:removed, "nzo-7z", [delete_files: true]}
+    refute File.exists?(job)
+    assert_received :searched
+    refute_received {:added, _title}
+    assert Repo.all(Grab) == []
+    assert %Episode{grab_id: nil, search_attempts: 5} = Repo.get!(Episode, e1.id)
+
+    assert :ok = TvPoller.poll()
+    assert_received :searched
+    refute_received {:added, _title}
+    assert Repo.all(Grab) == []
+    assert %Episode{grab_id: nil, search_attempts: 6} = Repo.get!(Episode, e1.id)
   end
 
   test "a parked grab emits [:cinder, :park] with kind: :episode and the park reason" do

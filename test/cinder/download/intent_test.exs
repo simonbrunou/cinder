@@ -1549,6 +1549,48 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.reload!(episode).grab_id == nil
   end
 
+  # #1586: a sweep grab that zeroed the counter let every park and re-grab of the same release
+  # start the search budget over, so the budget never stopped a release that always parks.
+  test "a sweep intent links its episodes with their search attempts kept" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    first = episode_fixture(season, episode_number: 1, search_attempts: 5)
+    second = episode_fixture(season, episode_number: 2, search_attempts: 9)
+    {:ok, intent} = reserve_episode_intent([first.id, second.id], release("Show.S01.Sweep"))
+
+    submitted =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-sweep-attempts"})
+      |> Repo.update!()
+
+    assert {:ok, %Grab{id: grab_id}} = Download.reconcile_intent(submitted)
+    assert %{grab_id: ^grab_id, search_attempts: 5} = Repo.reload!(first)
+    assert %{grab_id: ^grab_id, search_attempts: 9} = Repo.reload!(second)
+  end
+
+  test "an operator intent links its episodes with their search attempts zeroed" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series), search_attempts: 10)
+
+    {:ok, intent} =
+      Download.reserve_intent(%{
+        kind: :episode,
+        target_id: episode.id,
+        episode_ids: [episode.id],
+        protocol: :torrent,
+        release: release("Show.S01E01.Manual"),
+        operator_initiated: true
+      })
+
+    submitted =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-operator-attempts"})
+      |> Repo.update!()
+
+    assert {:ok, %Grab{id: grab_id}} = Download.reconcile_intent(submitted)
+    assert %{grab_id: ^grab_id, search_attempts: 0} = Repo.reload!(episode)
+  end
+
   defp reserve_movie_intent(movie_id, chosen \\ release("Movie")) do
     Download.reserve_intent(%{
       kind: :movie,

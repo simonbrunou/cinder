@@ -645,16 +645,36 @@ defmodule Cinder.Library do
   # All video files under content_path, plus whether content_path is a folder. The folder's video
   # files for a pack/multi-file download, or the lone file itself for a single-file one (size 0 —
   # it's the only candidate). `folder?` gates sidecar linking (single-file downloads ship none).
+  #
+  # A lone file is checked against its own extension, then kept only when it is a video: a regular
+  # file the importers do not accept (a `.7z`, a `.webm`) gives no video, as it does inside a
+  # folder. Checked against the video extensions, it read as `:unsafe_source`, which the TV poller
+  # retries and then parks without a blocklist, so the sweep could grab the same release again
+  # (#1586). A symlink, a non-regular file, a path outside the import roots or a path that is gone
+  # (an unmounted volume reads as no folder too) still gives an error, `:unsafe_source` or the
+  # `lstat` error, never an empty list.
   defp video_files(path) do
     case safe_walk(path) do
       {:ok, files} ->
         {:ok, only_videos(files), true}
 
       {:error, :enotdir} ->
-        with {:ok, source} <- safe_source_file(path), do: {:ok, [{source, 0}], false}
+        with {:ok, source} <- safe_source_file(path, [Path.extname(path)]), do: lone_file(source)
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  defp lone_file(source) do
+    if video_file?(source), do: {:ok, [{source, 0}], false}, else: lone_non_video(source)
+  end
+
+  defp lone_non_video(source) do
+    case fs().lstat(source) do
+      {:ok, %File.Stat{type: :regular}} -> {:ok, [], false}
+      {:ok, _not_regular} -> {:error, :unsafe_source}
+      {:error, _reason} = error -> error
     end
   end
 

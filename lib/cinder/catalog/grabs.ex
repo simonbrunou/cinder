@@ -55,6 +55,8 @@ defmodule Cinder.Catalog.Grabs do
 
   `opts` — `reset_attempts: true` zeroes the linked episodes' `search_attempts` in the same
   transaction (mirrors `manual_grab_movie/2`): the user-chosen release gets a fresh search budget.
+  `Download` sets it only for an operator-initiated intent; a sweep grab keeps the count, so a
+  release that parks on every grab runs the budget out (#1586).
   `allow_available: true` is reserved for the durable manual-upgrade path.
   `arbitrate_at_import: true` marks the grab so the import, not the grab, decides each episode's
   swap — the unattended upgrade sweep sets it; the manual path leaves it off and forces (#250).

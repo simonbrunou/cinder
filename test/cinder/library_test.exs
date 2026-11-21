@@ -219,7 +219,9 @@ defmodule Cinder.LibraryTest do
                {{:error, :unsupported_disc}, {:ok, [], []}, {:ok, %{files: [], folder?: true}}}
     end
 
-    test "are refused as a single-file download" do
+    # The episode and anime importers read a lone file they do not accept as a download with no
+    # video, as they read a folder of them above (#1586); the movie importer refuses it.
+    test "leave a single-file download nothing to import" do
       results =
         Map.new(@refused_containers, fn ext ->
           virtual_release(%{"/downloads" => ["X.2020.1080p#{ext}"]})
@@ -231,7 +233,7 @@ defmodule Cinder.LibraryTest do
           movie =
             if ext == ".iso", do: {:error, :unsupported_disc}, else: {:error, :unsafe_source}
 
-          {ext, {movie, {:error, :unsafe_source}, {:error, :unsafe_source}}}
+          {ext, {movie, {:ok, [], []}, {:ok, %{files: [], folder?: false}}}}
         end)
 
       assert results == expected
@@ -240,6 +242,43 @@ defmodule Cinder.LibraryTest do
 
       assert {:ok, %{files: [%{relative_path: "X.2020.1080p.mkv"}], folder?: false}} =
                Library.inventory_anime_videos("/downloads/X.2020.1080p.mkv")
+    end
+
+    # #1586: a usenet job that completes as one `.7z` was refused as `:unsafe_source`, which the
+    # TV poller retries and then parks without a blocklist, so the sweep could grab the same
+    # release again. A lone regular file the importers do not accept now has no video to import.
+    test "a lone archive or extensionless file has no video to import" do
+      for name <- ["X.S07E01.1080p.7z", "X.S07E01.1080p.7Z", "XS07E01"] do
+        virtual_release(%{"/downloads" => [name]})
+        {_movie, episodes, anime} = import_results("/downloads/" <> name)
+
+        assert {name, episodes, anime} ==
+                 {name, {:ok, [], []}, {:ok, %{files: [], folder?: false}}}
+      end
+    end
+
+    # The PathPolicy refusals that mean a host fault, not a bad release, stay `:unsafe_source`.
+    test "a lone symlink, device file or file outside the import roots is :unsafe_source" do
+      cases = [
+        {"/downloads/X.S07E01.1080p.7z", %File.Stat{type: :symlink, inode: 40, major_device: 7}},
+        {"/downloads/X.S07E01.1080p.7z", %File.Stat{type: :device, inode: 41, major_device: 7}},
+        {"/elsewhere/X.S07E01.1080p.7z", file_stat(42, 10, {{2026, 7, 13}, {12, 1, 0}})}
+      ]
+
+      for {path, stat} <- cases do
+        stats = %{
+          "/" => dir_stat(1),
+          "/downloads" => dir_stat(2),
+          "/elsewhere" => dir_stat(3),
+          path => stat
+        }
+
+        stub_virtual_tree(stats, %{"/downloads" => [Path.basename(path)]})
+        {_movie, episodes, anime} = import_results(path)
+
+        assert {path, stat.type, episodes, anime} ==
+                 {path, stat.type, {:error, :unsafe_source}, {:error, :unsafe_source}}
+      end
     end
 
     # What the movie, episode and anime importers make of the download at `path`. The episode
@@ -1701,6 +1740,18 @@ defmodule Cinder.LibraryTest do
       expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/gone" -> {:error, :enoent} end)
 
       assert {:error, :enoent} = Library.stage_episodes("/dl/gone", [ep(1, 1)])
+    end
+
+    # #1586: a lone file that is no video reads as an empty import only once `lstat` finds a
+    # regular file, whatever the path policy let through.
+    test "a lone non-video path that lstat reads as a symlink surfaces :unsafe_source" do
+      stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/Show.S01E01.7z" -> false end)
+
+      expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Show.S01E01.7z" ->
+        {:ok, %File.Stat{type: :symlink}}
+      end)
+
+      assert {:error, :unsafe_source} = Library.stage_episodes("/dl/Show.S01E01.7z", [ep(1, 1)])
     end
 
     test "TV re-import replaces an episode's file on a resolution upgrade" do

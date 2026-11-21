@@ -380,10 +380,11 @@ defmodule Cinder.Catalog.EpisodeSearch do
   # SQLITE_BUSY) must not escape — in finish_grab's caller that would skip the client-download
   # removal and the availability notification for a grab row that is already gone.
   #
-  # >= rather than ==: crossings normally land exactly at the cap (new grabs reset or start
-  # below it), but pre-existing data can sit at the cap inside an in-flight grab and get
-  # bumped past it. A capped episode can't re-announce — the sweep skips it and every grab
-  # path resets — so >= adds no duplicates, only catches the above-cap stragglers.
+  # >= rather than ==: crossings normally land exactly at the cap (the sweep grabs only episodes
+  # below it, and an operator's grab resets the count), but pre-existing data can sit at the cap
+  # inside an in-flight grab and get bumped past it. A capped episode can't re-announce — the
+  # sweep skips it and an operator's standard grab resets it — so >= adds no duplicates, only
+  # catches the above-cap stragglers.
   def announce_search_exhausted(episode_ids) do
     exhausted =
       Repo.all(
