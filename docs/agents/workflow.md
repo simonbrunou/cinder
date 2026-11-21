@@ -32,6 +32,11 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 - Feature work goes on a branch and merges through a PR; `main` is PR-merged. Chores such as
   flake bumps may land directly, but a PR is the default.
 - A queue of issues worked one T3 thread each follows the `fan-out-issue-threads` skill.
+- Title the PR without a trailing `(#<n>)`, as the `ship-cinder-pr-on-forgejo` skill's "2. Open
+  the PR" says, also when you copy a commit subject, and name the issue in the body's
+  `Closes #<n>`. `scripts/merge-pr` stops on a title that ends in another `(#<n>)`, since the
+  squash appends the PR's own number. That stop hit five threads on 2026-11-19 (#1497, #1470,
+  #1488, #1456, #1476) and #1491's PR #1563 on 2026-11-20.
 
 ## Review
 
@@ -96,12 +101,18 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 
 These bind a sentence in any doc, moduledoc, comment, test name or changelog fragment.
 
-- A sentence about what Cinder's own code does holds for each case that code tells apart: each
-  book kind or plan, each kind of configured value, and each cap the path applies. Read the code
-  for those cases before you write "every" or "drops". A test name says only what its body
-  checks. On #803 (PR #1388) one review round found three such sentences: a moduledoc claim
-  true for the e-book plan only, "every ISBN probe" where a search probes at most three, and a
-  test name that promised a comparison its body never made.
+- A sentence about what Cinder's own code does holds for each case that code tells apart:
+  each book kind or plan, each kind of configured value, each cap the path applies, and each
+  guard that can skip a write on the way, such as a status re-read, an `if` on the reason or
+  an insert that swallows its error. Read the code for those cases before you write "every",
+  "drops", "blocks" or "parks", and write "tries to" for a write a guard can skip. A test name
+  says only what its body checks. On #803 (PR #1388) one review round found three such sentences:
+  a moduledoc claim true for the e-book plan only, "every ISBN probe" where a search probes at
+  most three, and a test name that promised a comparison its body never made. On #1491 (PR #1563)
+  "has already held a book target or blocked a TV release" skipped the hold's status guard and
+  `insert_quietly`, and each rewrite skipped another guard (`write_back_search/2`'s status
+  re-read, the block's reason list): three review rounds, about 18 minutes from the first
+  finding to the last fix.
 - A sentence that names a role several modules play, such as "the import" or "a search", holds
   for each module playing it and each input form it takes. Before you write it, list the modules
   with `rg` for the function the sentence names and its callers, and the input forms each caller's
