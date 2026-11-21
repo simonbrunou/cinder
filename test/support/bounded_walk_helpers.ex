@@ -45,13 +45,22 @@ defmodule Cinder.BoundedWalkHelpers do
 
   @doc """
   Releases a walk `hang_walk/1` holds and returns once `guard` has seen it return, so the guard
-  admits walks under its root again.
+  no longer counts it as stuck.
+
+  Option: `:timeout_ms`, how long it waits for the walk's exit and then for the guard, by default
+  ExUnit's `assert_receive_timeout` and `:sys.get_state/1`'s 5 s.
   """
-  def release_walk(walk, guard \\ BoundedWalk) do
+  def release_walk(walk, guard \\ BoundedWalk, opts \\ []) do
     ref = Process.monitor(walk)
     send(walk, :release)
-    assert_receive {:DOWN, ^ref, :process, ^walk, _reason}
-    _ = :sys.get_state(guard)
+
+    timeout_ms =
+      Keyword.get_lazy(opts, :timeout_ms, fn ->
+        Application.fetch_env!(:ex_unit, :assert_receive_timeout)
+      end)
+
+    assert_receive {:DOWN, ^ref, :process, ^walk, _reason}, timeout_ms
+    _ = :sys.get_state(guard, Keyword.get(opts, :timeout_ms, 5_000))
     :ok
   end
 

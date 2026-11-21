@@ -46,6 +46,7 @@ defmodule Cinder.Library.BoundedWalk do
   alias Cinder.Library.PathPolicy
 
   @timeout_ms 30_000
+  @call_timeout_ms 5_000
   @max_stuck 2
   @read_timeout_ms 1_000
 
@@ -68,24 +69,32 @@ defmodule Cinder.Library.BoundedWalk do
 
   `root` is the key the guard counts a stuck walk against: the root the walk reads under.
 
-  Options: `:timeout_ms`, the deadline, 30 s by default; and, for tests, `:server`, the guard.
+  Options: `:timeout_ms`, the deadline, 30 s by default; and, for tests, `:server`, the guard,
+  and `:call_timeout_ms`, the timeout `GenServer.call/3` gets on each call that `run/3` and its
+  walk's task make to the guard, 5 s by default.
+
+  A guard call that gets no reply within it exits as `GenServer.call/3` does. The caller's own
+  calls exit the caller. The walk's task's report that it started exits the task, which reaches
+  the caller as any exit of the walk does. Its report that it returned gives up quietly.
   """
   @spec run(term(), (-> result), keyword()) :: result | {:error, :timeout} when result: term()
   def run(root, fun, opts \\ []) do
     server = Keyword.get(opts, :server, __MODULE__)
     timeout_ms = Keyword.get_lazy(opts, :timeout_ms, &timeout_ms/0)
+    call_timeout_ms = Keyword.get(opts, :call_timeout_ms, @call_timeout_ms)
+    guard = {server, call_timeout_ms}
     caller = self()
 
     # Started from the caller, not the guard, so the task inherits the caller's `$callers`.
-    with {:ok, task_supervisor} <- GenServer.call(server, {:admit, root}) do
+    with {:ok, task_supervisor} <- call(guard, {:admit, root}) do
       task =
-        Task.Supervisor.async_nolink(task_supervisor, fn -> walk(server, root, caller, fun) end)
+        Task.Supervisor.async_nolink(task_supervisor, fn -> walk(guard, root, caller, fun) end)
 
       # `Task.ignore/1` still hands back a result that landed right at the deadline.
       case Task.yield(task, timeout_ms) || Task.ignore(task) do
         {:ok, result} -> result
         {:exit, reason} -> reraise_in_caller(reason)
-        nil -> mark_stuck(server, root, task.pid, timeout_ms)
+        nil -> mark_stuck(guard, root, task.pid, timeout_ms)
       end
     end
   end
@@ -116,24 +125,29 @@ defmodule Cinder.Library.BoundedWalk do
   # so the guard watches the caller and learns when it exits first (#1168). The guard monitors a
   # caller that already exited with an at-once `:noproc`, so no start goes unwatched. Both calls
   # wait for the guard's reply, and the return call runs before the task replies: by the time the
-  # caller can see the result, a raise or an exit, the guard no longer watches it.
-  defp walk(server, root, caller, fun) do
-    :ok = GenServer.call(server, {:started, root, caller, self()})
+  # caller can see the result, a raise or an exit, the guard no longer watches it, unless the
+  # return call got no reply within `run/3`'s `:call_timeout_ms`.
+  defp walk(guard, root, caller, fun) do
+    :ok = call(guard, {:started, root, caller, self()})
 
     try do
       fun.()
     after
-      returned(server)
+      returned(guard)
     end
   end
 
   # A guard that stopped after this walk started has nothing left to forget, and a restarted one
   # learns the return from the walk's exit. The result still reaches the caller.
-  defp returned(server) do
-    GenServer.call(server, {:returned, self()})
+  defp returned(guard) do
+    call(guard, {:returned, self()})
   catch
     :exit, _reason -> :ok
   end
+
+  # `guard` is the guard's server and the bound on each call to it, `run/3`'s `:call_timeout_ms`.
+  defp call({server, call_timeout_ms}, request),
+    do: GenServer.call(server, request, call_timeout_ms)
 
   # Before #779 the walk ran in the caller, so a raise or an exit reached it directly.
   defp reraise_in_caller({exception, stacktrace}) when is_exception(exception),
@@ -141,8 +155,8 @@ defmodule Cinder.Library.BoundedWalk do
 
   defp reraise_in_caller(reason), do: exit(reason)
 
-  defp mark_stuck(server, root, pid, timeout_ms) do
-    :ok = GenServer.call(server, {:stuck, root, pid})
+  defp mark_stuck(guard, root, pid, timeout_ms) do
+    :ok = call(guard, {:stuck, root, pid})
 
     Logger.warning(
       "directory walk under #{inspect(root)} did not return within #{timeout_ms} ms; " <>
