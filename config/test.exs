@@ -26,14 +26,28 @@ config :cinder, Cinder.Repo,
   # `Cinder.DataCase.setup_sandbox/1` before its checkout (#1021).
   queue_target: 30_000,
   queue_interval: 30_000,
-  # A Repo call that passes no `timeout:` of its own holds its checkout for at most `timeout`, a
-  # transaction included, counted from the checkout request. Past it, the sandbox's ownership
-  # proxy disconnects the connection, and the transaction's next query fails on it. At
-  # DBConnection's default 15_000, a test process stalled in the code server
-  # (`:code.ensure_loaded/1`) inside `Repo.insert` on a loaded host, and that insert raised
-  # `DBConnection.ConnectionError` "connection is closed because of an error, disconnect or
-  # timeout" (#1510). 60_000 is ExUnit's default test timeout: in a test with no `timeout` tag,
-  # run without `--trace`, a longer stall fails as an ExUnit timeout with the stalled call's
+  # A Repo call that passes no `timeout:` or `deadline:` of its own, made outside another call's
+  # checkout, gets `timeout` from its checkout request to its checkin, a transaction included.
+  # Once that time runs out, the sandbox's ownership proxy, which holds the test's connection,
+  # disconnects it and stops, unless the call checks the connection in before the proxy handles
+  # the expiry. Where the limit falls sets the symptom:
+  # - Before a query of the held checkout, that query fails on the closed connection. At
+  #   DBConnection's default 15_000, a test process stalled in the code server
+  #   (`:code.ensure_loaded/1`) inside `Repo.insert` on a loaded host, and that insert raised
+  #   `DBConnection.ConnectionError` "connection is closed because of an error, disconnect or
+  #   timeout" (#1510).
+  # - After the last query of a transaction body that returns without asking for a rollback (no
+  #   `Repo.rollback/1`, no `{:error, _}` from a `Repo.transact` body), the transaction returns
+  #   `{:error, :rollback}`.
+  # - At a transaction's commit, or after a plain checkout's last query, the call can return
+  #   normally. The test's next Repo call then fails with `DBConnection.OwnershipError`
+  #   "cannot find ownership process" (#1518). While the proxy is still stopping, that call can
+  #   exit instead, for example with a `DBConnection.ConnectionError` saying the client "queued
+  #   and checked out the connection for longer than" the limit. In two #1518 sightings,
+  #   `Catalog.create_profile/1` returned `{:ok, _}` and the next `Books.upsert_work/1` raised.
+  # 60_000 is ExUnit's default test timeout: in a test with no `timeout` tag, run with no
+  # `--timeout` and outside trace mode, which `--trace` turns on, and so does a `--slowest` or
+  # `--slowest-modules` above 0, a longer stall fails as an ExUnit timeout with the stalled call's
   # stacktrace. Pinned in repo_concurrency_test.exs.
   timeout: 60_000,
   # Coverage overhead delays lock release past the default 5000ms timeout.
