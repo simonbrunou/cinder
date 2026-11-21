@@ -37,6 +37,43 @@ defmodule Cinder.RepoConcurrencyTest do
     assert 2 * config[:queue_target] >= ExUnit.configuration()[:timeout]
   end
 
+  # A checkout held past the Repo's `timeout` is disconnected, and the transaction's next query
+  # fails on the closed connection (#1510). `Keyword.fetch!/2` fails a missing key, and the
+  # literal pins the value the suite runs with (docs/agents/testing.md), which also fails
+  # `:infinity`, an atom that compares above any integer.
+  test "Cinder.Repo's checkout timeout is 60 s, no shorter than ExUnit's configured test timeout" do
+    timeout = Application.get_env(:cinder, Cinder.Repo) |> Keyword.fetch!(:timeout)
+    assert timeout == 60_000
+    assert timeout >= ExUnit.configuration()[:timeout]
+  end
+
+  # The test-env checkout timeout above is the test env's own: dev and prod keep DBConnection's
+  # 15 s default. `busy_timeout` is the control that each read reached the shared Repo config.
+  test "the dev and prod Cinder.Repo configs set no checkout timeout" do
+    previous = Map.new(~w(SECRET_KEY_BASE DATABASE_PATH), &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      Enum.each(previous, fn
+        {name, nil} -> System.delete_env(name)
+        {name, value} -> System.put_env(name, value)
+      end)
+    end)
+
+    System.put_env("SECRET_KEY_BASE", String.duplicate("k", 64))
+    System.put_env("DATABASE_PATH", "/tmp/cinder_repo_concurrency_test.db")
+
+    for env <- [:dev, :prod] do
+      repo =
+        "config/config.exs"
+        |> Config.Reader.read!(env: env)
+        |> Config.Reader.merge(Config.Reader.read!("config/runtime.exs", env: env))
+        |> get_in([:cinder, Cinder.Repo])
+
+      assert repo[:busy_timeout] == 5_000, "#{env}: #{inspect(repo)}"
+      refute Keyword.has_key?(repo, :timeout), "#{env}: #{inspect(repo)}"
+    end
+  end
+
   describe "two real connections racing a write lock" do
     setup do
       path = Path.join(System.tmp_dir!(), "cinder_busy_#{System.unique_integer([:positive])}.db")

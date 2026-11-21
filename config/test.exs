@@ -26,6 +26,16 @@ config :cinder, Cinder.Repo,
   # `Cinder.DataCase.setup_sandbox/1` before its checkout (#1021).
   queue_target: 30_000,
   queue_interval: 30_000,
+  # A Repo call that passes no `timeout:` of its own holds its checkout for at most `timeout`, a
+  # transaction included, counted from the checkout request. Past it, the sandbox's ownership
+  # proxy disconnects the connection, and the transaction's next query fails on it. At
+  # DBConnection's default 15_000, a test process stalled in the code server
+  # (`:code.ensure_loaded/1`) inside `Repo.insert` on a loaded host, and that insert raised
+  # `DBConnection.ConnectionError` "connection is closed because of an error, disconnect or
+  # timeout" (#1510). 60_000 is ExUnit's default test timeout: in a test with no `timeout` tag,
+  # run without `--trace`, a longer stall fails as an ExUnit timeout with the stalled call's
+  # stacktrace. Pinned in repo_concurrency_test.exs.
+  timeout: 60_000,
   # Coverage overhead delays lock release past the default 5000ms timeout.
   busy_timeout: 10_000,
   # journal_mode/foreign_keys/default_transaction_mode are pinned in config/config.exs;
