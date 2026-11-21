@@ -380,7 +380,8 @@ defmodule Cinder.Acquisition.AnimeParserTest do
         AnimeParser.parse("Show S01E01-E02\u200BE03", context)
       end)
 
-    case Task.yield(task, 200) || Task.shutdown(task, :brutal_kill) do
+    # testing.md's 10 s for a call meant to finish: a loaded host missed 200 ms (#1522).
+    case Task.yield(task, 10_000) || Task.shutdown(task, :brutal_kill) do
       {:ok, parsed} -> assert %{coordinates: [], role: :unknown} = parsed
       nil -> flunk("parser did not terminate for a zero-width separator")
     end
