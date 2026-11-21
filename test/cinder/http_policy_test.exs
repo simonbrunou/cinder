@@ -1005,11 +1005,17 @@ defmodule Cinder.HTTPPolicyTest do
         send(parent, {:request_started, caller, self()})
 
         # Hold each request until the test has seen both, so the two calls overlap. The valve
-        # only keeps a lost release from hanging the suite.
+        # only keeps a lost release from hanging the suite (#1558). A valve that fires before the
+        # test's 10 s wait for the second call ends could answer the first call before the
+        # second reaches its stub, and the test would pass on calls that never overlapped. At
+        # 30 s, the calls' deadline, a lost release still fails the result match. The caller's
+        # deadline and the request task's own 30 s clock both start before the stub runs, so
+        # by the time the valve answers, either the caller has killed the task or the task's
+        # elapsed check turns the answer into `{:error, :request_timeout}`.
         receive do
           :release -> :ok
         after
-          10_000 -> :ok
+          30_000 -> :ok
         end
 
         Req.Test.text(conn, "ok")
@@ -1029,12 +1035,17 @@ defmodule Cinder.HTTPPolicyTest do
       {{caller_tasks, stub_tasks, results}, events} =
         Cinder.TelemetryHelpers.capture(@request_task_event, fn ->
           caller_tasks = [Task.async(call), Task.async(call)]
-          assert_receive {:request_started, first_caller, first_task}
-          assert_receive {:request_started, second_caller, second_task}
+          # 10 s each, as testing.md asks of a call meant to finish; together they stay under the
+          # calls' 30 s deadline. A request that hangs before its stub reports fails one of these
+          # waits. The await runs 5 s past the deadline, so a request that hangs after its stub
+          # reports gives its call's `{:error, :request_timeout}` to the result match before the
+          # await gives up, unless the caller itself stalls more than those 5 s.
+          assert_receive {:request_started, first_caller, first_task}, 10_000
+          assert_receive {:request_started, second_caller, second_task}, 10_000
           send(first_task, :release)
           send(second_task, :release)
           stub_tasks = %{first_caller => first_task, second_caller => second_task}
-          {caller_tasks, stub_tasks, Task.await_many(caller_tasks)}
+          {caller_tasks, stub_tasks, Task.await_many(caller_tasks, 35_000)}
         end)
 
       assert [{:ok, %{body: "ok"}}, {:ok, %{body: "ok"}}] = results
