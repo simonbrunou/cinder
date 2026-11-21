@@ -572,25 +572,34 @@ defmodule Cinder.Acquisition do
   # One copy of each release, in first-seen order: the bridged seasons' queries can each return it.
   # The copy kept carries every copy's query origins, as `Indexer.Prowlarr.search_tv/3` merges its
   # own two queries, because the title guard reads them.
+  #
+  # One copy is kept per link and indexer: a refused submission blocks its title per indexer
+  # (#1515), so one link from two indexers stays two candidates and the unblocked copy can still
+  # be picked. Each indexer's result is the link's merged copy under that indexer's `indexer_id`,
+  # so it carries the query origins of every copy of the link, whichever indexer sent it. A copy
+  # with no indexer id adds no result when another copy of its link names an indexer.
   defp deduplicate_tv_releases(releases) do
-    {keys, by_key} =
-      Enum.reduce(releases, {[], %{}}, fn release, {keys, by_key} ->
-        key = tv_release_key(release)
-
-        case by_key do
-          %{^key => kept} -> {keys, %{by_key | key => merge_query_origins(kept, release)}}
-          %{} -> {[key | keys], Map.put(by_key, key, release)}
-        end
+    by_link =
+      Enum.reduce(releases, %{}, fn release, by_link ->
+        Map.update(by_link, tv_link_key(release), release, &merge_query_origins(&1, release))
       end)
 
-    keys |> Enum.reverse() |> Enum.map(&Map.fetch!(by_key, &1))
+    named =
+      for %{indexer_id: id} = r when not is_nil(id) <- releases,
+          into: MapSet.new(),
+          do: tv_link_key(r)
+
+    releases
+    |> Enum.reject(&(is_nil(&1.indexer_id) and tv_link_key(&1) in named))
+    |> Enum.uniq_by(&{tv_link_key(&1), &1.indexer_id})
+    |> Enum.map(&%{Map.fetch!(by_link, tv_link_key(&1)) | indexer_id: &1.indexer_id})
   end
 
-  defp tv_release_key(%Release{download_url: url, protocol: protocol})
+  defp tv_link_key(%Release{download_url: url, protocol: protocol})
        when is_binary(url) and url != "",
        do: {protocol, url}
 
-  defp tv_release_key(%Release{} = release), do: {release.protocol, release.title, release.size}
+  defp tv_link_key(%Release{} = release), do: {release.protocol, release.title, release.size}
 
   # nil origins (an indexer that predates provenance) stay nil: the title guard reads nil as legacy.
   defp merge_query_origins(%Release{query_origins: nil} = kept, %Release{query_origins: nil}),

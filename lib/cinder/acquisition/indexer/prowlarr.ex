@@ -70,7 +70,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   # Text-scraper indexers (1337x & co.) return nothing for a {TvdbId:...} token —
   # Prowlarr does no id→title resolution for them — so the id query alone hides every
-  # release they carry. Union both shapes (id results first, deduped by download_url);
+  # release they carry. Union both shapes (id results first, deduped by download_url and indexer);
   # one side failing degrades to the other so a flaky scraper can't sink the search.
   # Keep per-result provenance so callers can title-guard the free-text half without
   # rejecting AKA-titled releases that genuinely came from the TVDB-scoped query.
@@ -97,23 +97,29 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   defp tag_query_origin(releases, origin),
     do: Enum.map(releases, &Map.put(&1, :query_origins, [origin]))
 
+  # One result per link and indexer: a refused submission blocks its title per indexer (#1515), so
+  # the copy from an indexer that is not blocked must reach the scorer. Each indexer's result is
+  # the link's first copy under that indexer's id, with the query origins of every copy of the link.
+  # A copy with no indexer id adds no result when another copy of its link names an indexer.
   defp merge_query_origins(releases) do
+    by_url =
+      Enum.reduce(releases, %{}, fn release, by_url ->
+        Map.update(by_url, release.download_url, release, fn kept ->
+          %{kept | query_origins: Enum.uniq(kept.query_origins ++ release.query_origins)}
+        end)
+      end)
+
+    named =
+      for %{indexer_id: id} = r when not is_nil(id) <- releases,
+          into: MapSet.new(),
+          do: r.download_url
+
     releases
-    |> Enum.reduce({[], %{}}, fn release, {keys, by_url} ->
-      key = release.download_url
-
-      case Map.fetch(by_url, key) do
-        {:ok, existing} ->
-          origins = Enum.uniq(existing.query_origins ++ release.query_origins)
-          {keys, Map.put(by_url, key, %{existing | query_origins: origins})}
-
-        :error ->
-          {[key | keys], Map.put(by_url, key, release)}
-      end
-    end)
-    |> then(fn {keys, by_url} ->
-      keys |> Enum.reverse() |> Enum.map(&Map.fetch!(by_url, &1))
-    end)
+    |> Enum.reject(&(is_nil(Map.get(&1, :indexer_id)) and &1.download_url in named))
+    |> Enum.uniq_by(&{&1.download_url, Map.get(&1, :indexer_id)})
+    |> Enum.map(
+      &Map.put(Map.fetch!(by_url, &1.download_url), :indexer_id, Map.get(&1, :indexer_id))
+    )
   end
 
   @impl true

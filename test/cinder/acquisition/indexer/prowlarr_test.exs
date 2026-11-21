@@ -221,6 +221,53 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
            ]
   end
 
+  # #1515: a refused submission blocks its title per indexer, so one link from two indexers must
+  # reach the scorer as two results, each with the query origins of every copy of the link.
+  test "search_tv/3 merges one link only within one indexer" do
+    magnet = "magnet:?xt=urn:btih:shared"
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [%{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 1}])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 1},
+            %{"title" => "BB.S01.Other", "magnetUrl" => magnet, "indexerId" => 2, "size" => 5}
+          ])
+      end
+    end)
+
+    assert {:ok, [first, second]} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+
+    assert {first.indexer_id, first.query_origins, second.indexer_id} ==
+             {1, [:id_scoped, :free_text], 2}
+
+    # Each indexer's result is the link's first copy under its own indexer id.
+    assert Map.delete(second, :indexer_id) == Map.delete(first, :indexer_id)
+  end
+
+  test "search_tv/3 folds a copy with no indexer id into its link's copy that names one" do
+    magnet = "magnet:?xt=urn:btih:shared"
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [%{"title" => "BB.S01", "magnetUrl" => magnet}])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [%{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 7}])
+      end
+    end)
+
+    assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+
+    assert Enum.map(results, &{&1.indexer_id, &1.query_origins}) == [
+             {7, [:id_scoped, :free_text]}
+           ]
+  end
+
   test "search_tv/3 keeps one side's results when the other query fails" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       case conn.params["query"] do

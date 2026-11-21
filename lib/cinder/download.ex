@@ -87,6 +87,14 @@ defmodule Cinder.Download do
       "download_url_origin" => release.download_url_origin
     }
 
+    # The indexer that served the release, which a refusal's block row records
+    # (`abandon_reserved/2`, #1515): that row then matches the title only in a result from that
+    # indexer or from no known indexer. A release with no integer indexer id stores none.
+    release_attrs =
+      if is_integer(release.indexer_id),
+        do: Map.put(release_attrs, "indexer_id", release.indexer_id),
+        else: release_attrs
+
     release_attrs =
       if Map.get(attrs, :operator_initiated, false),
         do: Map.put(release_attrs, "operator_initiated", true),
@@ -917,12 +925,15 @@ defmodule Cinder.Download do
   # but `:invalid_intent_release`, which says a stored link could not be read back, not that the
   # release is bad (#1492). This is the one place both a fresh grab and a stored intent's retry
   # pass through. An operator-initiated intent (a release picked by hand, or the upgrade sweep's)
-  # is not blocked.
+  # is not blocked. The block row carries the indexer id the intent stored, so it does not match
+  # the same title from another indexer (another row, such as a `stalled` one, still can). For an
+  # intent stored with none, such as one reserved before #1515, the row matches the title from
+  # every indexer.
   defp abandon_reserved(%Intent{kind: kind} = intent, reason)
        when kind in [:episode, :season_pack] do
     if reason in @refused_release_errors and not operator_initiated?(intent) do
       series_id = fn -> intent_series_id(intent) end
-      Catalog.block_series_release(series_id, release_title(intent), reason)
+      Catalog.block_series_release(series_id, release_title(intent), reason, indexer_id(intent))
     end
 
     delete_intent(intent)
@@ -934,7 +945,7 @@ defmodule Cinder.Download do
     {:error, reason}
   end
 
-  # Raises when the episodes no longer share one series: `Catalog.block_series_release/3` logs that
+  # Raises when the episodes no longer share one series: `Catalog.block_series_release/4` logs that
   # and records nothing.
   defp intent_series_id(intent) do
     {:ok, series} = Catalog.get_single_series_for_episode_ids(intent.episode_ids)
@@ -943,6 +954,9 @@ defmodule Cinder.Download do
 
   defp release_title(%Intent{release: %{"title" => title}}) when is_binary(title), do: title
   defp release_title(_intent), do: nil
+
+  defp indexer_id(%Intent{release: %{"indexer_id" => id}}) when is_integer(id), do: id
+  defp indexer_id(_intent), do: nil
 
   defp hold_book_target(target_id, reason, release_title, replace?) do
     case Repo.get(BookTarget, target_id) do

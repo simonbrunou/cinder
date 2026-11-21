@@ -519,9 +519,10 @@ defmodule Cinder.Catalog.Grabs do
   defp cancel_expectation(:needs_mapping), do: :needs_mapping
 
   @doc """
-  Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
-  still-linked episodes, so call it **before** `park_grab/1` releases them and deletes the grab. A nil `release_title` is a no-op. **Non-raising**
-  (`Cinder.Catalog.BlockedReleases.block_series_release/3`): the series lookup runs inside its
+  Tries to record `grab`'s `release_title` as blocked for its series. Resolves the series from the
+  grab's still-linked episodes, so call it **before** `park_grab/1` releases them and deletes the
+  grab. A nil `release_title` is a no-op. **Non-raising**
+  (`Cinder.Catalog.BlockedReleases.block_series_release/4`): the series lookup runs inside its
   guard, so the TV park path's series resolution can't raise out and abort `park_grab`.
   """
   def block_grab_release(%Grab{release_title: title, id: grab_id}, reason),

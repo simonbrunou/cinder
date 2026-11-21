@@ -7,7 +7,7 @@ defmodule Cinder.Catalog.BlockedReleases do
 
   Two kinds of write:
 
-    * **Non-raising** (`block_release/2`, `block_series_release/3`, `block_unplaced_pack/2`):
+    * **Non-raising** (`block_release/2`, `block_series_release/4`, `block_unplaced_pack/2`):
       for the pollers' park paths and a refused TV submission (`Cinder.Download`), which run
       inside a poller's `isolate/2`, where a raise would re-fire every tick: a park with nothing
       parked, a submission whose reservation is never dropped. A refused or raised insert is
@@ -64,12 +64,24 @@ defmodule Cinder.Catalog.BlockedReleases do
   returning it when finding it is itself a query: the function runs inside the non-raising
   guard, so a failed lookup is logged like a failed insert. A nil `title` is a no-op.
   Non-raising; always `:ok`.
-  """
-  def block_series_release(_series, nil, _reason), do: :ok
 
-  def block_series_release(series, title, reason) do
+  `indexer_id` scopes the row to one indexer (#1515): it then blocks `title` only in a search
+  result from that indexer or from no known indexer (`blocked_release_titles_for_series/2`). Only
+  a refused TV submission (`Cinder.Download`) passes one; nil, the default, blocks `title` from
+  every indexer.
+  """
+  def block_series_release(series, title, reason, indexer_id \\ nil)
+
+  def block_series_release(_series, nil, _reason, _indexer_id), do: :ok
+
+  def block_series_release(series, title, reason, indexer_id) do
     insert_quietly(fn ->
-      %{release_title: title, reason: to_string(reason), series_id: series_id(series)}
+      %{
+        release_title: title,
+        reason: to_string(reason),
+        indexer_id: indexer_id,
+        series_id: series_id(series)
+      }
     end)
   end
 
@@ -123,7 +135,10 @@ defmodule Cinder.Catalog.BlockedReleases do
       Repo.all(from b in BlockedRelease, where: b.movie_id == ^movie_id, select: b.release_title)
 
   @doc """
-  Release titles blocked for the series `series_id`.
+  Release titles blocked for the series `series_id`, the `:release_blocklist` that
+  `Cinder.Acquisition.Scorer` reads. A row with no indexer id gives its title as a string, which
+  blocks that title from every indexer. A row with one gives `{title, indexer_id}`, which blocks
+  that title only in a result from that indexer or from no known indexer (#1515).
 
   Upgrade-only reasons (`#{inspect(@upgrade_only_reasons)}`) are **excluded** unless the caller
   names one in `:include_reasons`. Such a row is not "this release is bad": it is the season's
@@ -139,8 +154,12 @@ defmodule Cinder.Catalog.BlockedReleases do
       from b in BlockedRelease,
         where: b.series_id == ^series_id,
         where: is_nil(b.reason) or b.reason not in ^(@upgrade_only_reasons -- included),
-        select: b.release_title
+        select: {b.release_title, b.indexer_id}
     )
+    |> Enum.map(fn
+      {title, nil} -> title
+      entry -> entry
+    end)
   end
 
   defp scope_attrs(movie: id), do: %{movie_id: id}
@@ -155,8 +174,12 @@ defmodule Cinder.Catalog.BlockedReleases do
   # raise here would stop the park and hot-loop the grab every tick.
   defp insert_quietly(build_attrs) do
     attrs = build_attrs.()
+    # Set on the struct, not cast: only `block_series_release/4` passes one, from a stored intent.
+    {indexer_id, cast_attrs} = Map.pop(attrs, :indexer_id)
 
-    case %BlockedRelease{} |> BlockedRelease.changeset(attrs) |> Repo.insert() do
+    case %BlockedRelease{indexer_id: indexer_id}
+         |> BlockedRelease.changeset(cast_attrs)
+         |> Repo.insert() do
       {:ok, _} ->
         :ok
 

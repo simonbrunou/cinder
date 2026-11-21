@@ -543,6 +543,38 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert {release.download_url, release.tvdb_id} == {"other-first", nil}
   end
 
+  # #1515: copies of one link from two indexers stay two results, and the TVDB id is still decided
+  # over the copies of every indexer.
+  test "the free-text guard reads the TVDB id the URL copies of every indexer settle on (#1515)" do
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+
+    copy = fn title, link, tvdb_id, indexer_id ->
+      Map.merge(raw(title, link), %{tvdb_id: tvdb_id, indexer_id: indexer_id})
+    end
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok,
+         [
+           copy.("Show.S01E01.1999.1080p.WEB-DL-GRP", "own-first", 99, 1),
+           copy.("[Group] Show S01E01 [1080p]", "other-first", 77, 1)
+         ]}
+
+      "Show S01E01", categories: [5070] ->
+        {:ok,
+         [
+           copy.("Show.S01E01.1999.1080p.WEB-DL-GRP", "own-first", 77, 2),
+           copy.("[Group] Show S01E01 [1080p]", "other-first", 99, 2)
+         ]}
+    end)
+
+    assert {:ok, releases, false} =
+             Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+
+    assert releases |> Enum.map(&{&1.download_url, &1.indexer_id, &1.tvdb_id}) |> Enum.sort() ==
+             [{"other-first", 1, nil}, {"other-first", 2, nil}]
+  end
+
   # A result the id-scoped query also returned is judged as an id-scoped one (#699), where the
   # series' own reported TVDB id proves it under any name.
   test "a result the id-scoped query also returned skips the free-text guard (#871)" do
@@ -557,6 +589,52 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
     assert [%{download_url: "both", query_origins: [:id_scoped, :free_text]}] = judged.kept
+  end
+
+  # #1515: one link stays one result per indexer, and each carries the query origins of every
+  # indexer's copy, so the blocked indexer's id-scoped copy still vouches for the other's.
+  test "a link's id-scoped copy from one indexer vouches for its copy from another (#1515)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [Map.put(result, :indexer_id, 1)]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok, [Map.merge(result, %{indexer_id: 2, size: nil, tvdb_id: nil})]}
+
+      _query, categories: [5070] ->
+        {:ok, []}
+    end)
+
+    assert {:ok, releases, false} =
+             Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+
+    assert [first, second] = Enum.sort_by(releases, & &1.indexer_id)
+
+    assert {first.indexer_id, first.query_origins, first.tvdb_id, second.indexer_id} ==
+             {1, [:id_scoped, :free_text], 99, 2}
+
+    # Each indexer's result is the link's merged release under its own indexer id.
+    assert Map.delete(second, :indexer_id) == Map.delete(first, :indexer_id)
+  end
+
+  test "a link's copy with no indexer id folds into its copy that names one (#1515)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, [result]} end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] -> {:ok, [Map.put(result, :indexer_id, 7)]}
+      _query, categories: [5070] -> {:ok, []}
+    end)
+
+    assert {:ok, releases, false} =
+             Anime.search_episodes(IndexerMock, series_context(99), [11], [])
+
+    assert Enum.map(releases, &{&1.indexer_id, &1.query_origins}) == [
+             {7, [:id_scoped, :free_text]}
+           ]
   end
 
   # #1132: to the parser, a year between the title and an `SxxEyy` is metadata, as it is after the

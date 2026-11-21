@@ -429,7 +429,7 @@ defmodule Cinder.Acquisition.Scorer do
       Keyword.get(rules, :max_size),
       Keyword.get(rules, :preferred_resolutions, @default_preferred),
       Keyword.get(rules, :preferred_sources, []),
-      rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&String.downcase/1),
+      rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&blocklist_entry/1),
       rules |> Keyword.get(:preferred_terms, []) |> Enum.map(&String.downcase/1),
       rules |> Keyword.get(:blocked_terms, []) |> Enum.map(&String.downcase/1)
     }
@@ -579,10 +579,24 @@ defmodule Cinder.Acquisition.Scorer do
   defp rank_in(value, preferred),
     do: Enum.find_index(preferred, &(&1 == value)) || length(preferred)
 
+  # A `release_blocklist` entry is a title, which blocks that title from every indexer, or a
+  # `{title, indexer_id}` pair (a refused TV submission, #1515), which blocks it only in a release
+  # from that indexer or from no known indexer.
+  defp blocklist_entry({title, indexer_id}), do: {String.downcase(title), indexer_id}
+  defp blocklist_entry(title), do: {String.downcase(title), nil}
+
   # Exact (downcased) release-name exclusion. The per-item blocklist
   # passes the failed release titles as `release_blocklist`; an untitled release can't match.
   defp title_blocked?(%Release{title: nil}, _list), do: false
-  defp title_blocked?(%Release{title: title}, list), do: String.downcase(title) in list
+
+  defp title_blocked?(%Release{title: title, indexer_id: indexer_id}, list) do
+    title = String.downcase(title)
+
+    Enum.any?(list, fn {blocked, blocked_indexer} ->
+      blocked == title and
+        (is_nil(blocked_indexer) or is_nil(indexer_id) or blocked_indexer == indexer_id)
+    end)
+  end
 
   defp contains_blocked_term?(%Release{title: nil}, _terms), do: false
 

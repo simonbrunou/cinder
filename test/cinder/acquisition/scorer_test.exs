@@ -985,6 +985,29 @@ defmodule Cinder.Acquisition.ScorerTest do
                {:rejected, :blocklisted}
     end
 
+    # #1515: a refused TV submission's entry carries the refused result's indexer id.
+    test "a {title, indexer_id} entry flags its title from that indexer or no known indexer" do
+      blocklist = [{"Bad.Release", 1}]
+
+      verdicts =
+        for indexer_id <- [1, 2, nil],
+            do:
+              {indexer_id,
+               Scorer.verdict(rel(title: "bad.release", indexer_id: indexer_id),
+                 release_blocklist: blocklist
+               )}
+
+      assert verdicts == [
+               {1, {:rejected, :blocklisted}},
+               {2, :ok},
+               {nil, {:rejected, :blocklisted}}
+             ]
+
+      assert Scorer.verdict(rel(title: "Other.Release", indexer_id: 1),
+               release_blocklist: blocklist
+             ) == :ok
+    end
+
     test "flags a disallowed resolution" do
       assert Scorer.verdict(rel(resolution: "480p"), preferred_resolutions: ["1080p"]) ==
                {:rejected, :wrong_resolution}

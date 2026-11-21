@@ -989,23 +989,36 @@ defmodule Cinder.Acquisition.Anime do
 
   defp build_release(_result, _origin), do: []
 
+  # One result per link and indexer: a refused submission blocks its title per indexer (#1515), so
+  # one link from two indexers stays two candidates and the unblocked copy can still be picked.
+  # Each indexer's result is the link's release merged over every copy, whichever indexer sent it
+  # (`merge_release/2`, `reported_tvdb_id/2`), under that indexer's `indexer_id`. A copy with no
+  # indexer id adds no result when another copy of its link names an indexer.
   defp deduplicate(releases, series_tvdb_id) do
-    copies = Enum.group_by(releases, &release_key/1)
+    merged_by_link =
+      releases
+      |> Enum.group_by(&link_key/1)
+      |> Map.new(fn {key, [first | later] = copies} ->
+        merged = Enum.reduce(later, first, &merge_release(&2, &1))
+        {key, %{merged | tvdb_id: reported_tvdb_id(copies, series_tvdb_id)}}
+      end)
+
+    named =
+      for %{indexer_id: id} = r when not is_nil(id) <- releases,
+          into: MapSet.new(),
+          do: link_key(r)
 
     releases
-    |> Enum.uniq_by(&release_key/1)
-    |> Enum.map(fn release ->
-      [first | later] = Map.fetch!(copies, release_key(release))
-      merged = Enum.reduce(later, first, &merge_release(&2, &1))
-      %{merged | tvdb_id: reported_tvdb_id([first | later], series_tvdb_id)}
-    end)
+    |> Enum.reject(&(is_nil(&1.indexer_id) and link_key(&1) in named))
+    |> Enum.uniq_by(&{link_key(&1), &1.indexer_id})
+    |> Enum.map(&%{Map.fetch!(merged_by_link, link_key(&1)) | indexer_id: &1.indexer_id})
   end
 
-  defp release_key(%Release{download_url: url, protocol: protocol})
+  defp link_key(%Release{download_url: url, protocol: protocol})
        when is_binary(url) and url != "",
        do: {protocol, url}
 
-  defp release_key(%Release{} = release) do
+  defp link_key(%Release{} = release) do
     {release.protocol, normalize_title(release.title), release.size}
   end
 
@@ -1015,7 +1028,6 @@ defmodule Cinder.Acquisition.Anime do
       | size: first.size || later.size,
         download_url_origin: first.download_url_origin || later.download_url_origin,
         category_ids: union(first.category_ids, later.category_ids),
-        indexer_id: first.indexer_id || later.indexer_id,
         published_at: first.published_at || later.published_at,
         query_origins: union(first.query_origins, later.query_origins)
     }
