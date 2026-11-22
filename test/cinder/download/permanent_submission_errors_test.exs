@@ -16,6 +16,12 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   release holds no link ciphertext) and the poller's pending-intent pass submits it. A book target
   has no search pass, so each of its cells starts from a stored intent that `BookPoller`'s
   pending-intent pass submits.
+
+  The movie poller's search pass reaches a stored intent itself when the pending-intent pass
+  stopped short on a raise or the intent's retry came due after that pass ran. The tests in the
+  "a stored movie intent the search pass reaches" block start from one or the other: a link that
+  cannot be read back goes on to a fresh search and grab, and a reason the client returns parks
+  the movie on the stored release's add (#1564).
   """
   use Cinder.DataCase, async: false
 
@@ -208,6 +214,122 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     assert blocked(series.id) == []
   end
 
+  # The search pass, not the pending-intent pass, reaches a movie's stored intent when that pass
+  # stopped short or the intent's retry came due after it ran. A stored link that cannot be read
+  # back then goes on to a fresh search and grab in the same `Download.start/1` call, as the
+  # pending-intent pass lets the search pass do (#1564).
+  describe "a stored movie intent the search pass reaches" do
+    @alpha_stored "A.Stored"
+    @bravo_stored "B.Stored"
+    @bravo_found "Bravo.2010.1080p.WEB-DL-GRP"
+
+    test "whose link cannot be read back grabs a fresh release after the pending pass stopped" do
+      bravo = interrupted_pending_pass(:unreadable)
+      stub_movie_search()
+      stub_add(fn _title -> {:ok, "hash-#{System.unique_integer([:positive])}"} end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+
+      assert movie_state(bravo.id) == %{status: :downloading, search_attempts: 0}
+      assert added() == [@alpha_stored, @bravo_found]
+      assert_received {:search, "tt0000002"}
+      refute_received {:search, "tt0000001"}
+      assert Repo.aggregate(Intent, :count) == 0
+    end
+
+    # The intent waits out a retry delay when the pending-intent pass runs. A downloading movie's
+    # client `status` call, between the two passes, makes it due.
+    test "whose link cannot be read back grabs a fresh release once its retry comes due mid-poll" do
+      bravo = searching_movie("Bravo", "tt0000002")
+      later = DateTime.add(DateTime.utc_now(:second), 3600)
+      intent = bravo.id |> stored_movie_intent(@bravo_stored, later) |> break_payload()
+      movie_fixture(%{title: "Charlie", status: :downloading, download_id: "hash-charlie"})
+
+      stub_movie_search()
+      stub_find_by_operation_key(fn _call -> :not_found end)
+      stub_add(fn _title -> {:ok, "hash-bravo"} end)
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-charlie" ->
+        make_due(intent)
+        {:ok, %{state: :downloading}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+
+      assert movie_state(bravo.id) == %{status: :downloading, search_attempts: 0}
+      assert added() == [@bravo_found]
+      assert Repo.aggregate(Intent, :count) == 0
+    end
+
+    # The fall-through runs once per call: when the fresh grab's own link cannot be read back
+    # either, that error parks the movie as before. The vault's key changes between the fresh
+    # link's encryption and its decryption, at the fresh intent's lookup (the third: the first is
+    # the pending pass's, the second the stored intent's in the search pass). Each search puts the
+    # key back before its grab encrypts, so a second fresh grab would add its release.
+    test "parks the movie when the fresh grab's own link cannot be read back" do
+      bravo = searching_movie("Bravo", "tt0000002")
+      bravo.id |> stored_movie_intent(@bravo_stored) |> break_payload()
+
+      vault_config = :sys.get_state(Cinder.Vault)
+      on_exit(fn -> put_vault_config(vault_config) end)
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000002" ->
+        put_vault_config(vault_config)
+        {:ok, [indexer_result(@bravo_found)]}
+      end)
+
+      stub_find_by_operation_key(fn
+        1 ->
+          raise "lookup failed"
+
+        3 ->
+          put_vault_config(with_other_key(vault_config))
+          send(test_pid, :vault_key_changed)
+          :not_found
+
+        _call ->
+          :not_found
+      end)
+
+      stub_add(fn _title -> {:ok, "hash-bravo"} end)
+
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+      put_vault_config(vault_config)
+
+      assert_received :vault_key_changed
+      assert movie_state(bravo.id) == %{status: :search_failed, search_attempts: 0}
+      assert added() == []
+      assert Repo.aggregate(Intent, :count) == 0
+      assert {:ok, "x"} = "x" |> Cinder.Vault.encrypt!() |> Cinder.Vault.decrypt()
+    end
+
+    # A client's refusal for good of the stored release (each permanent submission error but
+    # `:invalid_intent_release`) parks the movie on that add, with no fresh search, as the fresh
+    # add after the pending-intent pass would (#1491). The first test in this block shows the
+    # search stub reports each search.
+    for reason <- [:unsupported_download_url, :bad_torrent, :add_rejected] do
+      @reason reason
+
+      test "whose release the client refuses with #{reason} parks the movie with no fresh search" do
+        bravo = interrupted_pending_pass(:readable)
+        stub_movie_search()
+        stub_add(fn _title -> {:error, @reason} end)
+
+        start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+        assert :ok = Poller.poll()
+
+        assert movie_state(bravo.id) == %{status: :search_failed, search_attempts: 0}
+        assert added() == [@alpha_stored, @bravo_stored]
+        refute_received {:search, _imdb_id}
+        assert Repo.aggregate(Intent, :count) == 0
+      end
+    end
+  end
+
   # --- movie ---------------------------------------------------------------------------------------
 
   defp outcome(:movie, reason) do
@@ -311,6 +433,99 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
 
     assert [%Intent{attempt_count: 1} = intent] = Repo.all(Intent)
     intent |> Intent.changeset(%{next_attempt_at: DateTime.utc_now(:second)}) |> Repo.update!()
+  end
+
+  defp searching_movie(title, imdb_id),
+    do: movie_fixture(%{title: title, imdb_id: imdb_id, status: :searching})
+
+  # An intent reserved for `movie_id` and seeded as if an earlier add had failed with a transient
+  # error: `attempt_count: 1`, the retry due at `next_attempt_at`. A real transient failure would
+  # also have counted one search attempt on the movie; these movies start at none.
+  defp stored_movie_intent(movie_id, title, next_attempt_at \\ DateTime.utc_now(:second)) do
+    {:ok, intent} =
+      Download.reserve_intent(%{
+        kind: :movie,
+        target_id: movie_id,
+        episode_ids: [],
+        protocol: :torrent,
+        release: release(title)
+      })
+
+    intent
+    |> Intent.changeset(%{attempt_count: 1, next_attempt_at: next_attempt_at})
+    |> Repo.update!()
+  end
+
+  defp make_due(intent) do
+    Intent
+    |> Repo.get!(intent.id)
+    |> Intent.changeset(%{next_attempt_at: DateTime.utc_now(:second)})
+    |> Repo.update!()
+  end
+
+  # Alpha and Bravo, both searching, each with a due stored intent, Bravo's link `:readable` or
+  # `:unreadable`. The first lookup, Alpha's in the pending-intent pass, raises, and the poller's
+  # `isolate/2` ends that pass there, so the search pass reaches Bravo's intent. Returns Bravo.
+  defp interrupted_pending_pass(bravo_link) do
+    alpha = searching_movie("Alpha", "tt0000001")
+    bravo = searching_movie("Bravo", "tt0000002")
+    stored_movie_intent(alpha.id, @alpha_stored)
+    intent = stored_movie_intent(bravo.id, @bravo_stored)
+    if bravo_link == :unreadable, do: break_payload(intent)
+    stub_find_by_operation_key(&raise_on_first_call/1)
+    bravo
+  end
+
+  # Each search reports its IMDb id to the test. Only Bravo's finds a release.
+  defp stub_movie_search do
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+      send(test_pid, {:search, imdb_id})
+      if imdb_id == "tt0000002", do: {:ok, [indexer_result(@bravo_found)]}, else: {:ok, []}
+    end)
+  end
+
+  # `answer` gets the call's number, counted from 1 across every intent's lookup.
+  defp stub_find_by_operation_key(answer) do
+    calls = :counters.new(1, [])
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key ->
+      :counters.add(calls, 1, 1)
+      answer.(:counters.get(calls, 1))
+    end)
+  end
+
+  defp raise_on_first_call(1), do: raise("lookup failed")
+  defp raise_on_first_call(_call), do: :not_found
+
+  defp stub_add(answer) do
+    test_pid = self()
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      send(test_pid, {:add, release.title})
+      answer.(release.title)
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn _id -> {:ok, %{state: :downloading}} end)
+  end
+
+  defp movie_state(movie_id) do
+    %Movie{status: status, search_attempts: attempts} = Repo.get!(Movie, movie_id)
+    %{status: status, search_attempts: attempts}
+  end
+
+  defp put_vault_config(config) do
+    :sys.replace_state(Cinder.Vault, fn _config -> config end)
+    :ok = GenServer.call(Cinder.Vault, :save_config)
+  end
+
+  defp with_other_key(config) do
+    Keyword.update!(config, :ciphers, fn ciphers ->
+      Keyword.update!(ciphers, :default, fn {cipher, opts} ->
+        {cipher, Keyword.put(opts, :key, :crypto.strong_rand_bytes(32))}
+      end)
+    end)
   end
 
   # --- TV helpers ----------------------------------------------------------------------------------

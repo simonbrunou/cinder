@@ -40,9 +40,14 @@ defmodule Cinder.Download do
   @doc """
   The submission errors that drop a reservation for good; a book target is also held on them
   (`abandon_reserved/2`), and a movie in its search phase parks on them
-  (`Cinder.Catalog.MovieLifecycle.record_failure/2`). For a TV release that neither an operator
-  nor the upgrade sweep picked (an intent not `operator_initiated`), Cinder tries to block the
-  release for its series on each of them but `:invalid_intent_release` (`abandon_reserved/2`).
+  (`Cinder.Catalog.MovieLifecycle.record_failure/2`). An `:invalid_intent_release` from a movie
+  intent an earlier grab stored never reaches that write-back: the pending-intent pass drops that
+  result, and `start/1` goes on as for a movie with no intent instead of returning it (#1564).
+  An `:invalid_intent_release` from a grab that call then makes is returned like any other
+  result. For a TV release that
+  neither an operator nor the upgrade sweep picked (an intent not `operator_initiated`), Cinder
+  tries to block the release for its series on each of them but `:invalid_intent_release`
+  (`abandon_reserved/2`).
   `CinderWeb.LiveHelpers.book_hold_reason/1` words each one.
   """
   @spec permanent_submission_errors() :: [atom()]
@@ -473,7 +478,10 @@ defmodule Cinder.Download do
     # poller's search pass as a movie with no intent would: a release a later search grabs gets a
     # freshly encrypted link, and a grab the client refuses for good goes to
     # `MovieLifecycle.record_failure/2` while the movie is still searching, which parks it. A movie
-    # in another status keeps its status.
+    # in another status keeps its status. When the search pass reaches a movie's stored intent
+    # itself, such as when this pass stopped short on a raise or the intent's retry came due after
+    # it ran, `start/1` does not return an `:invalid_intent_release` for it either: the intent is
+    # dropped and the call goes on as for a movie with no intent (#1564).
     Enum.each(intents, &reconcile_intent/1)
     :ok
   end
@@ -902,7 +910,9 @@ defmodule Cinder.Download do
   # reason to the caller. A grab from the movie poller's search pass then parks the movie when it
   # is still in the search pass (`MovieLifecycle.record_failure/2`), and one from the TV poller's
   # spends a search attempt, after Cinder tries to block the release for the series on each
-  # reason but `:invalid_intent_release` (below).
+  # reason but `:invalid_intent_release` (below). `start/1` does not return the
+  # `:invalid_intent_release` of a movie intent an earlier grab stored: it goes on as for a movie
+  # with no intent (#1564).
   #
   # For a book that report is not enough, and the difference is the missing search sweep.
   # `reconcile_pending_intents/1` discards the report, and a movie or episode it leaves in its
@@ -1210,11 +1220,23 @@ defmodule Cinder.Download do
   - `{:ok, %Movie{status: :no_match}}` — indexer returned results but none survived scoring.
   - `{:error, :tmdb_unavailable}` — transient TMDB error; movie stays `:requested`.
   - `{:error, reason}` — indexer or client error; movie left in `:searching`.
+
+  A movie with a stored download intent hands it to `reconcile_intent/1` instead of searching, and
+  returns its result. When that intent's saved download link cannot be read back
+  (`:invalid_intent_release`), the intent is dropped and the call goes on as for a movie with no
+  intent, once: an `:invalid_intent_release` from the grab that search makes is returned (#1564).
   """
   def start(%Movie{} = movie) do
     case Repo.get_by(Intent, kind: :movie, target_id: movie.id) do
       nil -> do_start(movie)
-      intent -> reconcile_intent(intent)
+      intent -> start_from_intent(movie, intent)
+    end
+  end
+
+  defp start_from_intent(movie, intent) do
+    case reconcile_intent(intent) do
+      {:error, :invalid_intent_release} -> do_start(movie)
+      result -> result
     end
   end
 
