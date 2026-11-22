@@ -125,6 +125,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     :exit, _reason -> :ok
   end
 
+  # On a series with a saved group, the first open of the "Alternate numbering" panel starts the
+  # episode-group list fetch, and a successful list result starts the saved group's preview
+  # fetch. `render_async/1` waits only for the async tasks running when it is called, so a call
+  # made while the list fetch still runs can render before the preview lands (#1581). Call this
+  # after the click, then assert on a second `render_async/1`, which waits for the preview fetch
+  # when it is still running.
+  defp await_episode_group_list(view) do
+    render_async(view)
+    :ok
+  end
+
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
     series = create_series(6_900)
     anime = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :anime))
@@ -580,6 +591,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, view, _html} = live_series(conn, series)
     view |> element("summary", "Alternate numbering") |> render_click()
+    await_episode_group_list(view)
 
     assert render_async(view) =~ "Season 3"
   end
@@ -797,6 +809,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, view, _html} = live_series(conn, series)
     view |> element("summary", "Alternate numbering") |> render_click()
+    await_episode_group_list(view)
 
     # Auto-preview for the already-saved group fires once the list lands (FINDING 8).
     assert render_async(view) =~ "Season 1"
@@ -905,6 +918,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, view, _html} = live_series(conn, series)
 
     view |> element("summary", "Alternate numbering") |> render_click()
+    await_episode_group_list(view)
     assert render_async(view) =~ "Season 1"
 
     # Close it.
