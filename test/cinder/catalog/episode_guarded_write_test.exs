@@ -207,12 +207,14 @@ defmodule Cinder.Catalog.EpisodeGuardedWriteTest do
     refute_received {:series_updated, ^series_id}
   end
 
-  # Every PubSub broadcast raises while `fun` runs. The adapter is node-wide state, restored on
-  # exit too in case `fun` fails.
+  # Every `Phoenix.PubSub.broadcast/3` on `Cinder.PubSub` raises while `fun` runs. The adapter is
+  # node-wide state, restored on exit too in case `fun` fails. phoenix_pubsub 2.4.1 keeps
+  # `{adapter, name, dispatcher}` under `:pubsub` (`Phoenix.PubSub.broadcast/3`); only the adapter
+  # is swapped.
   defp fail_broadcasts(fun) do
-    {:ok, {_adapter, name} = meta} = Registry.meta(Cinder.PubSub, :pubsub)
+    {:ok, {_adapter, _name, _dispatcher} = meta} = Registry.meta(Cinder.PubSub, :pubsub)
     on_exit(fn -> Registry.put_meta(Cinder.PubSub, :pubsub, meta) end)
-    Registry.put_meta(Cinder.PubSub, :pubsub, {RaisingPubSubAdapter, name})
+    Registry.put_meta(Cinder.PubSub, :pubsub, put_elem(meta, 0, RaisingPubSubAdapter))
 
     try do
       fun.()
