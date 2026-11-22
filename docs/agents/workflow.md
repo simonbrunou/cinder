@@ -103,8 +103,10 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
 
 - A sentence about what Cinder's own code does holds for each case that code tells apart:
   each book kind or plan, each kind of configured value, each cap the path applies, and each
-  guard that can skip a write on the way, such as a status re-read, an `if` on the reason or
-  an insert that swallows its error. Read the code for those cases before you write "every",
+  guard that can skip a write on the way, such as a status re-read, an `if` on the reason or an
+  insert that swallows its error. A comment on a wait holds for each order in which the tasks
+  it waits on can finish, and for each state the handler that starts them branches on, such as
+  a panel's first open and a reopen. Read the code for those cases before you write "every",
   "drops", "blocks" or "parks", and write "tries to" for a write a guard can skip. A test name
   says only what its body checks. On #803 (PR #1388) one review round found three such sentences:
   a moduledoc claim true for the e-book plan only, "every ISBN probe" where a search probes at
@@ -112,7 +114,9 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   "has already held a book target or blocked a TV release" skipped the hold's status guard and
   `insert_quietly`, and each rewrite skipped another guard (`write_back_search/2`'s status
   re-read, the block's reason list): three review rounds, about 18 minutes from the first
-  finding to the last fix.
+  finding to the last fix. On #1581 (PR #1592) a test helper's comment described one finishing
+  order of two chained fetches, and the panel's first open, as every case: a Standards finding,
+  then a re-check residual, about 5 minutes from the first finding to the last fix.
 - A test comment that says which wait, match or assertion ends the test names one case for each
   way the run can go wrong, and each claim comes from a run of that case. For a regression, the
   cases are the ways the code under test can break the behaviour: for a caller that kills a task

@@ -41,6 +41,7 @@ about 29 minutes from the first finding to the last fix.
 
 - every sentence about what Cinder does;
 - the bold summary;
+- the bold summary of a change that removes one cause of an outcome;
 - a sentence about a path whose code reads a list or setting an install can configure, or stored
   rows of several kinds;
 - what such lists hold, or what a check over them decides;
@@ -87,6 +88,16 @@ happen, such as a forced file the copy skips or a target that already exists: ea
 summary must leave out. On #1308 the first summary said a missing subtitle "is now filled from" a
 file in its language, while the PR's own test of a lone forced file showed a translation. Its fix
 then dropped "missing", which the body kept: two review rounds, about 5 minutes.
+
+When the change removes one cause of an outcome, such as one reason a movie parks or a release
+is refused, the summary names that cause: "no longer stops at Search failed on <the cause>". A
+summary that states the opposite outcome instead ("now searches again") holds only where no
+other cause of that outcome applies, so it must carry each other cause as an exception. On #1564
+(PR #1595) the summary said that a movie whose saved download link Cinder can no longer read
+"goes back to searching". Review found it false when the link of the release the new search
+grabs cannot be read back either, then when the client refuses that grab for good. The fourth
+fix commit to the fragment named the cause instead, and a fifth narrowed it to the link of an
+earlier grab: about 25 minutes from the first finding to the last fix.
 
 A path includes each value an install can configure for a list or setting that the code on the
 path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists, and each
