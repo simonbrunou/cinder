@@ -772,7 +772,7 @@ defmodule Cinder.HTTPPolicyTest do
       module = __MODULE__.IdleBeatTick
       on_exit(fn -> :persistent_term.erase({module, :progress}) end)
       old = PollerProgress.now_ms() - :timer.minutes(11)
-      Task.await(Task.async(fn -> PollerProgress.tick_started(module, old) end))
+      Task.await(Task.async(fn -> PollerProgress.tick_started(module, old) end), 10_000)
 
       Req.Test.stub(Cinder.HTTPPolicyIdleBeatStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
 
@@ -817,7 +817,7 @@ defmodule Cinder.HTTPPolicyTest do
           )
         end)
 
-      assert {:ok, %{status: 200, body: %{"ok" => true}}} = Task.await(task)
+      assert {:ok, %{status: 200, body: %{"ok" => true}}} = Task.await(task, 10_000)
     end
 
     test "decodes structured +json media types" do
