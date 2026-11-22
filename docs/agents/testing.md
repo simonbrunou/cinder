@@ -488,20 +488,22 @@
   order on CI, so neither a local nor a CI pass proves a test ignores it. A test compares such a
   list sorted unless the code under test sorts it (#919).
 - A test that shrinks a deadline so a call waits it out (`:walk_timeout_ms`,
-  `:adoption_scan_timeout_ms`, `:health_probe_timeout_ms`, a `timeout_ms:` option) runs only
-  that call under the shrunk value. A health sweep runs many probes in one call, and an adoption
-  scan walks every library root in one, so shrink only the hung probe's or root's deadline with a
-  map: `%{"indexer" => 200}` (`Cinder.Health` moduledoc), or `%{wedged_root => 300}` keyed by the
-  root's expanded path (`scan_timeout_ms/1` in `Cinder.Library.Adoption`).
-  Every call meant to finish gets a deadline a loaded host cannot miss: 10 s, as `SafeWalkTest`
-  sets it, or 30 s in `Cinder.Library.BoundedWalkTest`, whose waits on a guard meant to answer
-  get 20 s in all (`run/3`'s `:call_timeout_ms`, `:sys.get_state/2`). A refusal
-  meant to come at once runs under that same deadline, with an `elapsed` assert below half of it
-  (1 s and 10 s), so a refusal that waited the deadline out fails it. On #1118 a healthy library
-  root ran under the same 300 ms as the wedged one, missed it on the loaded runner and turned
-  `main` red: 43 minutes from the red run to the fix's merge. On #1512, in full local runs at
-  load 60 to 64 on 16 CPUs, `BoundedWalkTest` missed its old 10 s deadline once and its guards'
-  5 s defaults three times.
+  `:adoption_scan_timeout_ms`, `:health_probe_timeout_ms`, a `timeout_ms:` option) runs only that
+  call under the shrunk value. A health sweep runs many probes in one call, and an adoption scan
+  walks every library root in one, so shrink only the hung probe's or root's deadline with a map:
+  `%{"indexer" => 200}` (`Cinder.Health` moduledoc), or `%{wedged_root => 300}` keyed by the
+  root's expanded path (`scan_timeout_ms/1` in `Cinder.Library.Adoption`). Every call meant to
+  finish gets a deadline with headroom for a loaded host: 10 s, as `SafeWalkTest` sets it, or 30
+  s in `Cinder.Library.BoundedWalkTest`, whose waits on a guard meant to answer get 20 s in all
+  (`run/3`'s `:call_timeout_ms`, `:sys.get_state/2`). A comment calls such a deadline headroom,
+  since no run shows that a host cannot miss it. On #1509 (PR #1583) a Standards review flagged
+  "a deadline a loaded host cannot miss", copied from this bullet into a test comment, as a
+  claim no run backs: a fix commit and a re-check. A refusal meant to come at once runs under
+  that same deadline, with an `elapsed` assert below half of it (1 s and 10 s), so a refusal
+  that waited the deadline out fails it. On #1118 a healthy library root ran under the same 300
+  ms as the wedged one, missed it on the loaded runner and turned `main` red: 43 minutes from
+  the red run to the fix's merge. On #1512, in full local runs at load 60 to 64 on 16 CPUs,
+  `BoundedWalkTest` missed its old 10 s deadline once and its guards' 5 s defaults three times.
 - A task that a shrunk deadline kills can die before its stub runs, since a loaded runner can
   start it past the deadline. A test that reads that stub's report (its pid, a message) passes
   without it. `Cinder.HTTPPolicyTest` proves the kill through the pid a telemetry event gives it,

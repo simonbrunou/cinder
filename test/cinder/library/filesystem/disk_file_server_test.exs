@@ -41,7 +41,7 @@ defmodule Cinder.Library.Filesystem.DiskFileServerTest do
 
   @moduletag :tmp_dir
 
-  # A call meant to finish gets a deadline a loaded CI runner cannot miss (docs/agents/testing.md).
+  # A call meant to finish gets 10 s, headroom for a loaded CI runner (docs/agents/testing.md).
   @answer_ms 10_000
 
   # `Disk.moviehash_data/1` reads a 64 KiB head and tail, and refuses a file under twice that.

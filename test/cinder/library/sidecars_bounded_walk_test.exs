@@ -67,8 +67,8 @@ defmodule Cinder.Library.SidecarsBoundedWalkTest do
     assert_receive {:walking, walk}
     release_walk_on_exit(walk)
 
-    # Listings meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that
-    # came in well under it came at once.
+    # Listings meant to finish get a deadline with headroom for a loaded CI runner, so a refusal
+    # that came in well under it came at once.
     put_env(:walk_timeout_ms, 10_000)
     {elapsed, result} = :timer.tc(fn -> Sidecars.files(video) end, :millisecond)
     assert result == []

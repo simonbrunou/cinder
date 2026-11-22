@@ -113,6 +113,23 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   `insert_quietly`, and each rewrite skipped another guard (`write_back_search/2`'s status
   re-read, the block's reason list): three review rounds, about 18 minutes from the first
   finding to the last fix.
+- A test comment that says which wait, match or assertion ends the test names one case for each
+  way the run can go wrong, and each claim comes from a run of that case. For a regression, the
+  cases are the ways the code under test can break the behaviour: for a caller that kills a task
+  at a deadline, a caller that waits past the deadline, one that returns without the kill, and a
+  deadline that never fires. For a loaded runner, the cases are the places a stall or a lost
+  signal can land: before the stub reports, after it, in the caller past its deadline, and a
+  release that never arrives. A different assertion can catch each case. On #1511 (PR #1577) "a
+  deadline that never cancels fails the match and the bound" held in no case: with the caller
+  waiting past its deadline only the elapsed bound failed, since the task's own deadline check
+  still returned `:request_timeout`, and with its kill removed only `refute Process.alive?/1`
+  failed. A Standards review and two re-checks reworded it one case at a time, about 17 minutes
+  from the first finding to the last re-check. On #1558 (PR #1580) the comments said a lost
+  release ends on the caller's deadline and a hung request fails the result match. Suspended
+  callers let the task's own elapsed check end the call, a caller stalled past the await exited
+  `Task.await_many`, and a request stalled before its stub failed a 10 s `assert_receive`. A
+  Standards review and a re-check found them one place at a time, about 10 minutes from the
+  first finding to the last hunk check.
 - A sentence that names a role several modules play, such as "the import" or "a search", holds
   for each module playing it and each input form it takes. Before you write it, list the modules
   with `rg` for the function the sentence names and its callers, and the input forms each caller's
@@ -132,7 +149,15 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   `tasks/test.ex`. Two re-check rounds found them, 15 minutes from the first fix commit to the
   last. On #1555 (for #1548) a run with a text-only mail led to a fragment saying each `Headers:`
   line held the `To` address. With a text+HTML mail, 8 of 18 such lines held no `To`: a Standards
-  finding, a fix commit and a re-check.
+  finding, a fix commit and a re-check. For a library's API, the input forms include each option
+  that sets the same limit, each variant of the call, and each flag or value that turns on the
+  same mode. On #1518 (PR #1585) the first draft of the comment on the test Repo's `timeout` in
+  `config/test.exs` named `timeout:` but not DBConnection's `deadline:`. It said the next Repo
+  call raises, where `Repo.query/3` returns as `{:error, _}` what `Repo.query!/3` raises. It
+  left out a transaction body that asks for a rollback, through `Repo.rollback/1` or a
+  `Repo.transact/2` body's `{:error, _}`, and it named `--trace` but not `--slowest` or
+  `--slowest-modules` above 0. A Standards review and two re-checks found them one round at a
+  time: 11 minutes from the first finding to the last fix.
 - For a tool outside the repo, such as mergerfs or coreutils `nice`, read its manual for every
   option and input that changes the claim, such as the niceness `nice -n` starts from, and link
   the manual for the conditions a feature needs instead of copying them. On #1336 (for #953) the

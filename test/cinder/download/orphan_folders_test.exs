@@ -551,7 +551,7 @@ defmodule Cinder.Download.OrphanFoldersTest do
 
   # #1113: an unbounded read hangs in each of these, so fail in seconds rather than at ExUnit's
   # 60 s default. Each shrinks only the deadline of the walk it hangs: a refusal meant to come at
-  # once runs under 10 s, which a loaded CI runner cannot miss, with an `elapsed` assert far below.
+  # once runs under 10 s, headroom for a loaded CI runner, with an `elapsed` assert far below.
   describe "a wedged mount" do
     @tag timeout: 10_000
     test "a root whose listing never returns is unreadable at the deadline, and the next scan " <>

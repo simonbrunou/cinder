@@ -357,7 +357,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert log =~ "did not answer"
   end
 
-  # The preflight's walk answers, under a deadline a loaded CI runner cannot miss, and the
+  # The preflight's walk answers, under a deadline with headroom for a loaded CI runner, and the
   # staging walk right after it sticks under a short one: `BoundedWalk.run/3` reads the deadline
   # as each walk starts.
   @tag timeout: 20_000

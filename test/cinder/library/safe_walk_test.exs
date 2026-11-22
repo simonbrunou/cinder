@@ -104,8 +104,8 @@ defmodule Cinder.Library.SafeWalkTest do
     assert elapsed < 2_300
     assert_receive {:walking, walk}
 
-    # Walks meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that came
-    # in well under it came at once.
+    # Walks meant to finish get a deadline with headroom for a loaded CI runner, so a refusal that
+    # came in well under it came at once.
     put_env(:walk_timeout_ms, 10_000)
     {elapsed, result} = :timer.tc(fn -> Library.safe_walk(release) end, :millisecond)
     assert result == {:error, :timeout}

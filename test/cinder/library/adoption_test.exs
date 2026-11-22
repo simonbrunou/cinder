@@ -234,8 +234,8 @@ defmodule Cinder.Library.AdoptionTest do
     release_walk_on_exit(walk)
     assert [%{directory: ^wedged, reason: {:scan_failed, :timeout}}] = candidates
 
-    # Scans meant to finish get a deadline a loaded CI runner cannot miss, so a refusal that came
-    # in well under it came at once.
+    # Scans meant to finish get a deadline with headroom for a loaded CI runner, so a refusal that
+    # came in well under it came at once.
     put_env(:adoption_scan_timeout_ms, 10_000)
     {elapsed, candidates} = :timer.tc(&Adoption.scan/0, :millisecond)
     assert elapsed < 1_000

@@ -81,9 +81,9 @@ defmodule Cinder.DiskTest do
       pid_file = Path.join(tmp, "busy-df.pid")
       on_exit(fn -> kill_recorded_pids(pid_file) end)
 
-      # The first probe must still be running when the second arrives, so it gets a deadline a
-      # loaded runner cannot miss before its stub records: a shorter one can kill the stub before
-      # it writes its pid (#1489). The test then ends that probe by killing its stub.
+      # The first probe must still be running when the second arrives, so it gets a deadline
+      # with headroom for a loaded runner before its stub records: a shorter one can kill the
+      # stub before it writes its pid (#1489). The test then ends that probe by killing its stub.
       ConfigCase.put_env(
         disk_df_bin: write_pid_recording_stub(tmp, "busy-df", pid_file),
         disk_probe_timeout: 10_000
@@ -132,7 +132,7 @@ defmodule Cinder.DiskTest do
       kill_recorded_pids(pid_file)
       # The recovered probe runs the real `df` and killer, the defaults `Cinder.Disk.CommandProbe`
       # reads, and is meant to finish, so it keeps the 10 s deadline `assert_refused_at_once/2`
-      # set, one a loaded runner cannot miss (docs/agents/testing.md).
+      # set, headroom for a loaded runner (docs/agents/testing.md).
       Application.delete_env(:cinder, :disk_df_bin)
       Application.delete_env(:cinder, :disk_probe_killer)
 

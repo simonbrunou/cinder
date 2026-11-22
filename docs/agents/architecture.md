@@ -178,6 +178,20 @@ The facade stays, and callers keep going through it (the maintainer's decision o
   calls, and it changes no behaviour.
 - It keeps the Phoenix convention of one public name for a context.
 
+## TV search results are deduped per link and indexer
+
+Up to two functions collapse the copies of one release link that a TV search returns. The first
+is `merge_query_origins/1` in `Cinder.Acquisition.Indexer.Prowlarr`, which runs only when both
+of `search_tv/3`'s queries, the TVDB-scoped and the free-text one, succeed. The second is
+`deduplicate_tv_releases/1` in `Cinder.Acquisition` for a standard series, or `deduplicate/2` in
+`Cinder.Acquisition.Anime` for anime. The comment above each says what it merges across a link's
+copies and which copy it keeps for each indexer. A change to a release field that decides whether
+a result is picked or skipped, such as a blocklist key or a score input, reads all three
+functions and tests one link that two indexers return. On #1515 (PR #1582) the per-indexer block
+of a refused TV release first missed these functions, and review found the gaps one function and
+one merged field at a time: five fix commits, 33 minutes from the first finding to the clean
+re-check.
+
 ## Imports go through the staged import
 
 Every file an import places in a library goes through `Cinder.Library.StagedImport`. The stager

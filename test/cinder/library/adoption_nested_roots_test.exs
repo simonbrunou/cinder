@@ -19,8 +19,8 @@ defmodule Cinder.Library.AdoptionNestedRootsTest do
 
   # One scan walks the wedged nested root, meant to time out, and the healthy movies root, meant
   # to finish, so only the wedged root gets the shrunk deadline (docs/agents/testing.md). The
-  # movies root's 10 s is a deadline a loaded runner cannot miss, and it ends the scan in seconds
-  # should that walk read into the wedged root.
+  # movies root's 10 s gives a loaded runner headroom, and it ends the scan in seconds should
+  # that walk read into the wedged root.
   for {nested_key, nested_kind} <- [movies_anime_library_path: :movie, tv_library_path: :series] do
     @tag :tmp_dir
     @tag :capture_log
@@ -71,8 +71,8 @@ defmodule Cinder.Library.AdoptionNestedRootsTest do
       other = Path.join(tmp, "other")
       assert BoundedWalk.run(other, fn -> :walked end, timeout_ms: 10_000) == :walked
 
-      # Every root now gets a deadline a loaded runner cannot miss, so a scan that came back well
-      # under it refused the wedged root at once.
+      # Every root now gets a deadline with headroom for a loaded runner, so a scan that came back
+      # well under it refused the wedged root at once.
       put_env(:adoption_scan_timeout_ms, 10_000)
       {elapsed, candidates} = :timer.tc(&Adoption.scan/0, :millisecond)
       assert elapsed < 5_000
