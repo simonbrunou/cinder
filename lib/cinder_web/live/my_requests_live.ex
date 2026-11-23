@@ -362,6 +362,7 @@ defmodule CinderWeb.MyRequestsLive do
               progress={movie.download_progress}
               speed={movie.download_speed}
               eta={movie.download_eta}
+              paused_at={movie.download_paused_at}
             />
             <.status_badge
               :if={not t.watchable? and season_downloading?(t.season_progress)}

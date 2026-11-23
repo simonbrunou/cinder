@@ -21,7 +21,9 @@ defmodule Cinder.Download.StallReaper do
   Duplicates", missing-article limbo, an endless repair) that the torrent-only seed window can never
   catch — it never errors, never advances, so without the cap it sits forever. The cap is generous
   on purpose: genuine completion progress advances `download_progress_at`; speed/ETA jitter and
-  transient metric clearing do not.
+  transient metric clearing do not. `Cinder.Download.Watch` does not ask this module about a
+  download whose client reports its queue paused, and the end of that pause moves
+  `download_progress_at` past the paused time (`Cinder.Download.Progress.changes/3`).
 
   ## ponytail: completion is the available progress signal
 

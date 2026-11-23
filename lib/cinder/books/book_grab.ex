@@ -34,6 +34,7 @@ defmodule Cinder.Books.BookGrab do
     field :download_speed, :integer
     field :download_eta, :integer
     field :download_progress_at, :utc_datetime
+    field :download_paused_at, :utc_datetime
     field :replace, :boolean, default: false
 
     timestamps(type: :utc_datetime)

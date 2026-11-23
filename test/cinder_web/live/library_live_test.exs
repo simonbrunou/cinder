@@ -144,6 +144,14 @@ defmodule CinderWeb.LibraryLiveTest do
     assert lv |> element("#movie-#{movie.id}") |> render() =~ "42%"
   end
 
+  test "shows a movie paused by its download client", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+    {:ok, _} = MovieLifecycle.track(movie, %{client_paused: true})
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+    assert has_element?(lv, "#library-movie-status-#{movie.id}", "Paused by download client")
+  end
+
   test "cancels an active movie through the confirm step", %{conn: conn} do
     movie = movie_fixture(%{title: "Tenet"})
     {:ok, lv, _html} = live(conn, ~p"/library")

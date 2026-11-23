@@ -26,6 +26,7 @@ defmodule Cinder.Catalog.Grab do
     field :download_speed, :integer
     field :download_eta, :integer
     field :download_progress_at, :utc_datetime
+    field :download_paused_at, :utc_datetime
     field :mapping_snapshot, :map
     field :release_policy_snapshot, :map
 

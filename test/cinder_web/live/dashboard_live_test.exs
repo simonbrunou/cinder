@@ -386,6 +386,14 @@ defmodule CinderWeb.DashboardLiveTest do
       assert render(lv) =~ "42%"
     end
 
+    test "shows a movie paused by its download client", %{conn: conn} do
+      movie = movie_fixture(%{status: :downloading})
+      {:ok, _} = MovieLifecycle.track(movie, %{client_paused: true})
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      assert has_element?(lv, "#dash-movie-status-#{movie.id}", "Paused by download client")
+    end
+
     test "a held book target says so on the dashboard too", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       id = Integer.to_string(System.unique_integer([:positive]))

@@ -71,6 +71,9 @@ defmodule Cinder.Catalog.Movie do
     :failure_reason
   ]
 
+  # `Cinder.Download.Progress.changes/3` computes these from the clock, so they stay out of `cast`.
+  @pause_clock_fields [:download_paused_at, :download_progress_at]
+
   @type t :: %__MODULE__{}
 
   schema "movies" do
@@ -92,6 +95,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_speed, :integer
     field :download_eta, :integer
     field :download_progress_at, :utc_datetime
+    field :download_paused_at, :utc_datetime
     field :file_path, :string
     field :part_file_paths, {:array, :string}, default: []
     field :content_path, :string
@@ -194,6 +198,7 @@ defmodule Cinder.Catalog.Movie do
   def transition_changeset(movie, attrs) do
     movie
     |> cast(attrs, transition_fields())
+    |> change(Map.take(attrs, @pause_clock_fields))
     |> reset_download_metrics(movie.status)
     |> advance_download_progress_at(movie)
     |> clear_failure_reason()
@@ -217,6 +222,7 @@ defmodule Cinder.Catalog.Movie do
       |> force_change(:download_progress, nil)
       |> force_change(:download_speed, nil)
       |> force_change(:download_eta, nil)
+      |> force_change(:download_paused_at, nil)
     else
       changeset
     end

@@ -856,6 +856,21 @@ defmodule CinderWeb.BookDetailLiveTest do
       assert render(lv) =~ "50%"
     end
 
+    test "an open page shows a client pause, then drops it when the pause ends", %{conn: conn} do
+      {target, _work} = ebook_target()
+      {:ok, grab} = Books.Grabs.create(target.id, "remote-1", :torrent, "Some Release")
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+      refute has_element?(lv, "#book-target-ebook", "Paused by download client")
+
+      {:ok, paused} = Books.Grabs.track(grab, %{client_paused: true})
+      assert has_element?(lv, "#book-target-ebook", "Paused by download client")
+
+      {:ok, _} = Books.Grabs.track(paused, %{client_paused: false})
+      refute has_element?(lv, "#book-target-ebook", "Paused by download client")
+      assert has_element?(lv, "#book-target-ebook", "Downloading")
+    end
+
     test "a broadcast for an unrelated work is ignored", %{conn: conn} do
       {target, _work} = ebook_target()
       {other_target, _other_work} = ebook_target()

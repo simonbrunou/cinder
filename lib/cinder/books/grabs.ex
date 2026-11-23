@@ -150,6 +150,7 @@ defmodule Cinder.Books.Grabs do
              content_path: content_path,
              import_attempts: 0,
              download_progress_at: now,
+             download_paused_at: nil,
              updated_at: now
            ]
          ) do

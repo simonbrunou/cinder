@@ -22,9 +22,10 @@ defmodule Cinder.Catalog.GrabMetrics do
       phase already claimed is stale: `{:error, :stale_grab}`, nothing written, nothing announced.
     * A regressed `download_progress` is dropped from the write, so a client that briefly
       under-reports never walks the operator-visible bar backwards.
-    * `download_progress_at` advances only on forward progress (`Progress.advanced?/2`). The
-      completion edge is the caller's mark-downloaded write's to advance, since this write never
-      runs once `content_path` is set.
+    * `download_progress_at` advances to now only on forward progress (`Progress.advanced?/2`).
+      The completion edge is the caller's mark-downloaded write's to advance, since this write
+      never runs once `content_path` is set. The end of a client pause moves it by the paused
+      time (`Progress.changes/3`) when no forward progress came with it.
     * A report that changes nothing writes and announces nothing. It returns `grab` as passed
       while the row is still downloading, and `{:error, :stale_grab}` once it is not.
   """

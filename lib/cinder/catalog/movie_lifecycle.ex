@@ -239,7 +239,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
     if changes == %{},
       do: {:ok, movie},
-      else: write(movie, Map.put(changes, :status, movie.status))
+      else: write(movie, Map.put(changes, :status, movie.status), [:download_id])
   end
 
   def track(%Movie{}, _metrics), do: {:error, :not_downloading}

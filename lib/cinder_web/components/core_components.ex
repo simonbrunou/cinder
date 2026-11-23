@@ -665,16 +665,27 @@ defmodule CinderWeb.CoreComponents do
   attr :progress, :float, default: nil
   attr :speed, :integer, default: nil
   attr :eta, :integer, default: nil
+
+  attr :paused_at, DateTime,
+    default: nil,
+    doc: "when the download client paused this download (`download_paused_at`), if it did"
+
   attr :rest, :global
 
   def status_badge(assigns) do
-    {label, color, icon} = badge_spec(assigns.kind, assigns.status)
+    client_paused? = client_paused?(assigns.kind, assigns.status, assigns.paused_at)
+
+    {label, color, icon} =
+      if client_paused?,
+        do: {gettext("Paused by download client"), "badge-warning", "hero-pause-circle"},
+        else: badge_spec(assigns.kind, assigns.status)
 
     assigns =
       assign(assigns,
         label: label,
         color: color,
         icon: icon,
+        client_paused?: client_paused?,
         title: badge_title(assigns.kind, assigns.status)
       )
 
@@ -693,14 +704,21 @@ defmodule CinderWeb.CoreComponents do
       </div>
       <progress
         :if={is_number(@progress)}
-        class="progress progress-info w-full"
+        class={["progress w-full", progress_color(@client_paused?)]}
         value={@progress * 100}
         max="100"
         aria-label={@label}
       >{round(@progress * 100)}%</progress>
-      <progress :if={is_nil(@progress)} class="progress progress-info w-full" aria-label={@label} />
+      <progress
+        :if={is_nil(@progress)}
+        class={["progress w-full", progress_color(@client_paused?)]}
+        aria-label={@label}
+      />
       <p :if={is_number(@progress)} class="text-xs tabular-nums">{round(@progress * 100)}%</p>
-      <p :if={@speed || @eta} class="text-xs tabular-nums text-base-content/70">
+      <p
+        :if={not @client_paused? and (@speed || @eta)}
+        class="text-xs tabular-nums text-base-content/70"
+      >
         {[format_speed(@speed), format_eta(@eta)]
         |> Enum.reject(&is_nil/1)
         |> Enum.join(" · ")}
@@ -726,6 +744,16 @@ defmodule CinderWeb.CoreComponents do
 
   defp operation_badge?(:grab, status) when status in [:downloading, :downloaded], do: true
   defp operation_badge?(_, _), do: false
+
+  # A mark left on a row that has moved on (importing, searching) says nothing about it.
+  defp client_paused?(:movie, status, %DateTime{}) when status in [:downloading, :upgrading],
+    do: true
+
+  defp client_paused?(:grab, :downloading, %DateTime{}), do: true
+  defp client_paused?(_kind, _status, _paused_at), do: false
+
+  defp progress_color(true), do: "progress-warning"
+  defp progress_color(false), do: "progress-info"
 
   defp format_speed(nil), do: nil
 

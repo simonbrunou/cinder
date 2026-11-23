@@ -7693,3 +7693,8 @@ msgstr ""
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Rename passkey %{name}"
 msgstr ""
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Paused by download client"
+msgstr ""

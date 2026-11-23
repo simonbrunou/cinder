@@ -389,6 +389,64 @@ defmodule Cinder.Download.WatchTest do
     end
   end
 
+  describe "a client-wide pause" do
+    @long_ago ~U[2020-01-01 00:00:00Z]
+
+    setup do
+      put_config(StallReaper, enabled: true, stall_timeout: 0, no_seeders_timeout: 0)
+    end
+
+    test "a paused report is never stalled, whatever the clock says, for every kind" do
+      for row <- [Movie, Grab, BookGrab] do
+        status({:ok, %{state: :downloading, progress: 0.0, speed: 0, client_paused: true}})
+        files([])
+
+        assert Watch.check(download(row, %{updated_at: @long_ago}), track(@long_ago)) ==
+                 :downloading,
+               inspect(row)
+
+        assert_received {:tracked, "dl-1", %{client_paused: true}}
+      end
+    end
+
+    test "a report without the flag tells the writer the client is running, and can stall" do
+      status({:ok, %{state: :downloading, progress: 0.0, speed: nil}})
+      files([])
+
+      assert Watch.check(download(%{updated_at: @long_ago}), track(@long_ago)) == :stalled
+      assert_received {:tracked, "dl-1", %{client_paused: false}}
+    end
+
+    test "an unreachable client leaves the pause to the next answer" do
+      status({:error, :econnrefused})
+
+      assert {:unreachable, :econnrefused} = Watch.check(download(), track())
+      assert_received {:tracked, "dl-1", attrs}
+      refute Map.has_key?(attrs, :client_paused)
+    end
+
+    test "a completed report ends the pause of a paused row" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: "/dl/Movie"}})
+      files(["Movie/Movie.mkv"])
+      disk("/dl/Movie", [{"/dl/Movie/Movie.mkv", 4_000_000_000}])
+
+      assert Watch.check(download(%{download_paused_at: @long_ago}), track()) ==
+               {:completed, "/dl/Movie"}
+
+      assert_received {:tracked, "dl-1", attrs}
+      assert attrs == %{client_paused: false}
+    end
+
+    test "a completed report with no path ends the pause too" do
+      status({:ok, %{state: :completed, progress: 1.0, content_path: nil}})
+
+      assert Watch.check(download(%{download_paused_at: @long_ago}), track()) ==
+               {:failed, :no_content_path}
+
+      assert_received {:tracked, "dl-1", %{client_paused: false}}
+    end
+  end
+
   describe "a failed download" do
     # One reason per client answer, whatever the kind: the reason atoms are persisted (blocklist
     # rows, book hold reasons), so they cannot differ by poller. Every row here is a SUCCESSFUL

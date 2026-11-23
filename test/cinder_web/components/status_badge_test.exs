@@ -26,6 +26,72 @@ defmodule CinderWeb.StatusBadgeTest do
     end
   end
 
+  describe "a download paused by its client" do
+    @paused_at ~U[2026-11-23 10:00:00Z]
+
+    test "says so in its label, icon and progress bar, with the progress kept" do
+      for {kind, status} <- [{:movie, :downloading}, {:movie, :upgrading}, {:grab, :downloading}] do
+        html = badge(%{kind: kind, status: status, progress: 0.42, paused_at: @paused_at})
+
+        assert html =~ "Paused by download client"
+        assert html =~ "hero-pause-circle"
+        assert html =~ ~r/<progress[^>]*aria-label="Paused by download client"/
+        assert html =~ "progress-warning"
+        assert html =~ "42%"
+        refute html =~ "Downloading"
+      end
+    end
+
+    test "hands the Kindle hook the warning color and the paused label" do
+      html = badge(%{id: "b", kind: :movie, status: :downloading, paused_at: @paused_at})
+
+      assert html =~ ~s(data-kindle="badge-warning|Paused by download client")
+    end
+
+    test "colors and labels a bar with no progress value" do
+      html = badge(%{kind: :movie, status: :downloading, progress: nil, paused_at: @paused_at})
+
+      assert html =~ ~r/<progress[^>]*progress-warning[^>]*aria-label="Paused by download client"/
+      refute html =~ ~r/<progress[^>]*value=/
+    end
+
+    test "shows no speed or time left, even from a stale estimate" do
+      html =
+        badge(%{
+          kind: :movie,
+          status: :downloading,
+          progress: 0.0,
+          speed: 1_500_000,
+          eta: 90,
+          paused_at: @paused_at
+        })
+
+      refute html =~ "MB/s"
+      refute html =~ "remaining"
+    end
+
+    test "a stale mark does not relabel a download that moved on" do
+      for {kind, status, label} <- [
+            {:movie, :downloaded, "Importing"},
+            {:movie, :searching, "Searching"},
+            {:grab, :downloaded, "Importing"}
+          ] do
+        html = badge(%{kind: kind, status: status, paused_at: @paused_at})
+
+        assert html =~ label
+        refute html =~ "Paused by download client"
+      end
+    end
+
+    test "no mark keeps the downloading label" do
+      html = badge(%{kind: :movie, status: :downloading, progress: 0.42, paused_at: nil})
+
+      assert html =~ "Downloading"
+      assert html =~ "progress-info"
+      refute html =~ "Paused by download client"
+    end
+  end
+
   test "operation badges render progress while request badges stay compact" do
     html =
       badge(%{

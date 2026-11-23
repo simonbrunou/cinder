@@ -251,6 +251,7 @@ defmodule Cinder.Catalog.Grabs do
         download_speed: nil,
         download_eta: nil
       })
+      |> Ecto.Changeset.force_change(:download_paused_at, nil)
 
     with {:ok, grab} <- Repo.update(changeset) do
       Events.series_updated(series_id_for_grab(grab.id))

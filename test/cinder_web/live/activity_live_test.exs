@@ -261,6 +261,20 @@ defmodule CinderWeb.ActivityLiveTest do
     assert lv |> element("#grab-#{grab.id}") |> render() =~ "42%"
   end
 
+  test "shows a movie and a TV grab paused by their download client", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+    grab = grab!()
+
+    {:ok, _} = MovieLifecycle.track(movie, %{client_paused: true, download_eta: nil})
+    {:ok, _} = Catalog.update_grab_download_metrics(grab, %{client_paused: true})
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(lv, "#activity-movie-status-#{movie.id}", "Paused by download client")
+    assert has_element?(lv, "#activity-grab-status-#{grab.id}", "Paused by download client")
+    refute lv |> element("#activity-movie-status-#{movie.id}") |> render() =~ "remaining"
+  end
+
   test "a held grab shows Needs mapping, its reason, and Retry import/Discard actions", %{
     conn: conn
   } do

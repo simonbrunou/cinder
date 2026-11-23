@@ -687,6 +687,129 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.status("nzo-1")
   end
 
+  describe "status/1 under a queue-wide pause" do
+    # What SABnzbd 5.1.3 answers for a job waiting in a paused queue: its own status stays
+    # `Queued`, the header says `paused`, and every non-forced slot's `timeleft` is `0:00:00`.
+    @waiting %{
+      "nzo_id" => "nzo-1",
+      "status" => "Queued",
+      "priority" => "Normal",
+      "percentage" => "0",
+      "timeleft" => "0:00:00"
+    }
+
+    defp stub_queue(slot, header) do
+      stub(fn conn ->
+        assert conn.params["mode"] == "queue"
+        assert conn.params["nzo_ids"] == "nzo-1"
+        Req.Test.json(conn, %{"queue" => Map.put(header, "slots", [slot])})
+      end)
+    end
+
+    test "reports a waiting job as paused by the client, with no estimate" do
+      stub_queue(@waiting, %{"paused" => true, "status" => "Paused"})
+
+      assert {:ok, %{state: :downloading, client_paused: true, progress: +0.0, eta: nil}} =
+               Sabnzbd.status("nzo-1")
+    end
+
+    test "does not report a job as paused while the queue runs" do
+      stub_queue(%{@waiting | "timeleft" => "0:01:30"}, %{"paused" => false})
+
+      assert {:ok, %{state: :downloading, eta: 90} = report} = Sabnzbd.status("nzo-1")
+      refute Map.has_key?(report, :client_paused)
+    end
+
+    # SABnzbd keeps downloading a Force job through a global pause, so its clock must keep running.
+    test "does not report a forced job as paused" do
+      forced = %{
+        @waiting
+        | "priority" => "Force",
+          "status" => "Downloading",
+          "timeleft" => "0:02:00"
+      }
+
+      stub_queue(forced, %{"paused" => true})
+
+      assert {:ok, %{state: :downloading, eta: 120} = report} = Sabnzbd.status("nzo-1")
+      refute Map.has_key?(report, :client_paused)
+    end
+
+    test "keeps a job paused or failed on its own as an error" do
+      for status <- ["Paused", "Failed"] do
+        stub_queue(%{@waiting | "status" => status}, %{"paused" => true})
+
+        result = Sabnzbd.status("nzo-1")
+        assert match?({:ok, %{state: :error}}, result), status
+        {:ok, report} = result
+        refute Map.has_key?(report, :client_paused), status
+      end
+    end
+
+    test "reads the pause only from a boolean true" do
+      for header <- [%{}, %{"paused" => "true"}, %{"paused" => 1}, %{"paused" => nil}] do
+        stub_queue(@waiting, header)
+
+        result = Sabnzbd.status("nzo-1")
+        assert match?({:ok, %{state: :downloading}}, result), inspect(header)
+        {:ok, report} = result
+        refute Map.has_key?(report, :client_paused), inspect(header)
+      end
+    end
+
+    test "gives no estimate for a 0:00:00 timeleft in a running queue" do
+      stub_queue(%{@waiting | "status" => "Propagating"}, %{"paused" => false})
+
+      assert {:ok, %{state: :downloading, eta: nil}} = Sabnzbd.status("nzo-1")
+    end
+
+    # A job that left the queue is post-processing, which a queue pause does not hold.
+    test "does not report a job in post-processing as paused" do
+      stub_queue_then_history(%{
+        "history" => %{"slots" => [%{"nzo_id" => "nzo-1", "status" => "Extracting"}]}
+      })
+
+      assert {:ok, %{state: :downloading, progress: 1.0} = report} = Sabnzbd.status("nzo-1")
+      refute Map.has_key?(report, :client_paused)
+    end
+
+    test "list_managed/0 keeps each queued job's state under a paused queue" do
+      stub(fn conn ->
+        body =
+          case conn.params["mode"] do
+            "queue" ->
+              %{
+                "queue" => %{
+                  "paused" => true,
+                  "slots" => [
+                    %{
+                      "filename" => "Waiting.cinder-3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+                      "nzo_id" => "nzo-q",
+                      "status" => "Queued"
+                    },
+                    %{
+                      "filename" => "Own.cinder-3f2504e0-4f89-11d3-9a0c-0305e82c3302",
+                      "nzo_id" => "nzo-p",
+                      "status" => "Paused"
+                    }
+                  ]
+                }
+              }
+
+            "history" ->
+              %{"history" => %{"slots" => []}}
+          end
+
+        Req.Test.json(conn, body)
+      end)
+
+      assert {:ok, entries} = Sabnzbd.list_managed()
+
+      assert entries |> Map.new(&{&1.id, &1.state}) ==
+               %{"nzo-q" => :downloading, "nzo-p" => :error}
+    end
+  end
+
   test "status/1 reports a paused queue slot as :error so the poller can bound it" do
     # A queued-but-stalled slot (Paused — e.g. SABnzbd's Pause on Duplicates) would
     # otherwise read as :downloading forever and never advance or fail.

@@ -611,6 +611,7 @@ defmodule CinderWeb.ActivityLive do
               progress={m.download_progress}
               speed={m.download_speed}
               eta={m.download_eta}
+              paused_at={m.download_paused_at}
             />
             <p
               :if={attention.reason == :anime_hold}
@@ -767,6 +768,7 @@ defmodule CinderWeb.ActivityLive do
                 progress={g.download_progress}
                 speed={g.download_speed}
                 eta={g.download_eta}
+                paused_at={g.download_paused_at}
               />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>

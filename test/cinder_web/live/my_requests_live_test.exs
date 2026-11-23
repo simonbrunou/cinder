@@ -78,6 +78,28 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert render(lv) =~ "42%"
   end
 
+  test "shows a requested movie paused by its download client", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    tmdb_id = System.unique_integer([:positive])
+
+    {:ok, request} =
+      Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: tmdb_id,
+        title: "Paused",
+        year: 2001
+      })
+
+    {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Paused", year: 2001})
+    {:ok, movie} = seed_movie_state(movie, %{status: :downloading})
+    {:ok, _} = MovieLifecycle.track(movie, %{client_paused: true})
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    assert has_element?(lv, "#myrequests-movie-status-#{request.id}", "Paused by download client")
+  end
+
   test "a season request shows the show title and season number", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
 

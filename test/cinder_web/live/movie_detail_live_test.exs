@@ -460,6 +460,14 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert render(lv) =~ "42%"
   end
 
+  test "shows a movie paused by its download client", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+    {:ok, _} = MovieLifecycle.track(movie, %{client_paused: true})
+
+    {:ok, lv, _html} = live_movie(conn, movie)
+    assert has_element?(lv, "#movie-detail-status-#{movie.id}", "Paused by download client")
+  end
+
   test "a movie whose TMDB runtime is 0 hides the runtime chip", %{conn: conn} do
     movie = movie_fixture(%{title: "Obscure"})
 

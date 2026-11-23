@@ -404,11 +404,28 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @impl true
   def status(nzo_id) do
     case queue_slot(nzo_id) do
-      {:ok, nil} -> history_status(nzo_id)
-      {:ok, slot} -> {:ok, classify_queue(slot)}
-      other -> other
+      {:ok, nil} ->
+        history_status(nzo_id)
+
+      {:ok, {slot, queue_paused?}} ->
+        {:ok, slot |> classify_queue() |> queue_pause(slot, queue_paused?)}
+
+      other ->
+        other
     end
   end
+
+  # A paused queue leaves each waiting job's own status at `Queued`, so only the queue header tells
+  # it from a running one. SABnzbd keeps downloading a `Force` job through a pause, except one it
+  # takes for post-processing, which the header does not tell apart, so a `Force` job keeps the
+  # cap. A job paused or failed on its own stays the `:error` `classify_queue/1` gave it.
+  defp queue_pause(%{state: :downloading} = report, %{"priority" => "Force"}, _queue_paused?),
+    do: report
+
+  defp queue_pause(%{state: :downloading} = report, _slot, true),
+    do: Map.put(report, :client_paused, true)
+
+  defp queue_pause(report, _slot, _queue_paused?), do: report
 
   # A queued slot is normally in flight, but a Paused or Failed slot won't progress
   # on its own — report it as :error so the poller bounds it to :import_failed rather
@@ -439,7 +456,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
     case get(mode: "queue", nzo_ids: nzo_id) do
       {:ok, %{status: 200, body: body}} ->
         case logical_error(body) do
-          nil -> {:ok, find_slot(body, "queue", nzo_id)}
+          nil -> {:ok, queued(find_slot(body, "queue", nzo_id), body)}
           error -> error
         end
 
@@ -447,6 +464,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
         error(other)
     end
   end
+
+  defp queued(nil, _body), do: nil
+  defp queued(slot, %{"queue" => %{"paused" => true}}), do: {slot, true}
+  defp queued(slot, _body), do: {slot, false}
 
   defp history_status(nzo_id) do
     case get(mode: "history", nzo_ids: nzo_id) do
@@ -530,13 +551,15 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp history_fail_reason(_msg), do: "The download client reported the job failed."
 
+  # SABnzbd answers `0:00:00` for a job it has no estimate for (a paused queue, a propagating job).
   defp eta(timeleft) when is_binary(timeleft) do
     with [hours, minutes, seconds] <- String.split(String.trim(timeleft), ":"),
          {hours, ""} <- Integer.parse(hours),
          {minutes, ""} <- Integer.parse(minutes),
          {seconds, ""} <- Integer.parse(seconds),
-         true <- hours >= 0 and minutes in 0..59 and seconds in 0..59 do
-      hours * 3600 + minutes * 60 + seconds
+         true <- hours >= 0 and minutes in 0..59 and seconds in 0..59,
+         total when total > 0 <- hours * 3600 + minutes * 60 + seconds do
+      total
     else
       _ -> nil
     end

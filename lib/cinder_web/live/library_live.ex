@@ -654,6 +654,7 @@ defmodule CinderWeb.LibraryLive do
                   progress={m.download_progress}
                   speed={m.download_speed}
                   eta={m.download_eta}
+                  paused_at={m.download_paused_at}
                   class="h-auto break-words text-center"
                   style="min-width: 0"
                 />

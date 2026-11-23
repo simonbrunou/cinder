@@ -703,6 +703,7 @@ defmodule CinderWeb.DashboardLive do
                     progress={m.download_progress}
                     speed={m.download_speed}
                     eta={m.download_eta}
+                    paused_at={m.download_paused_at}
                   />
                   <span class="truncate">{media_title(m, @locale)}</span>
                   <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>

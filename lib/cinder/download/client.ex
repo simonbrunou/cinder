@@ -21,6 +21,10 @@ defmodule Cinder.Download.Client do
   not advance a completed download to `:downloaded` until `:content_path` is present.
   An `:error` state may carry an optional human-facing `:reason` (a short string, e.g.
   SABnzbd's paused state or `fail_message`) that the poller persists as the park reason.
+
+  A `:downloading` report may carry `client_paused: true` when the client's whole queue is paused
+  and this download is waiting on it. `Cinder.Download.Watch` then skips the stall reaper. Only
+  the SABnzbd adapter reports it today.
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
 

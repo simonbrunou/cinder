@@ -23,12 +23,15 @@ defmodule Cinder.Download.Watch do
      absolute cap, the clock the row carried at tick start is stale by definition, so reading it
      first reaps a healthy download.
   5. Ask the reaper only while it is switched on (`StallReaper.enabled?/0`): `reap?/4` is a pure
-     predicate that knows nothing about the operator's switch.
+     predicate that knows nothing about the operator's switch. A report with `client_paused: true`
+     (`Cinder.Download.Client.status/1`) skips the reaper: the release has had no chance to
+     download. The writer keeps the pause on the row and takes the paused time off the progress
+     clock (`Cinder.Download.Progress.changes/3`).
 
   The writer is the only write this module makes, and it never writes a status: every status
   change stays behind the Catalog and Books choke-points the pollers call. The writer is called as
-  `track.(download, attrs)` with `attrs` a subset of `download_progress`, `download_speed` and
-  `download_eta`, and must answer `{:ok, record}` with the record's `download_progress_at` after
+  `track.(download, attrs)` with `attrs` a subset of `download_progress`, `download_speed`,
+  `download_eta` and `client_paused`, and must answer `{:ok, record}` with the record's `download_progress_at` after
   the write, or `{:error, reason}`: `Catalog.MovieLifecycle.track/2`,
   `Catalog.update_grab_download_metrics/2` and `Books.Grabs.track/2` all do.
 
@@ -81,7 +84,7 @@ defmodule Cinder.Download.Watch do
   @typedoc """
   - `{:completed, content_path}`: finished, file list clean, `content_path` non-empty.
   - `:downloading`: still in flight, file list clean, metrics recorded (or the write was
-    refused, which is logged), not stalled.
+    refused, which is logged), and either not stalled or waiting on a paused client.
   - `{:failed, reason}`: the client says this download went wrong; see "Reasons".
   - `{:blocked_content, detail}`: the file list marks the release as a fake. Deterministic, so a
     poller acts on the first sighting. `detail` names the file, sanitized.
@@ -145,9 +148,11 @@ defmodule Cinder.Download.Watch do
   defp check_with(client, download, track) do
     case client.status(download.download_id) do
       {:ok, %{state: :completed, content_path: path}} when is_binary(path) and path != "" ->
+        end_pause(download, track)
         vet_completed(client, download, path, track)
 
       {:ok, %{state: :completed}} ->
+        end_pause(download, track)
         {:failed, :no_content_path}
 
       {:ok, %{state: :error} = status} ->
@@ -196,15 +201,18 @@ defmodule Cinder.Download.Watch do
   defp vetted(:ok, continue), do: continue.()
 
   defp track_and_reap(download, status, track) do
+    client_paused? = Map.get(status, :client_paused) == true
+
     attrs = %{
       download_progress: Map.get(status, :progress),
       download_speed: Map.get(status, :speed),
-      download_eta: Map.get(status, :eta)
+      download_eta: Map.get(status, :eta),
+      client_paused: client_paused?
     }
 
     case track.(download, attrs) do
       {:ok, tracked} ->
-        if stalled?(download, tracked.download_progress_at, status),
+        if not client_paused? and stalled?(download, tracked.download_progress_at, status),
           do: :stalled,
           else: :downloading
 
@@ -234,4 +242,11 @@ defmodule Cinder.Download.Watch do
 
   defp clear_estimates(download, track),
     do: track.(download, %{download_speed: nil, download_eta: nil})
+
+  # A finished job is no longer waiting on a paused client, whatever the verdict goes on to be: a
+  # content check that times out, or an upgrade whose import waits, keeps the row in flight.
+  defp end_pause(%{download_paused_at: %DateTime{}} = download, track),
+    do: track.(download, %{client_paused: false})
+
+  defp end_pause(_download, _track), do: :ok
 end

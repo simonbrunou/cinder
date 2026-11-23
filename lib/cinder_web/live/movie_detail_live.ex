@@ -340,6 +340,7 @@ defmodule CinderWeb.MovieDetailLive do
                 progress={@movie.download_progress}
                 speed={@movie.download_speed}
                 eta={@movie.download_eta}
+                paused_at={@movie.download_paused_at}
               />
             </:actions>
           </.header>

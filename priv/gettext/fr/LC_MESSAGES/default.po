@@ -8049,3 +8049,8 @@ msgstr "Nom de la clé d’accès (%{name})"
 #, elixir-autogen, elixir-format
 msgid "Rename passkey %{name}"
 msgstr "Renommer la clé d’accès %{name}"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "Paused by download client"
+msgstr "Mis en pause par le client de téléchargement"

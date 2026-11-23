@@ -622,6 +622,7 @@ defmodule CinderWeb.BookDetailLive do
               progress={grab.download_progress}
               speed={grab.download_speed}
               eta={grab.download_eta}
+              paused_at={grab.download_paused_at}
             />
 
             <form
