@@ -26,6 +26,8 @@ defmodule Cinder.Books.BookGrab do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release_title, :string
+    # The release's size in bytes, nil when unknown: `Cinder.Download.GrabReserve` reads it.
+    field :release_size, :integer
     field :content_path, :string
     field :import_attempts, :integer, default: 0
     field :download_progress, :float

@@ -56,7 +56,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
   alias Cinder.Catalog.{Episode, EpisodeSearch, MediaProfiles, Movie, SeriesCatalog}
-  alias Cinder.{Disk, Download, Repo, Settings}
+  alias Cinder.{Download, Repo, Settings}
   alias Cinder.HTTPPolicy
   alias Cinder.Library.Upgrade
 
@@ -123,7 +123,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
       not Upgrade.candidate?(movie, release, :movies, target) ->
         :ok
 
-      not Disk.grab_space_available?(release.size) ->
+      not Download.grab_space_available?(release.size) ->
         Logger.info("upgrade hunter: not enough space to upgrade movie #{movie.id}")
 
       true ->
@@ -388,7 +388,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
           not Enum.any?(candidates, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
 
-      not Disk.grab_space_available?(release.size) ->
+      not Download.grab_space_available?(release.size) ->
         Logger.info(
           "upgrade hunter: not enough space for #{HTTPPolicy.sanitize_log(release.title)}"
         )

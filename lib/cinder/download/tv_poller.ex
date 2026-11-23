@@ -811,7 +811,7 @@ defmodule Cinder.Download.TvPoller do
   # writes the `updated_at` the search backoff reads, and the block is best-effort, so the search
   # budget still bounds re-picking the release in a sweep that grabs and holds nothing.
   defp grab_release(release, episode_ids) do
-    if Disk.grab_space_available?(release.size) do
+    if Download.grab_space_available?(release.size) do
       case Download.grab_episodes(release, episode_ids) do
         {:ok, _grab} ->
           episode_ids

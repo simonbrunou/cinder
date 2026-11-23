@@ -27,6 +27,7 @@ defmodule Cinder.Catalog.Grabs do
 
   alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Download
+  alias Cinder.Download.Intent
   alias Cinder.GuardedWrite
   alias Cinder.Library.{ImportedQuality, ImportStage}
   alias Cinder.Notifier
@@ -60,6 +61,7 @@ defmodule Cinder.Catalog.Grabs do
   `allow_available: true` is reserved for the durable manual-upgrade path.
   `arbitrate_at_import: true` marks the grab so the import, not the grab, decides each episode's
   swap — the unattended upgrade sweep sets it; the manual path leaves it off and forces (#250).
+  `release_size` records the release's size in bytes for `Cinder.Download.GrabReserve`.
   """
   def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
     GuardedWrite.transaction(fn ->
@@ -71,9 +73,9 @@ defmodule Cinder.Catalog.Grabs do
   Atomically transfers an anime intent's frozen mapping snapshot and episode ownership. The
   episode links announce like `create_grab/5`'s.
   """
-  def create_grab_from_intent(%Cinder.Download.Intent{} = intent) do
+  def create_grab_from_intent(%Intent{} = intent) do
     GuardedWrite.transaction(fn ->
-      fresh = Repo.get(Cinder.Download.Intent, intent.id)
+      fresh = Repo.get(Intent, intent.id)
       if is_nil(fresh), do: Repo.rollback(:stale_intent)
 
       attrs = %{
@@ -86,7 +88,10 @@ defmodule Cinder.Catalog.Grabs do
       }
 
       grab =
-        %Grab{arbitrate_at_import: fresh.release["arbitrate_at_import"] == true}
+        %Grab{
+          arbitrate_at_import: fresh.release["arbitrate_at_import"] == true,
+          release_size: Intent.release_size(fresh)
+        }
         |> Grab.reservation_changeset(attrs)
         |> Repo.insert()
         |> case do
@@ -164,7 +169,10 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   defp insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts) do
-    case %Grab{arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false)}
+    case %Grab{
+           arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false),
+           release_size: Keyword.get(opts, :release_size)
+         }
          |> Grab.changeset(%{
            download_id: download_id,
            download_protocol: protocol,

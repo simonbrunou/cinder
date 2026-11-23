@@ -29,12 +29,13 @@ defmodule Cinder.Books.Grabs do
 
   `opts[:replace]` (default `false`) marks this grab as a confirmed "Find a better match"
   replace rather than a fresh acquisition — `BookPoller` reads it back off the grab at import
-  time to decide whether the target's existing file should be superseded.
+  time to decide whether the target's existing file should be superseded. `opts[:release_size]`
+  records the release's size in bytes for `Cinder.Download.GrabReserve`.
   """
   @spec create(integer(), String.t(), atom(), String.t() | nil, keyword()) ::
           {:ok, BookGrab.t()} | {:error, :book_grab_exists | Ecto.Changeset.t()}
   def create(book_target_id, download_id, protocol, release_title, opts \\ []) do
-    %BookGrab{}
+    %BookGrab{release_size: Keyword.get(opts, :release_size)}
     |> BookGrab.changeset(%{
       book_target_id: book_target_id,
       download_id: download_id,

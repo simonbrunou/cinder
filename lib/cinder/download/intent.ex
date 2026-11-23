@@ -57,6 +57,13 @@ defmodule Cinder.Download.Intent do
     |> unique_constraint(:target_id)
   end
 
+  @doc "The release size in bytes the reservation stored, or nil when it stored no positive one."
+  @spec release_size(t()) :: pos_integer() | nil
+  def release_size(%__MODULE__{release: %{"size" => size}}) when is_integer(size) and size > 0,
+    do: size
+
+  def release_size(%__MODULE__{}), do: nil
+
   def reservation_changeset(%__MODULE__{id: nil} = intent, attrs) do
     intent
     |> changeset(attrs)

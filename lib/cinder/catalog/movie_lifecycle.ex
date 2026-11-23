@@ -80,6 +80,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
     download_id: nil,
     download_protocol: nil,
     release_title: nil,
+    release_size: nil,
     release_policy_snapshot: nil
   }
 
@@ -136,11 +137,18 @@ defmodule Cinder.Catalog.MovieLifecycle do
 
   def no_match(%Movie{}, _reason), do: {:error, :not_searching}
 
-  @download_fields [:download_id, :download_protocol, :release_title, :release_policy_snapshot]
+  @download_fields [
+    :download_id,
+    :download_protocol,
+    :release_title,
+    :release_size,
+    :release_policy_snapshot
+  ]
 
   @doc """
   Attaches the download a client accepted (`download_id`, `download_protocol`, `release_title`,
-  `release_policy_snapshot`) with a fresh import budget:
+  `release_size`, `release_policy_snapshot`) with a fresh import budget. A download with no
+  `release_size` clears the size an earlier download left on the row:
 
     * `:requested` or `:searching` → `:downloading`;
     * a parked movie → `:downloading`, with a fresh search budget too (an operator's manual grab);
@@ -166,6 +174,7 @@ defmodule Cinder.Catalog.MovieLifecycle do
     attrs =
       download
       |> Map.take(@download_fields)
+      |> Map.put_new(:release_size, nil)
       |> Map.merge(extra)
       |> Map.merge(%{status: status, import_attempts: 0})
 

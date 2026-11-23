@@ -56,6 +56,7 @@ defmodule Cinder.Catalog.Movie do
     :download_id,
     :download_protocol,
     :release_title,
+    :release_size,
     :release_policy_snapshot,
     :verification_hold_origin,
     :download_progress,
@@ -82,6 +83,9 @@ defmodule Cinder.Catalog.Movie do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release_title, :string
+
+    # The in-flight release's size in bytes, nil when unknown: `Cinder.Download.GrabReserve` reads it.
+    field :release_size, :integer
     field :release_policy_snapshot, :map
     field :verification_hold_origin, Ecto.Enum, values: [:download, :upgrade]
     field :download_progress, :float

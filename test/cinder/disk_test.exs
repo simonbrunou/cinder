@@ -378,21 +378,21 @@ defmodule Cinder.DiskTest do
 
   # The guards read free space through the :disk_prober seam (Cinder.Test.StubDisk in test), driven
   # per-case by :disk_stats_stub — so these never probe a real disk.
-  describe "grab_space_available?/1" do
+  describe "grab_space_available?/2" do
     setup :restore_disk_env
 
     @eight_gb 8_000_000_000
 
     test "true for an unknown release size (nothing to guard)" do
       Application.put_env(:cinder, :disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
-      assert Disk.grab_space_available?(nil)
-      assert Disk.grab_space_available?(0)
+      assert Disk.grab_space_available?(nil, 0)
+      assert Disk.grab_space_available?(0, 0)
     end
 
     test "true when no download root is configured (fails open)" do
       Application.put_env(:cinder, :import_roots, [])
       Application.put_env(:cinder, :disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
-      assert Disk.grab_space_available?(@eight_gb)
+      assert Disk.grab_space_available?(@eight_gb, 0)
     end
 
     test "true when a root has room for the release plus the margin" do
@@ -404,7 +404,7 @@ defmodule Cinder.DiskTest do
         {:ok, %{free_bytes: 100_000_000_000, total_bytes: 200_000_000_000}}
       )
 
-      assert Disk.grab_space_available?(@eight_gb)
+      assert Disk.grab_space_available?(@eight_gb, 0)
     end
 
     test "false when every readable root positively lacks room" do
@@ -416,13 +416,13 @@ defmodule Cinder.DiskTest do
         {:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}}
       )
 
-      refute Disk.grab_space_available?(@eight_gb)
+      refute Disk.grab_space_available?(@eight_gb, 0)
     end
 
     test "true when a root's free space can't be read (fails open)" do
       Application.put_env(:cinder, :import_roots, ["/downloads"])
       Application.put_env(:cinder, :disk_stats_stub, {:error, :df_failed})
-      assert Disk.grab_space_available?(@eight_gb)
+      assert Disk.grab_space_available?(@eight_gb, 0)
     end
 
     test "true when at least one of several roots has room" do
@@ -433,7 +433,41 @@ defmodule Cinder.DiskTest do
         "/empty" -> {:ok, %{free_bytes: 100_000_000_000, total_bytes: 200_000_000_000}}
       end)
 
-      assert Disk.grab_space_available?(@eight_gb)
+      assert Disk.grab_space_available?(@eight_gb, 0)
+    end
+
+    # The margin is 2 GiB, a literal here so a changed margin fails.
+    test "the reserve counts against free space, to the byte" do
+      ConfigCase.put_env(:import_roots, ["/downloads"])
+      needed = @eight_gb + 1_000 + 2_147_483_648
+      ConfigCase.put_env(:disk_stats_stub, {:ok, %{free_bytes: needed, total_bytes: needed * 2}})
+
+      assert Disk.grab_space_available?(@eight_gb, 1_000)
+      refute Disk.grab_space_available?(@eight_gb, 1_001)
+    end
+
+    test "the whole reserve comes off each root" do
+      ConfigCase.put_env(:import_roots, ["/a", "/b"])
+      free = @eight_gb + 2_147_483_648 + 5_000
+      ConfigCase.put_env(:disk_stats_stub, {:ok, %{free_bytes: free, total_bytes: free * 2}})
+
+      assert Disk.grab_space_available?(@eight_gb, 5_000)
+      refute Disk.grab_space_available?(@eight_gb, 5_001)
+    end
+
+    test "still fails open with a reserve: unknown size, no root, an unreadable root" do
+      huge = 1_000_000_000_000_000
+
+      ConfigCase.put_env(:import_roots, ["/downloads"])
+      ConfigCase.put_env(:disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
+      assert Disk.grab_space_available?(nil, huge)
+
+      ConfigCase.put_env(:disk_stats_stub, {:error, :df_failed})
+      assert Disk.grab_space_available?(@eight_gb, huge)
+
+      ConfigCase.put_env(:import_roots, [])
+      ConfigCase.put_env(:disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
+      assert Disk.grab_space_available?(@eight_gb, huge)
     end
   end
 

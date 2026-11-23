@@ -18,7 +18,7 @@ defmodule Cinder.Disk do
 
   # Headroom that must stay free BEYOND the release itself before a poller hands it to a download
   # client. A false "insufficient" would strand a title (its download never starts), so the guards
-  # fail OPEN on any uncertainty — an unknown release size, no configured root, or an unreadable
+  # fail OPEN on any uncertainty — an unknown release size, no download root, or an unreadable
   # `df` all allow the grab. They skip only on positive evidence that no download root can hold it.
   @grab_margin_bytes 2 * 1024 * 1024 * 1024
   @default_probe_timeout 2_000
@@ -58,18 +58,28 @@ defmodule Cinder.Disk do
   end
 
   @doc """
-  Whether a download of `size_bytes` can be placed on a configured download root with
-  `@grab_margin_bytes` headroom to spare. Fails OPEN (returns `true`, allow the grab) for an
-  unknown size, when no download root is configured, or when a root's free space can't be read —
-  a probe glitch must never strand a title. Returns `false` only when every readable download
-  root positively lacks room.
+  Whether a download of `size_bytes` can be placed on a download root with
+  `@grab_margin_bytes` headroom to spare, after setting aside `reserve_bytes`, what in-flight
+  downloads still have to write. Cinder cannot tell which root a download lands on, so the whole
+  reserve comes off each root's free space. Callers go through
+  `Cinder.Download.grab_space_available?/1`, which reads the reserve, so this module stays free of
+  database reads.
+
+  Fails OPEN (returns `true`, allow the grab) for an unknown size, when
+  `Cinder.Settings.import_roots/0` lists no root (none configured or inferred from the library
+  paths), or when a root's free space can't be read — a probe glitch must never strand a title.
+  Returns `false` only when every download root positively lacks room.
   """
-  @spec grab_space_available?(non_neg_integer() | nil) :: boolean()
-  def grab_space_available?(size_bytes) when is_integer(size_bytes) and size_bytes > 0 do
-    roots_admit?(Cinder.Settings.import_roots(), size_bytes + @grab_margin_bytes)
+  @spec grab_space_available?(non_neg_integer() | nil, non_neg_integer()) :: boolean()
+  def grab_space_available?(size_bytes, reserve_bytes)
+      when is_integer(size_bytes) and size_bytes > 0 and is_integer(reserve_bytes) and
+             reserve_bytes >= 0 do
+    roots_admit?(Cinder.Settings.import_roots(), size_bytes + reserve_bytes + @grab_margin_bytes)
   end
 
-  def grab_space_available?(_size_bytes), do: true
+  def grab_space_available?(_size_bytes, reserve_bytes)
+      when is_integer(reserve_bytes) and reserve_bytes >= 0,
+      do: true
 
   # Allow unless we have positive evidence NO readable root can hold `needed` — an unreadable root
   # (a df error) is treated as "might have room" so a probe glitch never blocks.

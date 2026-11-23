@@ -25,7 +25,7 @@ defmodule Cinder.Download do
 
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, MediaProfile, Movie, MovieLifecycle}
-  alias Cinder.Download.{Intent, IntentEpisode}
+  alias Cinder.Download.{GrabReserve, Intent, IntentEpisode}
 
   @retry_base_seconds 5
   @retry_max_seconds 300
@@ -103,6 +103,13 @@ defmodule Cinder.Download do
     release_attrs =
       if Map.get(attrs, :operator_initiated, false),
         do: Map.put(release_attrs, "operator_initiated", true),
+        else: release_attrs
+
+    # The size survives a retry or a crash here, so the owner row can record it whenever it is
+    # written (`Intent.release_size/1`, `Cinder.Download.GrabReserve`).
+    release_attrs =
+      if is_integer(release.size),
+        do: Map.put(release_attrs, "size", release.size),
         else: release_attrs
 
     # Same shape as operator_initiated, and deliberately a SECOND flag: both the manual season
@@ -286,6 +293,7 @@ defmodule Cinder.Download do
   defp ebook_release(%EbookRelease{} = release) do
     %Release{
       title: release.title,
+      size: release.size,
       download_url: release.download_url,
       download_url_origin: release.download_url_origin,
       protocol: release.protocol
@@ -297,6 +305,7 @@ defmodule Cinder.Download do
   defp audiobook_release(%AudiobookRelease{} = release) do
     %Release{
       title: release.title,
+      size: release.size,
       download_url: release.download_url,
       download_url_origin: release.download_url_origin,
       protocol: release.protocol
@@ -1099,7 +1108,7 @@ defmodule Cinder.Download do
   end
 
   defp create_book_grab(%Intent{remote_id: remote_id, target_id: target_id} = intent) do
-    opts = [replace: replace?(intent)]
+    opts = [replace: replace?(intent), release_size: Intent.release_size(intent)]
 
     case Books.Grabs.create(target_id, remote_id, intent.protocol, intent.release["title"], opts) do
       {:ok, grab} ->
@@ -1137,6 +1146,7 @@ defmodule Cinder.Download do
       download_id: intent.remote_id,
       download_protocol: intent.protocol,
       release_title: intent.release["title"],
+      release_size: Intent.release_size(intent),
       release_policy_snapshot: intent.release_policy_snapshot
     }
 
@@ -1164,7 +1174,8 @@ defmodule Cinder.Download do
               intent.release["title"],
               reset_attempts: operator_initiated?(intent),
               allow_available: operator_initiated?(intent),
-              arbitrate_at_import: arbitrate_at_import?(intent)
+              arbitrate_at_import: arbitrate_at_import?(intent),
+              release_size: Intent.release_size(intent)
             )
           else
             Catalog.create_grab_from_intent(intent)
@@ -1356,11 +1367,21 @@ defmodule Cinder.Download do
     end
   end
 
+  @doc """
+  Whether a release of `size_bytes` fits on a download root once the bytes in-flight downloads
+  still have to write (`Cinder.Download.GrabReserve`) are set aside. The one entry point of the
+  automatic grab paths: the movie search, the TV sweep and both upgrade hunts.
+  `Cinder.Disk.grab_space_available?/2` says when it fails open.
+  """
+  @spec grab_space_available?(non_neg_integer() | nil) :: boolean()
+  def grab_space_available?(size_bytes),
+    do: Cinder.Disk.grab_space_available?(size_bytes, GrabReserve.bytes())
+
   # Pre-grab disk guard: don't hand a release to the client when no download root can hold it. The
   # poller treats {:insufficient_disk_space, _} as a skip (no attempt burned, no park) — space may
   # free up.
   defp grab_if_space(movie, release) do
-    if Cinder.Disk.grab_space_available?(release.size),
+    if grab_space_available?(release.size),
       do: add_to_client(movie, release),
       else: {:error, {:insufficient_disk_space, release.size}}
   end
