@@ -586,17 +586,16 @@ defmodule Cinder.Library.BoundedWalkTest do
       assert_receive {:walking, _walk}, @wait
       :sys.suspend(guard)
 
-      {{elapsed, answer}, log} =
+      {answer, log} =
         ExUnit.CaptureLog.with_log(fn ->
-          :timer.tc(
-            fn -> BoundedWalk.stuck_roots(server: guard, timeout_ms: 100) end,
-            :millisecond
-          )
+          BoundedWalk.stuck_roots(server: guard, timeout_ms: 100)
         end)
 
       assert answer == %{roots: [], cap_reached?: false}
-      assert elapsed < 1_000
       assert log =~ "could not read the stuck directory walks"
+      # The check that `:timeout_ms` reached the call: the 1 s default ends with the same answer
+      # and the same warning, apart from this number.
+      assert log =~ ~r/\{:timeout, \{GenServer, :call, \[#PID<[\d.]+>, :stuck_roots, 100\]\}\}/
 
       :sys.resume(guard)
       _ = :sys.get_state(guard, @wait)
