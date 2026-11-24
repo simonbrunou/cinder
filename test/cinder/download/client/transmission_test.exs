@@ -438,6 +438,97 @@ defmodule Cinder.Download.Client.TransmissionTest do
              Transmission.status(@hash)
   end
 
+  # #1602: status 0 below 100% is a stop of this torrent or of all of them, and status 3 waits
+  # behind the download queue limit. Both are held on purpose; a local error (3) still fails.
+  defp torrent(fields) do
+    Map.merge(
+      %{
+        "hashString" => @hash,
+        "percentDone" => 0.4,
+        "rateDownload" => 0,
+        "eta" => -1,
+        "peersSendingToUs" => 0,
+        "error" => 0,
+        "errorString" => "",
+        "downloadDir" => "/downloads",
+        "name" => "Movie"
+      },
+      fields
+    )
+  end
+
+  defp status_of(fields) do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{"torrents" => [torrent(fields)]})
+    end)
+
+    Transmission.status(@hash)
+  end
+
+  test "status/1 reports a torrent stopped below 100% as held, with or without a tracker error" do
+    for {error, text, reason} <- [
+          {0, "", nil},
+          {1, "Tracker warning", "Tracker warning"},
+          {2, "Tracker gave an error", "Tracker gave an error"}
+        ] do
+      assert {^error,
+              {:ok, %{state: :downloading, client_paused: true, progress: 0.4, reason: ^reason}}} =
+               {error, status_of(%{"status" => 0, "error" => error, "errorString" => text})}
+    end
+  end
+
+  test "status/1 reports a torrent waiting in the download queue as held" do
+    assert {:ok, %{state: :downloading, client_paused: true}} = status_of(%{"status" => 3})
+  end
+
+  test "status/1 keeps a local error on a stopped torrent an error, with its reason" do
+    assert {:ok, %{state: :error, reason: "No space left on device"} = report} =
+             status_of(%{"status" => 0, "error" => 3, "errorString" => "No space left on device"})
+
+    refute Map.has_key?(report, :client_paused)
+
+    assert {:ok, %{state: :error, reason: "Stopped by the download client before completion."}} =
+             status_of(%{"status" => 0, "error" => 3})
+  end
+
+  # As before #1602: a local error fails a queued, running or finished torrent too, and only a
+  # stop before completion words an empty `errorString` as a stop.
+  test "status/1 keeps a local error on a queued, running or finished torrent an error, with no hold and no stop reason" do
+    for {status, progress} <- [{3, 0.4}, {4, 0.4}, {0, 1.0}] do
+      assert {:ok, %{state: :error} = report} =
+               status_of(%{"status" => status, "percentDone" => progress, "error" => 3})
+
+      refute Map.has_key?(report, :client_paused), inspect(status)
+      assert {status, report.reason} == {status, nil}
+    end
+  end
+
+  test "status/1 reports no hold for a checking, downloading or stopped-and-complete torrent" do
+    for {status, progress, state} <- [
+          {1, 0.4, :downloading},
+          {2, 0.4, :downloading},
+          {4, 0.4, :downloading},
+          {0, 1.0, :completed}
+        ] do
+      assert {:ok, %{state: ^state} = report} =
+               status_of(%{"status" => status, "percentDone" => progress})
+
+      refute Map.has_key?(report, :client_paused), inspect(status)
+      assert report.reason == nil, inspect(status)
+    end
+  end
+
+  test "list_managed/0 lists a stopped torrent as downloading" do
+    stub_rpc(fn conn, %{"method" => "torrent-get"} ->
+      success(conn, %{
+        "torrents" => [torrent(%{"status" => 0, "labels" => ["cinder-key-1"]})]
+      })
+    end)
+
+    assert {:ok, [%{id: @hash, operation_key: "key-1", state: :downloading}]} =
+             Transmission.list_managed()
+  end
+
   test "list_managed/0 reports downloading and completed states despite tracker warnings" do
     stub_rpc(fn conn, %{"method" => "torrent-get"} ->
       success(conn, %{

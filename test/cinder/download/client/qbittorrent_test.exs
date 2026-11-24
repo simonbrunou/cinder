@@ -457,6 +457,37 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, %{state: :downloading}} = QBittorrent.status("abc123")
   end
 
+  # #1602: a torrent the client stopped (`stoppedDL` on 5.x, `pausedDL` on 4.x) or queued behind
+  # its queue limit (`queuedDL`) is held on purpose. A stalled or metadata-less swarm is not.
+  defp status_of(state, progress) do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [
+        %{"state" => state, "progress" => progress, "dlspeed" => 0, "num_seeds" => 0}
+      ])
+    end)
+
+    QBittorrent.status("abc123")
+  end
+
+  test "status/1 reports a stopped or queued torrent as held by the client" do
+    for state <- ~w(stoppedDL pausedDL queuedDL) do
+      assert {^state, {:ok, %{state: :downloading, client_paused: true, speed: 0, seeders: 0}}} =
+               {state, status_of(state, 0.4)}
+    end
+  end
+
+  test "status/1 reports no hold for a stalled, metadata, running, forced or checking torrent" do
+    for state <- ~w(stalledDL metaDL forcedMetaDL downloading forcedDL checkingDL moving) do
+      assert {:ok, %{state: :downloading} = report} = status_of(state, 0.4)
+      refute Map.has_key?(report, :client_paused), state
+    end
+  end
+
+  test "status/1 reports a stopped torrent at full progress as completed, with no hold" do
+    assert {:ok, %{state: :completed} = report} = status_of("pausedDL", 1.0)
+    refute Map.has_key?(report, :client_paused)
+  end
+
   test "health/0 logs in and pings webapiVersion, returning :ok on 200" do
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/app/webapiVersion"

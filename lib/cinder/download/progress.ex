@@ -26,7 +26,9 @@ defmodule Cinder.Download.Progress do
   `download_eta`, minus any that equal what `record` holds. A progress lower than the recorded
   one is dropped, so a client that briefly under-reports never walks the bar backwards.
 
-  A `client_paused` key in `report` also tracks a pause of the whole download client on the row:
+  A `client_paused` key in `report` also tracks, on the row, a hold the download client put on this
+  download (`Cinder.Download.Client.status/1`): its whole queue paused, this download stopped or
+  paused, or a wait behind its queue limit:
 
     * `true` on a row with no pause sets `download_paused_at` to `now`. When the row's clock is
       more than a minute past the reaper's cap, the reaper may not have reached the row before

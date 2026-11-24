@@ -17,6 +17,7 @@ defmodule Cinder.Download.Client.Nzbget do
   @max_nzb_bytes 20 * 1024 * 1024
   @remote_path_prefix :nzbget_remote_path_prefix
   @local_path_prefix :nzbget_local_path_prefix
+  @force_priority 900
   @operation_key_pattern ~r/cinder-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:\.nzb)?$/
 
   def add(release), do: add(release, [])
@@ -86,10 +87,37 @@ defmodule Cinder.Download.Client.Nzbget do
          {:ok, queue} <- rpc_list("listgroups", [0]) do
       case Enum.find(queue, &(&1["NZBID"] == nzb_id)) do
         nil -> history_status(nzb_id)
-        item -> {:ok, classify_queue(item)}
+        item -> queue_status(item)
       end
     end
   end
+
+  # A server-wide pause (`pausedownload`) leaves each waiting job at `QUEUED`, so only the
+  # server's `DownloadPaused` tells it from a job about to start. NZBGet keeps downloading a job
+  # of force priority (900) or above through that pause, so such a job keeps the stall clock. A
+  # failed `status` call is a failed status, never a pause (#1602).
+  defp queue_status(%{"Status" => "QUEUED"} = item) do
+    with {:ok, paused?} <- download_paused() do
+      {:ok, item |> classify_queue() |> server_pause(item, paused?)}
+    end
+  end
+
+  defp queue_status(item), do: {:ok, classify_queue(item)}
+
+  defp download_paused do
+    case rpc("status", []) do
+      {:ok, %{"DownloadPaused" => paused?}} when is_boolean(paused?) -> {:ok, paused?}
+      {:ok, _} -> {:error, :unexpected_response}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp server_pause(report, %{"MaxPriority" => priority}, true)
+       when is_integer(priority) and priority >= @force_priority,
+       do: report
+
+  defp server_pause(report, _item, true), do: Map.put(report, :client_paused, true)
+  defp server_pause(report, _item, false), do: report
 
   defp history_status(nzb_id) do
     with {:ok, history} <- rpc_list("history", [false]) do
@@ -165,19 +193,40 @@ defmodule Cinder.Download.Client.Nzbget do
     end
   end
 
-  defp classify_queue(%{"Status" => "PAUSED"} = item),
-    do: %{
-      state: :error,
-      reason: "Paused by the download client; resume it in NZBGet, then retry.",
-      progress: queue_progress(item),
-      speed: nil,
-      eta: nil,
-      content_path: nil
-    }
+  # A `PAUSED` job is held on purpose while its health is at or above its critical health, as a
+  # `GroupPause` leaves it, and it waits to be resumed (#1602). NZBGet's `HealthCheck=pause` also
+  # pauses a job whose health fell below critical, a release missing too many articles to repair,
+  # so a job below critical fails, whatever paused it. A job that does not report both its health
+  # and critical health as integers fails as before.
+  defp classify_queue(
+         %{"Status" => "PAUSED", "Health" => health, "CriticalHealth" => critical} = item
+       )
+       when is_integer(health) and is_integer(critical) and health >= critical,
+       do: item |> queue_report(:downloading) |> Map.put(:client_paused, true)
 
-  defp classify_queue(item),
+  defp classify_queue(
+         %{"Status" => "PAUSED", "Health" => health, "CriticalHealth" => critical} = item
+       )
+       when is_integer(health) and is_integer(critical),
+       do:
+         item
+         |> queue_report(:error)
+         |> Map.put(
+           :reason,
+           "NZBGet's health check: health is below critical, too many articles are missing to repair the job."
+         )
+
+  defp classify_queue(%{"Status" => "PAUSED"} = item),
+    do:
+      item
+      |> queue_report(:error)
+      |> Map.put(:reason, "Paused by the download client; resume it in NZBGet, then retry.")
+
+  defp classify_queue(item), do: queue_report(item, :downloading)
+
+  defp queue_report(item, state),
     do: %{
-      state: :downloading,
+      state: state,
       progress: queue_progress(item),
       speed: nil,
       eta: nil,

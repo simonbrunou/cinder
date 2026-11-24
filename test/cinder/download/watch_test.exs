@@ -409,6 +409,31 @@ defmodule Cinder.Download.WatchTest do
       end
     end
 
+    # #1602: the tick that ends a pause reads the seed window from the `updated_at` the writer's
+    # resume write returned, and from the tick-start one when the writer returns none.
+    test "the tick that ends a pause reads the seed window from the writer's updated_at, or the tick-start one when it returns none" do
+      put_config(StallReaper, enabled: true, no_seeders_timeout: :timer.minutes(30))
+      now = DateTime.utc_now(:second)
+      paused = download(%{updated_at: @long_ago, download_paused_at: @long_ago})
+      test_pid = self()
+
+      for {returned, verdict} <- [
+            {%{download_progress_at: now, updated_at: now}, :downloading},
+            {%{download_progress_at: now}, :stalled}
+          ] do
+        status({:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}})
+        files([])
+
+        writer = fn _download, attrs ->
+          send(test_pid, {:tracked, attrs})
+          {:ok, returned}
+        end
+
+        assert {returned, Watch.check(paused, writer)} == {returned, verdict}
+        assert_received {:tracked, %{client_paused: false}}
+      end
+    end
+
     test "a report without the flag tells the writer the client is running, and can stall" do
       status({:ok, %{state: :downloading, progress: 0.0, speed: nil}})
       files([])

@@ -216,8 +216,15 @@ defmodule Cinder.Download.Client.Transmission do
   end
 
   defp normalize(torrent) do
+    torrent
+    |> classify()
+    |> report(torrent)
+    |> held(torrent)
+  end
+
+  defp report(state, torrent) do
     %{
-      state: classify(torrent),
+      state: state,
       progress: progress(torrent["percentDone"]),
       speed: non_negative_integer(torrent["rateDownload"]),
       eta: eta(torrent["eta"]),
@@ -232,20 +239,28 @@ defmodule Cinder.Download.Client.Transmission do
   # can carry while still downloading or seeding; only a local error is terminal here.
   defp classify(%{"error" => 3}), do: :error
 
-  defp classify(%{"status" => 0, "percentDone" => progress})
-       when is_number(progress) and progress < 1,
-       do: :error
-
   defp classify(%{"status" => status, "percentDone" => progress})
        when status in [0, 5, 6] and is_number(progress) and progress >= 1,
        do: :completed
 
   defp classify(_torrent), do: :downloading
 
+  # Held on purpose: stopped before completion (status 0), or waiting behind the download queue
+  # limit (status 3). The RPC reports a stop of one torrent and of all of them the same way, and
+  # neither has peers or speed until the client lets it run (#1602).
+  defp held(%{state: :downloading} = report, %{"status" => 0, "percentDone" => progress})
+       when is_number(progress) and progress < 1,
+       do: Map.put(report, :client_paused, true)
+
+  defp held(%{state: :downloading} = report, %{"status" => 3}),
+    do: Map.put(report, :client_paused, true)
+
+  defp held(report, _torrent), do: report
+
   defp error_reason(%{"errorString" => reason}) when is_binary(reason) and reason != "",
     do: reason
 
-  defp error_reason(%{"status" => 0, "percentDone" => progress})
+  defp error_reason(%{"error" => 3, "status" => 0, "percentDone" => progress})
        when is_number(progress) and progress < 1,
        do: "Stopped by the download client before completion."
 

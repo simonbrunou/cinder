@@ -26,14 +26,19 @@ defmodule Cinder.Download.Watch do
      predicate that knows nothing about the operator's switch. A report with `client_paused: true`
      (`Cinder.Download.Client.status/1`) skips the reaper: the release has had no chance to
      download. The writer keeps the pause on the row and takes the paused time off the progress
-     clock (`Cinder.Download.Progress.changes/3`).
+     clock (`Cinder.Download.Progress.changes/3`). On the tick whose report ends the pause, the
+     seed window reads the `updated_at` the writer's resume write returned, so the download gets
+     a full window once its client runs it again.
 
   The writer is the only write this module makes, and it never writes a status: every status
   change stays behind the Catalog and Books choke-points the pollers call. The writer is called as
   `track.(download, attrs)` with `attrs` a subset of `download_progress`, `download_speed`,
-  `download_eta` and `client_paused`, and must answer `{:ok, record}` with the record's `download_progress_at` after
-  the write, or `{:error, reason}`: `Catalog.MovieLifecycle.track/2`,
-  `Catalog.update_grab_download_metrics/2` and `Books.Grabs.track/2` all do.
+  `download_eta` and `client_paused`, and must answer `{:ok, record}` with the record's
+  `download_progress_at` after the write, or `{:error, reason}`:
+  `Catalog.MovieLifecycle.track/2`, `Catalog.update_grab_download_metrics/2` and
+  `Books.Grabs.track/2` all do, and their record also carries its `updated_at`, which the tick
+  that ends a pause reads. A record with no `updated_at` leaves the seed window on the
+  tick-start one.
 
   Nothing here raises on a client or writer answer. A raise inside a poller's `isolate/2` would
   re-fire every tick with nothing parked, so every answer becomes a verdict instead.
@@ -73,7 +78,11 @@ defmodule Cinder.Download.Watch do
 
   @typedoc "The kind's metrics writer; see the moduledoc."
   @type track :: (download(), map() ->
-                    {:ok, %{required(:download_progress_at) => DateTime.t() | nil}}
+                    {:ok,
+                     %{
+                       required(:download_progress_at) => DateTime.t() | nil,
+                       optional(:updated_at) => DateTime.t()
+                     }}
                     | {:error, term()})
 
   @type failure ::
@@ -212,7 +221,7 @@ defmodule Cinder.Download.Watch do
 
     case track.(download, attrs) do
       {:ok, tracked} ->
-        if not client_paused? and stalled?(download, tracked.download_progress_at, status),
+        if not client_paused? and stalled?(download, tracked, status),
           do: :stalled,
           else: :downloading
 
@@ -228,12 +237,26 @@ defmodule Cinder.Download.Watch do
     end
   end
 
-  # The seed window keeps the tick-start `updated_at` (metric writes are change-gated, so it
-  # freezes while nothing moves); the absolute cap reads the clock the write returned.
-  defp stalled?(download, download_progress_at, status) do
+  # The seed window reads the tick-start `updated_at` (metric writes are change-gated, so it
+  # freezes while nothing moves), except on the tick that ends a pause (`seed_clock/2`); the
+  # absolute cap reads the clock the write returned.
+  defp stalled?(download, tracked, status) do
     StallReaper.enabled?() and
-      StallReaper.reap?(download.updated_at, download_progress_at, status, DateTime.utc_now())
+      StallReaper.reap?(
+        seed_clock(download, tracked),
+        tracked.download_progress_at,
+        status,
+        DateTime.utc_now()
+      )
   end
+
+  # A row paused at tick start froze its `updated_at` through the pause. When this tick's report
+  # ends the pause, the writer's resume write set a new one, and the seed window starts from it:
+  # a torrent the client held gets a full window once it runs again (#1602).
+  defp seed_clock(%{download_paused_at: %DateTime{}}, %{updated_at: %DateTime{} = resumed_at}),
+    do: resumed_at
+
+  defp seed_clock(download, _tracked), do: download.updated_at
 
   defp unreachable(download, track, reason) do
     clear_estimates(download, track)

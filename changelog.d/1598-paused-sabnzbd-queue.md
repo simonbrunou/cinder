@@ -5,5 +5,5 @@
   longer counts toward the no-progress limit (24 hours by default), so the release is not removed
   or blocklisted for that wait. A job with SABnzbd's Force priority keeps its normal badge and
   limit, because SABnzbd keeps it downloading through a pause, except while post-processing holds
-  the queue. A job paused or failed on its own in SABnzbd is handled as before. Pauses in NZBGet,
-  qBittorrent and Transmission are handled as before.
+  the queue. A job paused or failed on its own in SABnzbd is handled as before. The #1602 entry
+  covers a download that NZBGet, qBittorrent or Transmission holds.

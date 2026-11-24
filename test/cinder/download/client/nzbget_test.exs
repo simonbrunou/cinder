@@ -167,22 +167,172 @@ defmodule Cinder.Download.Client.NzbgetTest do
             }} = Nzbget.status("42")
   end
 
-  test "status/1 normalizes queue progress and paused jobs as actionable errors" do
-    stub(fn conn, %{"method" => "listgroups"} ->
-      result(conn, [
-        %{
-          "NZBID" => 42,
-          "Status" => "PAUSED",
-          "FileSizeHi" => 0,
-          "FileSizeLo" => 100,
-          "RemainingSizeHi" => 0,
-          "RemainingSizeLo" => 25
-        }
-      ])
+  # A queue item at 75% with `fields` on top. The `status` RPC answers `server` (a result, or
+  # `{:raw, conn -> conn}` for a raw response) and reports each call to the test.
+  defp queue_status(fields, server \\ %{"DownloadPaused" => false}) do
+    test_pid = self()
+
+    stub(fn conn, request ->
+      case request["method"] do
+        "listgroups" ->
+          result(conn, [
+            Map.merge(
+              %{
+                "NZBID" => 42,
+                "Status" => "QUEUED",
+                "FileSizeHi" => 0,
+                "FileSizeLo" => 100,
+                "RemainingSizeHi" => 0,
+                "RemainingSizeLo" => 25
+              },
+              fields
+            )
+          ])
+
+        "status" ->
+          send(test_pid, :status_rpc)
+          answer(conn, server)
+      end
     end)
 
-    assert {:ok, %{state: :error, progress: 0.75, reason: reason}} = Nzbget.status("42")
-    assert reason =~ "Paused"
+    Nzbget.status("42")
+  end
+
+  defp answer(conn, {:raw, respond}), do: respond.(conn)
+  defp answer(conn, server), do: result(conn, server)
+
+  # #1602: `GroupPause` leaves a job `PAUSED` at full health, held on purpose; `HealthCheck=pause`
+  # pauses a dead job below its critical health, which still fails.
+  test "status/1 reports a job paused at or above its critical health as held by the client" do
+    for health <- [1000, 900] do
+      assert {^health, {:ok, %{state: :downloading, client_paused: true, progress: 0.75}}} =
+               {health,
+                queue_status(%{"Status" => "PAUSED", "Health" => health, "CriticalHealth" => 900})}
+    end
+  end
+
+  test "status/1 fails a job paused below its critical health, naming the health check" do
+    assert {:ok, %{state: :error, progress: 0.75, reason: reason} = report} =
+             queue_status(%{"Status" => "PAUSED", "Health" => 825, "CriticalHealth" => 900})
+
+    assert reason =~ "health check"
+    refute reason =~ "resume it in NZBGet"
+    refute Map.has_key?(report, :client_paused)
+
+    assert {:ok, %{state: :error}} =
+             queue_status(%{"Status" => "PAUSED", "Health" => 899, "CriticalHealth" => 900})
+  end
+
+  test "status/1 fails a paused job whose health or critical health is missing or not a number, asking to resume it in NZBGet" do
+    for fields <- [
+          %{},
+          %{"Health" => 1000},
+          %{"CriticalHealth" => 900},
+          %{"Health" => nil, "CriticalHealth" => 900},
+          %{"Health" => 1000, "CriticalHealth" => nil},
+          %{"Health" => "1000", "CriticalHealth" => 900}
+        ] do
+      assert {:ok, %{state: :error, reason: reason}} =
+               queue_status(Map.put(fields, "Status", "PAUSED"))
+
+      assert reason == "Paused by the download client; resume it in NZBGet, then retry.",
+             inspect(fields)
+    end
+  end
+
+  test "status/1 reports a queued job waiting in a server-wide pause as held, below force priority" do
+    paused = %{"DownloadPaused" => true}
+
+    # A priority that is not a number reads as absent.
+    for fields <- [
+          %{},
+          %{"MaxPriority" => 899},
+          %{"MaxPriority" => 0},
+          %{"MaxPriority" => nil},
+          %{"MaxPriority" => "900"}
+        ] do
+      assert {^fields, {:ok, %{state: :downloading, client_paused: true}}} =
+               {fields, queue_status(fields, paused)}
+    end
+
+    for priority <- [900, 1000] do
+      assert {:ok, %{state: :downloading} = report} =
+               queue_status(%{"MaxPriority" => priority}, paused)
+
+      refute Map.has_key?(report, :client_paused), inspect(priority)
+    end
+  end
+
+  test "status/1 reports no hold for a queued job while the server runs" do
+    assert {:ok, %{state: :downloading} = report} =
+             queue_status(%{}, %{"DownloadPaused" => false})
+
+    refute Map.has_key?(report, :client_paused)
+    assert_received :status_rpc
+  end
+
+  test "status/1 fails rather than holds a queued job when the server status cannot be read" do
+    for {server, expected} <- [
+          {{:raw, &Plug.Conn.send_resp(&1, 500, "")}, {:error, {:nzbget_status, 500}}},
+          {{:raw, &Req.Test.json(&1, %{"id" => 1, "error" => %{"code" => 1}, "result" => nil})},
+           {:error, {:nzbget_rpc, %{"code" => 1}}}},
+          {[], {:error, :unexpected_response}},
+          {%{}, {:error, :unexpected_response}},
+          {%{"DownloadPaused" => "true"}, {:error, :unexpected_response}},
+          {%{"DownloadPaused" => nil}, {:error, :unexpected_response}}
+        ] do
+      assert {server, queue_status(%{}, server)} == {server, expected}
+    end
+  end
+
+  test "status/1 reads the server status only for a queued job" do
+    paused = %{"DownloadPaused" => true}
+
+    for status <- ~w(DOWNLOADING PP_QUEUED UNPACKING) do
+      assert {:ok, %{state: :downloading} = report} = queue_status(%{"Status" => status}, paused)
+      refute Map.has_key?(report, :client_paused), status
+      refute_received :status_rpc, status
+    end
+
+    assert {:ok, %{client_paused: true}} =
+             queue_status(%{"Status" => "PAUSED", "Health" => 1000, "CriticalHealth" => 900})
+
+    refute_received :status_rpc
+
+    assert {:ok, %{client_paused: true}} = queue_status(%{}, paused)
+    assert_received :status_rpc
+  end
+
+  test "list_managed/0 lists a healthy paused job as downloading and reads no server status" do
+    test_pid = self()
+
+    stub(fn conn, request ->
+      case request["method"] do
+        "listgroups" ->
+          result(conn, [
+            %{
+              "NZBID" => 42,
+              "NZBName" => "Movie.cinder-#{@key}",
+              "Status" => "PAUSED",
+              "Health" => 1000,
+              "CriticalHealth" => 900
+            },
+            %{"NZBID" => 43, "NZBName" => "Other.cinder-#{@key}", "Status" => "QUEUED"}
+          ])
+
+        "history" ->
+          result(conn, [])
+
+        "status" ->
+          send(test_pid, :status_rpc)
+          result(conn, %{"DownloadPaused" => true})
+      end
+    end)
+
+    assert {:ok, [%{id: "42", state: :downloading}, %{id: "43", state: :downloading}]} =
+             Nzbget.list_managed()
+
+    refute_received :status_rpc
   end
 
   test "files/1, list_managed/0, and remove/2 implement the behavior contract" do

@@ -7,7 +7,9 @@ defmodule Cinder.Download.StallReaper do
   fallback is `false`, so an install with no config block at all stays off — fail-safe.)
 
   Pure: no DB, no HTTP. The seed-aware zero-speed window keeps its original clock: metric writes
-  are change-gated, so `updated_at` freezes while `progress`/`speed`/`eta` are unchanged. The
+  are change-gated, so `updated_at` freezes while `progress`/`speed`/`eta` are unchanged. (On the
+  tick that ends a client hold, `Cinder.Download.Watch` passes the `updated_at` the resume write
+  returned, when the writer returns one.) The
   protocol-agnostic absolute cap uses the dedicated `download_progress_at` clock instead.
 
   `speed == 0` is a *hard numeric zero* (`=== 0`): SABnzbd reports `speed: nil`, so the seed-window
@@ -22,8 +24,9 @@ defmodule Cinder.Download.StallReaper do
   catch — it never errors, never advances, so without the cap it sits forever. The cap is generous
   on purpose: genuine completion progress advances `download_progress_at`; speed/ETA jitter and
   transient metric clearing do not. `Cinder.Download.Watch` does not ask this module about a
-  download whose client reports its queue paused, and the end of that pause moves
-  `download_progress_at` past the paused time (`Cinder.Download.Progress.changes/3`).
+  download whose client reports it held (`client_paused` in `Cinder.Download.Client.status/1`).
+  The end of that hold moves `download_progress_at` past the paused time
+  (`Cinder.Download.Progress.changes/3`), and the seed window then counts from the resume write.
 
   ## ponytail: completion is the available progress signal
 

@@ -35,6 +35,10 @@ defmodule Cinder.Download.Client.QBittorrent do
   # Finished downloading but relocating the file — not at rest, path not yet final.
   @in_transit ~w(moving)
   @errored ~w(error missingFiles)
+  # Held on purpose before completion: stopped (`stoppedDL` on 5.x, `pausedDL` on 4.x) or waiting
+  # behind the queue limit (`queuedDL`). Neither downloads until the client lets it run, so its
+  # zero speed must not read as a dead swarm (#1602).
+  @held ~w(stoppedDL pausedDL queuedDL)
 
   @max_torrent_bytes 10 * 1024 * 1024
   @max_response_bytes 4 * 1024 * 1024
@@ -536,8 +540,15 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp normalize(torrent) do
     progress = torrent["progress"] || 0.0
 
+    torrent["state"]
+    |> classify(progress)
+    |> report(torrent, progress)
+    |> held(torrent["state"])
+  end
+
+  defp report(state, torrent, progress) do
     %{
-      state: classify(torrent["state"], progress),
+      state: state,
       progress: progress,
       speed: metric(torrent["dlspeed"]),
       eta: eta(torrent["eta"]),
@@ -552,6 +563,11 @@ defmodule Cinder.Download.Client.QBittorrent do
         )
     }
   end
+
+  defp held(%{state: :downloading} = report, torrent_state) when torrent_state in @held,
+    do: Map.put(report, :client_paused, true)
+
+  defp held(report, _torrent_state), do: report
 
   defp mapping_health do
     PathMapping.validate_local_prefix(

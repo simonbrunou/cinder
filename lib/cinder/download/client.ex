@@ -22,9 +22,12 @@ defmodule Cinder.Download.Client do
   An `:error` state may carry an optional human-facing `:reason` (a short string, e.g.
   SABnzbd's paused state or `fail_message`) that the poller persists as the park reason.
 
-  A `:downloading` report may carry `client_paused: true` when the client's whole queue is paused
-  and this download is waiting on it. `Cinder.Download.Watch` then skips the stall reaper. Only
-  the SABnzbd adapter reports it today.
+  A `:downloading` report may carry `client_paused: true` when the client holds this download on
+  purpose: SABnzbd for a job in its paused queue, NZBGet for a job queued to download while its
+  downloads are paused or a job paused at or above its critical health, qBittorrent for a torrent
+  stopped or queued before completion, Transmission for a torrent stopped before completion or
+  waiting in its download queue. `Cinder.Download.Watch` then skips the stall reaper. During a
+  SABnzbd or NZBGet queue pause, a forced job that is not paused on its own carries no such flag.
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
 

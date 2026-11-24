@@ -15,10 +15,11 @@ defmodule Cinder.Download.ClientPauseTest do
   import Mox
 
   alias Cinder.Books
-  alias Cinder.Books.BookGrab
+  alias Cinder.Books.{BookBlockedRelease, BookGrab}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}
-  alias Cinder.Download.{Poller, StallReaper, Watch}
+  alias Cinder.Catalog.{BlockedRelease, Grab, Movie, MovieLifecycle}
+  alias Cinder.Download.{BookPoller, Poller, StallReaper, TvPoller, Watch}
+  alias Cinder.Download.Client.{Nzbget, QBittorrent, Transmission}
 
   @client Cinder.Download.SabnzbdClientMock
   @kinds [:movie, :grab, :book]
@@ -43,7 +44,10 @@ defmodule Cinder.Download.ClientPauseTest do
 
   defp row(:grab) do
     episode = series_fixture() |> season_fixture() |> episode_fixture()
-    {:ok, grab} = Catalog.create_grab("job-grab", :usenet, [episode.id])
+
+    {:ok, grab} =
+      Catalog.create_grab("job-grab", :usenet, [episode.id], "Paused.Show.S01E01.1080p")
+
     grab
   end
 
@@ -92,6 +96,117 @@ defmodule Cinder.Download.ClientPauseTest do
     assert abs(DateTime.diff(actual, expected)) <= 5,
            "expected #{actual} within 5 s of #{expected}"
   end
+
+  defp minutes_ago(minutes), do: DateTime.add(DateTime.utc_now(:second), -minutes, :minute)
+
+  # What each real adapter's `status/1` reports on a stubbed response, for a download its client
+  # holds on purpose (#1602) and, as a control, for a stalled torrent. Each runs in the test
+  # process, which owns the `Req.Test` stub; the tick then hands the report to the client mock.
+  @holds [:qbittorrent_stopped, :transmission_stopped, :nzbget_paused]
+
+  defp adapter_report(:qbittorrent_stopped), do: qbittorrent_report("stoppedDL")
+  defp adapter_report(:qbittorrent_stalled), do: qbittorrent_report("stalledDL")
+
+  defp adapter_report(:transmission_stopped) do
+    Req.Test.stub(Cinder.TransmissionStub, fn conn ->
+      case Plug.Conn.get_req_header(conn, "x-transmission-session-id") do
+        [] ->
+          conn
+          |> Plug.Conn.put_resp_header("x-transmission-session-id", "session")
+          |> Plug.Conn.send_resp(409, "")
+
+        [_session] ->
+          Req.Test.json(conn, %{
+            "result" => "success",
+            "arguments" => %{
+              "torrents" => [
+                %{
+                  "hashString" => "held",
+                  "status" => 0,
+                  "percentDone" => 0.4,
+                  "rateDownload" => 0,
+                  "eta" => -1,
+                  "peersSendingToUs" => 0,
+                  "error" => 0,
+                  "errorString" => ""
+                }
+              ]
+            }
+          })
+      end
+    end)
+
+    Transmission.status("held")
+  end
+
+  defp adapter_report(:nzbget_paused) do
+    Req.Test.stub(Cinder.NzbgetStub, fn conn ->
+      Req.Test.json(conn, %{
+        "id" => 1,
+        "error" => nil,
+        "result" => [
+          %{
+            "NZBID" => 42,
+            "Status" => "PAUSED",
+            "Health" => 1000,
+            "CriticalHealth" => 900,
+            "FileSizeHi" => 0,
+            "FileSizeLo" => 100,
+            "RemainingSizeHi" => 0,
+            "RemainingSizeLo" => 100
+          }
+        ]
+      })
+    end)
+
+    Nzbget.status("42")
+  end
+
+  defp adapter_report(:nzbget_queued) do
+    Req.Test.stub(Cinder.NzbgetStub, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+
+      result =
+        case Jason.decode!(body)["method"] do
+          "listgroups" -> [%{"NZBID" => 42, "Status" => "QUEUED", "MaxPriority" => 0}]
+          "status" -> %{"DownloadPaused" => true}
+        end
+
+      Req.Test.json(conn, %{"id" => 1, "error" => nil, "result" => result})
+    end)
+
+    Nzbget.status("42")
+  end
+
+  defp qbittorrent_report(state) do
+    Req.Test.stub(Cinder.QBittorrentStub, fn
+      %{request_path: "/api/v2/auth/login"} = conn ->
+        conn
+        |> Plug.Conn.put_resp_header("set-cookie", "SID=session; path=/")
+        |> Req.Test.text("Ok.")
+
+      conn ->
+        Req.Test.json(conn, [
+          %{"state" => state, "progress" => 0.0, "dlspeed" => 0, "num_seeds" => 0}
+        ])
+    end)
+
+    QBittorrent.status("held")
+  end
+
+  # A running row 31 minutes past both clocks: past the no-seeders window, inside the cap.
+  defp aged(row) do
+    seed(row, %{
+      download_paused_at: nil,
+      download_progress: 0.0,
+      download_speed: nil,
+      updated_at: minutes_ago(31),
+      download_progress_at: minutes_ago(31)
+    })
+  end
+
+  defp blocklist_rows,
+    do: Repo.aggregate(BlockedRelease, :count) + Repo.aggregate(BookBlockedRelease, :count)
 
   for kind <- @kinds do
     @kind kind
@@ -206,6 +321,140 @@ defmodule Cinder.Download.ClientPauseTest do
         resumed = Repo.reload!(row)
         assert resumed.download_paused_at == nil
         assert_about(resumed.download_progress_at, DateTime.utc_now())
+      end
+
+      test "a torrent or usenet client's hold past the no-seeders window keeps the download" do
+        row = row(@kind)
+
+        for name <- @holds do
+          assert {name, tick(aged(row), adapter_report(name))} == {name, :downloading}
+          assert {name, match?(%DateTime{}, Repo.reload!(row).download_paused_at)} == {name, true}
+        end
+      end
+
+      test "a stalled torrent with no seeds is still reaped past the no-seeders window" do
+        row =
+          @kind
+          |> row()
+          |> seed(%{
+            download_progress: 0.0,
+            updated_at: minutes_ago(31),
+            download_progress_at: minutes_ago(31)
+          })
+
+        assert tick(row, adapter_report(:qbittorrent_stalled)) == :stalled
+      end
+
+      test "the tick that ends a 3 h hold starts a full no-seeders window" do
+        row =
+          @kind
+          |> row()
+          |> seed(%{
+            download_progress: 0.0,
+            download_speed: 0,
+            updated_at: hours_ago(3),
+            download_progress_at: hours_ago(3),
+            download_paused_at: hours_ago(3)
+          })
+
+        dead = {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+        assert tick(row, dead) == :downloading
+
+        resumed = Repo.reload!(row)
+        assert resumed.download_paused_at == nil
+        assert_about(resumed.updated_at, DateTime.utc_now())
+
+        assert tick(seed(resumed, %{updated_at: minutes_ago(29)}), dead) == :downloading
+        assert tick(seed(resumed, %{updated_at: minutes_ago(31)}), dead) == :stalled
+      end
+
+      test "the tick that ends a 3 h hold of a seeded torrent starts a full 2 h window" do
+        row =
+          @kind
+          |> row()
+          |> seed(%{
+            download_progress: 0.0,
+            download_speed: 0,
+            updated_at: hours_ago(3),
+            download_progress_at: hours_ago(3),
+            download_paused_at: hours_ago(3)
+          })
+
+        seeded = {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 3}}
+        assert tick(row, seeded) == :downloading
+
+        resumed = Repo.reload!(row)
+        assert tick(seed(resumed, %{updated_at: minutes_ago(119)}), seeded) == :downloading
+        assert tick(seed(resumed, %{updated_at: minutes_ago(121)}), seeded) == :stalled
+      end
+
+      test "an NZBGet job waiting on paused downloads past the 24 h cap keeps the download" do
+        row =
+          @kind
+          |> row()
+          |> seed(%{
+            download_progress: 0.0,
+            updated_at: hours_ago(25),
+            download_progress_at: hours_ago(25)
+          })
+
+        assert tick(row, adapter_report(:nzbget_queued)) == :downloading
+        assert %DateTime{} = Repo.reload!(row).download_paused_at
+      end
+    end
+  end
+
+  # #1602: each poller, on each real adapter's report for a held download past the no-seeders
+  # window, removes nothing and blocklists nothing. A stalled torrent's report is the control: the
+  # same poller removes and blocklists it, so the refutes watch the right calls and rows.
+  describe "the pollers on a held download" do
+    defp poll(%Movie{}) do
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+      stop_supervised!(Poller)
+    end
+
+    defp poll(%Grab{}) do
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+      stop_supervised!(TvPoller)
+    end
+
+    defp poll(%BookGrab{}) do
+      start_supervised!({BookPoller, interval: 60_000})
+      assert :ok = BookPoller.poll()
+      stop_supervised!(BookPoller)
+    end
+
+    defp poll_with(row, report) do
+      test_pid = self()
+      stub(@client, :status, fn id when id == row.download_id -> report end)
+
+      stub(@client, :remove, fn id, _opts ->
+        send(test_pid, {:removed, id})
+        :ok
+      end)
+
+      poll(row)
+    end
+
+    for kind <- @kinds do
+      @kind kind
+
+      test "the #{kind} poller removes and blocklists nothing" do
+        row = row(@kind)
+
+        for name <- @holds do
+          poll_with(aged(row), adapter_report(name))
+
+          refute_received {:removed, _id}, inspect(name)
+          assert {name, blocklist_rows()} == {name, 0}
+          assert {name, match?(%DateTime{}, Repo.reload!(row).download_paused_at)} == {name, true}
+        end
+
+        poll_with(aged(row), adapter_report(:qbittorrent_stalled))
+        assert_received {:removed, "job-" <> _}
+        assert blocklist_rows() == 1
       end
     end
   end
