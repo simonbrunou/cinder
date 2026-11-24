@@ -416,15 +416,15 @@
 - A merge of `origin/main` (AGENTS.md "Merge authority") into a branch that is not docs-only runs
   the full `mix test` before its push: the cases above pick tests from a fix commit's own files,
   not from the commits `main` brings in. A release runs it too ([workflow.md](workflow.md)
-  "Releasing" step 2). A merge made only to clear a `dependency-audit` red that a fix on
-  `main` clears ([ci.md](ci.md) "New advisory"), on a branch whose full `mix test` passed
-  and with no conflict, takes a review fix commit's short run instead: the fence run with the
-  test files the four cases above add for each file the merge brings in
+  "Releasing" step 2). A merge made only to clear a `dependency-audit` red or a `container`
+  Trivy red that a fix on `main` clears ([ci.md](ci.md) "New advisory"), on a branch whose
+  full `mix test` passed and with no conflict, takes a review fix commit's short run instead:
+  the fence run with the test files the four cases above add for each file the merge brings in
   (`git diff --name-only HEAD...origin/main`, run before the merge), and each test file the
   branch added or changed. The cases then pick tests from what `main` brings in, and CI's full
   run on the push is the gate, as the maintainer decided on #1553 for a review fix commit.
-  PR #1565 kept the full run for every merge, since the first comment on #1553 has a merge keep
-  the run the repo's docs ask for; this narrows that choice. On #1510 (PR #1576) and #1581
+  PR #1565 kept the full run for every merge, since the first comment on #1553 has a merge
+  keep the run the repo's docs ask for; this narrows that choice. On #1510 (PR #1576) and #1581
   (PR #1592) a full run after such a merge took about 7 and 10 minutes.
 - A new UI string fails `translations_complete_test` until you run
   `MIX_ENV=test mix gettext.extract --merge` and write its French msgstr in
