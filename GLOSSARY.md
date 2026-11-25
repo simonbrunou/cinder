@@ -38,6 +38,18 @@ the title's audio pick, the releases blocked for it, and the size band and quali
 for its kind. The anime policy is resolved separately, on top of it.
 _Avoid_: search opts, scorer opts
 
+**Indexer**:
+One site Cinder searches for releases: a torrent tracker or a Usenet indexer.
+_Avoid_: tracker (for both kinds), provider, source
+
+**Indexer definition**:
+The description of how to search one indexer, log in to it and read its results.
+_Avoid_: indexer config, scraper, Cardigann file
+
+**Indexer source**:
+What Cinder searches the indexers through: Prowlarr, or Cinder's own native search.
+_Avoid_: indexer backend, search provider, the indexer (for Prowlarr itself)
+
 **Group wait**:
 Holding back an anime release from a group outside the preferred ones until a set delay after it
 was published, so a preferred group's release can arrive first. A release with no publication time
