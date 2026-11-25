@@ -45,6 +45,15 @@
   and a non-UTF-8 host, each with an out-of-range port, and `//:70000/x`, which 1.20.4 resolved.
   Review flagged the first and the last one round apart, about 27 minutes from the first finding
   to the second fix. A re-check's table of 41 Locations over both versions found the last.
+- A reader of untrusted input, such as a Cardigann definition (ADR 0005), returns its error on a
+  malformed value and never raises. Its tests fill every slot of one fixture, then put each wrong
+  shape in each slot in turn (null, a scalar, a list holding a scalar, a list holding null, an
+  empty mapping, a mapping holding null, a list holding an empty mapping) and assert that no call
+  raises. `test/cinder/indexers/definitions/loader_test.exs` "load/1 raises on none of seven value
+  shapes in any slot" is the model. It runs its loads through `Task.async_stream` in 1.6 s on a
+  quiet host and 2 to 4 s at a load of 61, where a first draft with nine shapes, one load after
+  another, took 19 s. On #1664 the Standards review found that `[~]` in two list slots raised
+  `BadMapError`, a fix round the sweep would have saved.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A field that code sets but no code reads yet, such as one a conversion copies for a later
