@@ -42,6 +42,7 @@ about 29 minutes from the first finding to the last fix.
 - every sentence about what Cinder does;
 - the bold summary;
 - the bold summary of a change that removes one cause of an outcome;
+- an exception ("unless ...") in the bold summary;
 - a sentence about a path whose code reads a list or setting an install can configure, or stored
   rows of several kinds;
 - what such lists hold, or what a check over them decides;
@@ -98,6 +99,17 @@ other cause of that outcome applies, so it must carry each other cause as an exc
 grabs cannot be read back either, then when the client refuses that grab for good. The fourth
 fix commit to the fragment named the cause instead, and a fifth narrowed it to the link of an
 earlier grab: about 25 minutes from the first finding to the last fix.
+
+An exception in the summary ("unless ...") names where the new behaviour stops. Write it from
+the clause head that admits that behaviour: keep the match on the state the behaviour covers and
+negate the rest of the head, each key the pattern requires and each guard test, in its own words.
+The head of #1602's NZBGet health hold matches `"Status" => "PAUSED"`, so its exception leaves
+out a queued job, which a server pause can hold through another clause. Its `is_integer/1` reads
+"an integer", which a health of `1000.0` is not, where "a number" takes it in. On #1602 six fix
+commits, one per review round, reworded the summary's NZBGet exception. The first wrote it, and
+each later one added the case the last report named: a missing health, then a queued job, then a
+missing critical health, then a health of `1000.0`, then a critical health of `900.0`. That took
+about 27 minutes from the report that asked for the exception to the clean hunk check.
 
 A path includes each value an install can configure for a list or setting that the code on the
 path reads, such as `Cinder.Download.ContentPolicy`'s blocked and media extension lists, and each
