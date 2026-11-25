@@ -23,8 +23,9 @@ defmodule Cinder.Subtitles.Sync.Reference do
     |> Enum.reject(&Map.get(&1, :forced?, false))
     # An unambiguous match (an explicit "cn"/"yue" or "zh"/"cmn" tag) beats a generic-alias one
     # ("chi"/"zho", tolerated by both) regardless of packet count - the ambiguous track might
-    # genuinely be the other language (#573 review). Packet count still breaks ties within the
-    # same exactness tier.
+    # genuinely be the other language (#573 review). Likewise a "pt-BR" track is tried before a
+    # "por" one, which a wanted "pt-br" only tolerates (#1434). Packet count still breaks ties
+    # within the same exactness tier.
     |> Enum.sort_by(
       &{if(WantedLanguage.track(language, &1.language) == :exact, do: 0, else: 1),
        -Map.get(&1, :packet_count, 0)}

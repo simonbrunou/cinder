@@ -8,7 +8,9 @@ defmodule Cinder.Subtitles.WantedLanguageTest do
   # The table every subtitle answer about a wanted language reads from (#1415). Its expected
   # values are what the merge base's code answered (e1554d50): `Language.exact_track?/2` and
   # `raw_track_satisfies?/2` for a track, and `Cinder.Subtitles`' private `in_language?/2` for a
-  # sidecar name. Each wanted code lists everything it takes; every other row is refused.
+  # sidecar name. The track rows of a wanted code with a subtag changed since (#1434). Each wanted
+  # code lists the codes of `@tracks` and the names of `@names` it takes; it refuses the others
+  # in those lists.
 
   @wanted ~w(fr fra fre french pt pt-br pt-pt pt_br zh zho chi zh-hant cn yue cantonese hi hin und eo)
 
@@ -27,15 +29,16 @@ defmodule Cinder.Subtitles.WantedLanguageTest do
     {"fre", @french_tracks, []},
     {"french", @french_tracks, []},
     {"pt", ~w(por pt), []},
-    # A wanted code with a subtag is read whole against a track, unlike against a sidecar name: it
-    # takes only a track with that whole code, separator included.
-    {"pt-br", ~w(pt-BR), []},
-    {"pt-pt", ~w(pt-PT), []},
-    {"pt_br", ~w(pt_BR), []},
+    # #1434: a wanted code with a subtag takes a track with its whole code, separator included, as
+    # exact, and a track its base language takes, exact or tolerated, as tolerated. A track with
+    # another subtag stays refused, since the base refuses it too.
+    {"pt-br", ~w(pt-BR), ~w(por pt)},
+    {"pt-pt", ~w(pt-PT), ~w(por pt)},
+    {"pt_br", ~w(pt_BR), ~w(por pt)},
     {"zh", ~w(zh cmn chinese), @generic_chinese},
     {"zho", ~w(zh cmn chinese), @generic_chinese},
     {"chi", ~w(zh cmn chinese), @generic_chinese},
-    {"zh-hant", ~w(zh-Hant), []},
+    {"zh-hant", ~w(zh-Hant), ~w(zh cmn chinese) ++ @generic_chinese},
     # The generic Chinese codes are tolerated for Cantonese too, never Mandarin's `cmn` (#573).
     {"cn", ~w(cn yue), @generic_chinese},
     {"yue", ~w(cn yue), @generic_chinese},

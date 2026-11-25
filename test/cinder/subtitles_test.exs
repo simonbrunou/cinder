@@ -2445,6 +2445,105 @@ defmodule Cinder.SubtitlesTest do
     end
   end
 
+  # #1434: a track the base language of a wanted code with a subtag takes is a tolerated match, so
+  # the local fallback extracts it once the search finds nothing, as it extracts a `por` track for
+  # a wanted `pt`.
+  for {wanted, code} <- [{"pt", "por"}, {"pt-br", "por"}, {"zh-hant", "chi"}] do
+    test "a wanted #{wanted} extracts a lone non-forced #{code} track when the search finds nothing",
+         %{video: video} do
+      ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: unquote(wanted))
+      ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
+      test_pid = self()
+      stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+      stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+        {:ok, [%{index: 2, language: unquote(code), default?: false, forced?: false}]}
+      end)
+
+      stub(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+        send(test_pid, :extracted)
+        {:ok, "1\n00:00:01,000 --> 00:00:02,000\nTrack SRT\n\n"}
+      end)
+
+      log =
+        capture_log(fn ->
+          assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+        end)
+
+      refute log =~ "crashed"
+      assert_received :extracted
+
+      assert File.read!(Subtitles.sidecar_path(video, unquote(wanted))) ==
+               "1\n00:00:01,000 --> 00:00:02,000\nTrack SRT\n\n"
+
+      assert %{tracks: %{unquote(wanted) => %{origin: "embedded"}}} = Manifest.read(video)
+    end
+  end
+
+  # #1434: the effect the maintainer accepted. A managed translation or ID-matched download, neither
+  # a stable entry, gives way to a newly matching `por` track once the search finds nothing.
+  for origin <- ~w(translated opensubtitles_id) do
+    test "a wanted pt-br replaces its managed #{origin} sidecar with a por track when the search finds nothing",
+         %{video: video} do
+      replaces_with_por_track(video, unquote(origin))
+    end
+  end
+
+  defp replaces_with_por_track(video, origin) do
+    ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "pt-br")
+    ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
+    target = Subtitles.sidecar_path(video, "pt-br")
+    put!(target, "1\n00:00:01,000 --> 00:00:02,000\nOlder SRT\n\n")
+    put_manifest!(video, %{video_moviehash: nil, tracks: %{"pt-br" => %{origin: origin}}})
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "por", default?: false, forced?: false}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nTrack SRT\n\n"}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+    assert File.read!(target) == "1\n00:00:01,000 --> 00:00:02,000\nTrack SRT\n\n"
+    assert %{tracks: %{"pt-br" => %{origin: "embedded"}}} = Manifest.read(video)
+  end
+
+  # #1434: the whole code is exact and its base language only tolerated, so a `pt-BR` track is
+  # tried before an earlier `por` one.
+  test "a wanted pt-br prefers a pt-BR track over an earlier por track", %{video: video} do
+    ConfigCase.put_config(Cinder.Subtitles.Provider.OpenSubtitles, languages: "pt-br")
+    ConfigCase.put_env(:media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "por", default?: false, forced?: false},
+         %{index: 3, language: "pt-BR", default?: false, forced?: false}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nBrazilian SRT\n\n"}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+
+    assert File.read!(Subtitles.sidecar_path(video, "pt-br")) ==
+             "1\n00:00:01,000 --> 00:00:02,000\nBrazilian SRT\n\n"
+
+    assert %{tracks: %{"pt-br" => %{origin: "embedded"}}} = Manifest.read(video)
+  end
+
   test "an unextractable exact track falls through to a usable ambiguous track, not translation (#575)",
        %{video: video} do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "cn")

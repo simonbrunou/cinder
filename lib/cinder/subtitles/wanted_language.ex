@@ -8,9 +8,11 @@ defmodule Cinder.Subtitles.WantedLanguage do
   names the fetched sidecar (`sidecar_path/2`) and keys its manifest entry. This module reads it
   in two ways, and they stay apart:
 
-  - Against an embedded track (`track/2`), the whole code. A wanted code with a subtag takes only
-    a track with that whole code, separator included: wanted `pt-br` takes a `pt-BR` track but no
-    `por`, `pt-PT` or `pt_BR` one, and `zh-hant` takes a `zh-Hant` track but no `zh` one.
+  - Against an embedded track (`track/2`), the whole code first. A wanted code with a subtag takes
+    a track with that whole code, separator included, as an exact match, and a track its base
+    language takes as a tolerated one (#1434): wanted `pt-br` takes a `pt-BR` track as exact, a
+    `por` or `pt` track as tolerated, and no `pt-PT` or `pt_BR` one, and `zh-hant` takes a
+    `zh-Hant` track as exact and a track `zh` takes, such as `zh`, `cmn` or `chi`, as tolerated.
   - Against a sidecar's file name (`sidecar?/2`), the part before a `-` or `_` subtag. Wanted
     `pt-br` takes `M.pt.srt` and `M.pt-PT.srt`, and `zh-hant` takes `M.zh.srt` (#1309).
 
@@ -38,7 +40,9 @@ defmodule Cinder.Subtitles.WantedLanguage do
   @doc """
   How a track's raw language code, as the media file reports it, counts for `wanted`: `:exact`
   for a code unique to the language, `:tolerated` for a generic Chinese `chi` or `zho` that
-  Mandarin and Cantonese share, `nil` for none. The code is matched raw, never normalized first:
+  Mandarin and Cantonese share, `nil` for none. A wanted code with a `-` or `_` subtag, such as
+  `pt-br`, is exact only for a track with its whole code, and tolerates a track its base language
+  `pt` takes, exactly or tolerated (#1434). The code is matched raw, never normalized first:
   normalizing `chi` to `zh` would lose the difference. A full language name such as `French`
   counts as its code. A track with no code counts for nothing.
   """
@@ -47,7 +51,17 @@ defmodule Cinder.Subtitles.WantedLanguage do
     cond do
       Language.exact_track?(wanted, code) -> :exact
       Language.raw_track_satisfies?(wanted, code) -> :tolerated
+      base_track?(wanted, code) -> :tolerated
       true -> nil
+    end
+  end
+
+  # Whether the base language of a wanted code with a subtag takes the track, exactly or
+  # tolerated (#1434).
+  defp base_track?(wanted, code) do
+    case base(wanted) do
+      ^wanted -> false
+      base -> track(base, code) != nil
     end
   end
 
@@ -60,7 +74,7 @@ defmodule Cinder.Subtitles.WantedLanguage do
   """
   @spec sidecar?(String.t(), Path.t()) :: boolean()
   def sidecar?(wanted, path) do
-    [base | _subtag] = String.split(wanted, ["-", "_"], parts: 2)
+    base = base(wanted)
     {language, _flags, written, _subtag?} = classify(path)
 
     Language.normalize(base) == language or
@@ -124,6 +138,9 @@ defmodule Cinder.Subtitles.WantedLanguage do
       {_language, _flags, _written, false} -> 2
     end
   end
+
+  # The part of a wanted code before its first `-` or `_`: the whole code when it has no subtag.
+  defp base(wanted), do: wanted |> String.split(["-", "_"], parts: 2) |> hd()
 
   # `{language, flags, written, subtag?}`: the language, the flags, the language code as the name
   # writes it, downcased and without its subtag, or `nil` when the language reads `und`, and

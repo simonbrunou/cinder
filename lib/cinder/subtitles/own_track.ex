@@ -5,8 +5,9 @@ defmodule Cinder.Subtitles.OwnTrack do
   this cut: the lines a downloaded file has for a scene the video trims are not in it.
 
   Only a full dialogue track qualifies: the exact language (an ambiguous generic tag such as "chi"
-  for a Cantonese request does not), not forced, and at least #{200} cues, which rules out signs
-  and songs tracks. A track that is not for the hearing impaired is preferred, then the longest.
+  for a Cantonese request does not, nor a "por" track for a "pt-br" request), not forced, and at
+  least #{200} cues, which rules out signs and songs tracks. A track that is not for the hearing
+  impaired is preferred, then the longest.
   """
 
   alias Cinder.Subtitles.WantedLanguage

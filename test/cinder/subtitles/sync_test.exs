@@ -697,6 +697,54 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
   end
 
+  # #1434: a track the base language of a wanted code with a subtag takes is a tolerated reference,
+  # ranked below a track with the whole code whatever their packet counts.
+  test "a pt-br sidecar syncs against a lone por track", %{video: video} do
+    managed_srt!(video, "pt-br")
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "por", forced?: false, default?: true, packet_count: 20}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == subtitle(".srt")
+      assert File.read!(input) == subtitle(".srt")
+      File.write!(output, shifted_subtitle(subtitle(".srt")))
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
+  end
+
+  test "a pt-br sidecar prefers a pt-BR track over a larger por track", %{video: video} do
+    managed_srt!(video, "pt-br")
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "por", forced?: false, default?: true, packet_count: 999},
+         %{index: 3, language: "pt-BR", forced?: false, default?: false, packet_count: 5}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, subtitle(".srt")}
+    end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn reference, input, output ->
+      assert File.read!(reference) == subtitle(".srt")
+      assert File.read!(input) == subtitle(".srt")
+      File.write!(output, shifted_subtitle(subtitle(".srt")))
+      {:ok, %{score: 30.0, offset_ms: 1_000, rate: 1.0}}
+    end)
+
+    assert [%{method: "embedded", status: :corrected}] = Sync.analyze_video(video)
+  end
+
   # A lone `cmn` track is neither an exact nor a tolerated Cantonese track, so the audio is the
   # reference and the track is never extracted (#573).
   test "a wanted cn (Cantonese) with only a Mandarin cmn track syncs against the audio",
