@@ -251,6 +251,14 @@ defmodule Cinder.HTTPPolicy do
   1, 2 and 4 s apart when the server sends no `Retry-After` (#1429). A request that sets `retry:`
   itself keeps that value.
 
+  A response with a non-empty body whose `content-type` media type is `application/json` or ends
+  in `+json`, in any letter case, comes back with that body decoded by `Jason.decode/1`, whatever
+  its status. Such a body that does not decode is `{:error, :invalid_json}`, so a 4xx, a 5xx or a
+  3xx that Req does not follow loses its status when its JSON body is malformed. An empty body
+  stays `""`, and a body that decodes to a JSON string comes back as that string. A client that
+  needs the raw bytes deletes the header in a response step, as
+  `Cinder.Indexers.Definitions.Source.GitHub` does.
+
   A request has two time budgets. Req's `receive_timeout` bounds each wait for the server's next
   chunk, and Finch applies it per chunk. The total deadline bounds the whole request and ends it
   with `{:error, :request_timeout}`. The deadline here is the longer of 60 s and the request's own
