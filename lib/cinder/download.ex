@@ -228,11 +228,11 @@ defmodule Cinder.Download do
   @doc """
   Durably submits an operator-chosen book release for `target` and creates its grab.
 
-  An `%EbookRelease{}`/`%AudiobookRelease{}` is converted to the `%Release{}` the intent journal
-  and every download client already speak: the client only ever needs a title, a URL and a
-  protocol, and giving the behaviour a third release struct would fork four adapters to carry
-  fields none of them read. The book-specific evidence stays in the books tables, not in the
-  downloader.
+  An `%EbookRelease{}`/`%AudiobookRelease{}` is converted (`Release.from_book/1`) to the
+  `%Release{}` the intent journal and every download client already speak: the client only ever
+  needs a title, a URL and a protocol, and giving the behaviour a third release struct would fork
+  four adapters to carry fields none of them read. The book-specific evidence stays in the books
+  tables, not in the downloader.
 
   No anime policy marker: `ensure_policy_marker/2` resolves an Anime handling profile, and
   `Cinder.LibraryKind` gives book kinds `handlings: [:standard]` only. Passing a book target
@@ -257,13 +257,13 @@ defmodule Cinder.Download do
   def grab_book_target(%BookTarget{media_kind: :ebook} = target, %EbookRelease{} = release, opts) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
-        reserve_and_reconcile(:book_target, target.id, [], ebook_release(release), opts)
+        reserve_and_reconcile(:book_target, target.id, [], Release.from_book(release), opts)
 
       %Intent{status: :cleanup_pending} ->
         {:error, :download_intent_busy}
 
       intent ->
-        reconcile_matching_intent(intent, ebook_release(release), [], opts)
+        reconcile_matching_intent(intent, Release.from_book(release), [], opts)
     end
   end
 
@@ -274,43 +274,18 @@ defmodule Cinder.Download do
       ) do
     case Repo.get_by(Intent, kind: :book_target, target_id: target.id) do
       nil ->
-        reserve_and_reconcile(:book_target, target.id, [], audiobook_release(release), opts)
+        reserve_and_reconcile(:book_target, target.id, [], Release.from_book(release), opts)
 
       %Intent{status: :cleanup_pending} ->
         {:error, :download_intent_busy}
 
       intent ->
-        reconcile_matching_intent(intent, audiobook_release(release), [], opts)
+        reconcile_matching_intent(intent, Release.from_book(release), [], opts)
     end
   end
 
   def grab_book_target(%BookTarget{}, _release, _opts),
     do: {:error, :unsupported_media_kind}
-
-  # A book release carries no mapping or policy snapshot: both are video-pipeline evidence (an
-  # episode-numbering decision and an Anime language policy). Left nil, `Intent`'s validators
-  # accept them and the reservation's equality checks pass unchanged.
-  defp ebook_release(%EbookRelease{} = release) do
-    %Release{
-      title: release.title,
-      size: release.size,
-      download_url: release.download_url,
-      download_url_origin: release.download_url_origin,
-      protocol: release.protocol
-    }
-  end
-
-  # Mirrors `ebook_release/1` exactly — same nil mapping/policy snapshot reasoning, different
-  # source struct.
-  defp audiobook_release(%AudiobookRelease{} = release) do
-    %Release{
-      title: release.title,
-      size: release.size,
-      download_url: release.download_url,
-      download_url_origin: release.download_url_origin,
-      protocol: release.protocol
-    }
-  end
 
   defp reconcile_matching_intent(intent, release, episode_ids, opts \\ []) do
     if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids) and

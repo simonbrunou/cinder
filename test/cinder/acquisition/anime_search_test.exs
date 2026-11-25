@@ -620,6 +620,99 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert Map.delete(second, :indexer_id) == Map.delete(first, :indexer_id)
   end
 
+  # #1644: each indexer's result of one link names its own indexer, with the query origins of
+  # every copy of the link.
+  test "each indexer's result of one link keeps its own provenance (#1644)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [Map.merge(result, provenance(1, "prowlarr", "One", 3))]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] -> {:ok, [Map.merge(result, provenance(2, "native", "Two", 8))]}
+      _query, categories: [5070] -> {:ok, []}
+    end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+
+    assert judged.kept |> Enum.map(&provenance_row/1) |> Enum.sort() == [
+             {1, "prowlarr", "One", "https://one.example", 3, [:id_scoped, :free_text]},
+             {2, "native", "Two", "https://two.example", 8, [:id_scoped, :free_text]}
+           ]
+  end
+
+  test "each indexer's result of one link takes its provenance from its first copy (#1644)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         Map.merge(result, provenance(1, "prowlarr", "One", 3)),
+         Map.merge(result, provenance(2, "native", "Two", 8))
+       ]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok, [Map.merge(result, provenance(2, "prowlarr", "Two later", 9))]}
+
+      _query, categories: [5070] ->
+        {:ok, []}
+    end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+
+    assert judged.kept |> Enum.map(&provenance_row/1) |> Enum.sort() == [
+             {1, "prowlarr", "One", "https://one.example", 3, [:id_scoped, :free_text]},
+             {2, "native", "Two", "https://two.example", 8, [:id_scoped, :free_text]}
+           ]
+  end
+
+  test "an indexer whose copy of a link has no origin keeps none (#1644)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [Map.merge(result, provenance(1, "prowlarr", "One", 3))]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok,
+         [Map.merge(result, %{provenance(2, "native", "Two", 8) | download_url_origin: nil})]}
+
+      _query, categories: [5070] ->
+        {:ok, []}
+    end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+
+    assert judged.kept |> Enum.map(&{&1.indexer_id, &1.download_url_origin}) |> Enum.sort() ==
+             [{1, "https://one.example"}, {2, nil}]
+  end
+
+  test "a link's copy with no indexer id leaves the named copy its own provenance (#1644)" do
+    result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [Map.merge(result, provenance(nil, "native", "Nameless", 1))]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok, [Map.merge(result, provenance(7, "prowlarr", "Seven", 7))]}
+
+      _query, categories: [5070] ->
+        {:ok, []}
+    end)
+
+    assert {:ok, judged, false} = Acquisition.judge_anime_episodes(series_context(99), [11], [])
+
+    assert Enum.map(judged.kept, &provenance_row/1) == [
+             {7, "prowlarr", "Seven", "https://seven.example", 7, [:id_scoped, :free_text]}
+           ]
+  end
+
   test "a link's copy with no indexer id folds into its copy that names one (#1515)" do
     result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
     expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, [result]} end)
@@ -1259,6 +1352,23 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
       episode_ids: episode_ids,
       evidence: %{"kind" => "fixture"}
     }
+  end
+
+  # The indexer fields of one copy, its link origin named after the indexer.
+  defp provenance(indexer_id, source, name, credentials_version) do
+    %{
+      indexer_id: indexer_id,
+      indexer_source: source,
+      indexer_name: name,
+      download_url_origin:
+        "https://#{name |> String.split() |> hd() |> String.downcase()}.example",
+      credentials_version: credentials_version
+    }
+  end
+
+  defp provenance_row(release) do
+    {release.indexer_id, release.indexer_source, release.indexer_name,
+     release.download_url_origin, release.credentials_version, release.query_origins}
   end
 
   defp raw(title, download_url) do

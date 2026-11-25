@@ -198,6 +198,47 @@ defmodule Cinder.Acquisition.BookSearchTest do
       assert {:ok, [release], true} = @kinds[kind].search.search(@work)
       assert Enum.sort(release.query_origins) == [:free_text, :id_scoped]
     end
+
+    # #1644: one link stays one book release, and it names the indexer of its first copy.
+    test "one link from two indexers keeps the first copy's provenance", %{kind: kind} do
+      shared = indexer_result(kind, "Ursula K. Le Guin - The Dispossessed")
+
+      expect(IndexerMock, @kinds[kind].structured, fn _author, _title, _opts ->
+        {:ok,
+         [
+           Map.merge(shared, %{
+             query_origins: [:id_scoped],
+             indexer_id: 1,
+             indexer_source: "native",
+             indexer_name: "One",
+             download_url_origin: "https://one.example",
+             credentials_version: 3
+           })
+         ]}
+      end)
+
+      expect(IndexerMock, @kinds[kind].text, fn _query, _opts ->
+        {:ok,
+         [
+           Map.merge(shared, %{
+             query_origins: [:free_text],
+             indexer_id: 2,
+             indexer_source: "prowlarr",
+             indexer_name: "Two",
+             download_url_origin: "https://two.example",
+             credentials_version: 8
+           })
+         ]}
+      end)
+
+      assert {:ok, [release], true} = @kinds[kind].search.search(@work)
+
+      assert {release.indexer_id, release.indexer_source, release.indexer_name,
+              release.download_url_origin, release.credentials_version} ==
+               {1, "native", "One", "https://one.example", 3}
+
+      assert Enum.sort(release.query_origins) == [:free_text, :id_scoped]
+    end
   end
 
   describe "failures" do

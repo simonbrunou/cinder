@@ -182,7 +182,9 @@ defmodule Cinder.Acquisition.BookSearch do
 
   # Dedupe by download_url, preserving first-seen order and unioning query_origins so a release
   # reached by two different queries records both — the provenance a caller uses to tell an
-  # identity-scoped hit from a free-text one.
+  # identity-scoped hit from a free-text one. Every other field is the first copy's, so the
+  # release names the indexer of that copy (its id, source, name, link origin and credentials
+  # version) even when another indexer also returned the link.
   defp dedupe(releases) do
     releases
     |> Enum.reduce({[], %{}}, fn release, {keys, by_url} ->

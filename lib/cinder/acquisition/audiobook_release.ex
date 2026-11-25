@@ -16,6 +16,9 @@ defmodule Cinder.Acquisition.AudiobookRelease do
   `Cinder.Acquisition.BookScorer`'s moduledoc for why.
 
   `query_origins` records identity-scoped and free-text provenance exactly as `EbookRelease` does.
+
+  The indexer provenance fields, the Prowlarr default of `indexer_source` in `new/1`, and the link
+  `Kernel.inspect/1` leaves out are `Cinder.Acquisition.Release`'s.
   """
   alias Cinder.Acquisition.BookParser
 
@@ -27,6 +30,9 @@ defmodule Cinder.Acquisition.AudiobookRelease do
           protocol: :torrent | :usenet,
           category_ids: [integer()] | nil,
           indexer_id: integer() | nil,
+          indexer_source: String.t() | nil,
+          indexer_name: String.t() | nil,
+          credentials_version: integer() | nil,
           published_at: DateTime.t() | nil,
           query_origins: [atom()] | nil,
           formats: [atom()] | nil,
@@ -38,6 +44,8 @@ defmodule Cinder.Acquisition.AudiobookRelease do
           narrator: String.t() | nil
         }
 
+  # The link can hold an indexer's API key, so `Kernel.inspect/1` leaves it out.
+  @derive {Inspect, except: [:download_url]}
   defstruct [
     :title,
     :size,
@@ -46,6 +54,9 @@ defmodule Cinder.Acquisition.AudiobookRelease do
     :protocol,
     :category_ids,
     :indexer_id,
+    :indexer_source,
+    :indexer_name,
+    :credentials_version,
     :published_at,
     :query_origins,
     :formats,
@@ -70,6 +81,9 @@ defmodule Cinder.Acquisition.AudiobookRelease do
       protocol: Map.get(indexer_map, :protocol, :torrent),
       category_ids: Map.get(indexer_map, :category_ids),
       indexer_id: Map.get(indexer_map, :indexer_id),
+      indexer_source: Map.get(indexer_map, :indexer_source) || "prowlarr",
+      indexer_name: Map.get(indexer_map, :indexer_name),
+      credentials_version: Map.get(indexer_map, :credentials_version),
       published_at: Map.get(indexer_map, :published_at),
       query_origins: Map.get(indexer_map, :query_origins)
     }

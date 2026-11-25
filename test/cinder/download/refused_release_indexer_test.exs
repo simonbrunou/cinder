@@ -142,6 +142,65 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
     assert judged_rows(series) == [{7, :ok}]
   end
 
+  # #1644: each row `judge_season/3` returns for one link carries the id, source, name, link origin
+  # and credentials version of the indexer that sent it, not those of the link's first copy.
+  test "judge_season/3 gives each indexer's row of one link its own provenance" do
+    %{series: series} = wanted_episodes([1])
+
+    stub_results([
+      Map.merge(result(@episode, "shared", 1, 20), provenance("prowlarr", "One", 3)),
+      Map.merge(result(@episode, "shared", 2, 10), provenance("native", "Two", 8))
+    ])
+
+    assert judged_provenance(series) == [
+             {1, "prowlarr", "One", "https://one.example", 3},
+             {2, "native", "Two", "https://two.example", 8}
+           ]
+  end
+
+  test "judge_season/3 takes each indexer's provenance from its first copy of a link" do
+    %{series: series} = wanted_episodes([1])
+
+    stub_results([
+      Map.merge(result(@episode, "shared", 1, 20), provenance("prowlarr", "One", 3)),
+      Map.merge(result(@episode, "shared", 2, 10), provenance("native", "Two", 8)),
+      Map.merge(result(@episode, "shared", 2, 10), provenance("prowlarr", "Two later", 9))
+    ])
+
+    assert judged_provenance(series) == [
+             {1, "prowlarr", "One", "https://one.example", 3},
+             {2, "native", "Two", "https://two.example", 8}
+           ]
+  end
+
+  test "judge_season/3 leaves no origin on an indexer whose copy of a link has none" do
+    %{series: series} = wanted_episodes([1])
+
+    stub_results([
+      Map.merge(result(@episode, "shared", 1, 20), provenance("prowlarr", "One", 3)),
+      Map.merge(result(@episode, "shared", 2, 10), %{
+        provenance("native", "Two", 8)
+        | download_url_origin: nil
+      })
+    ])
+
+    assert judged_provenance(series) == [
+             {1, "prowlarr", "One", "https://one.example", 3},
+             {2, "native", "Two", nil, 8}
+           ]
+  end
+
+  test "a link's copy with no indexer id leaves the named copy its own provenance" do
+    %{series: series} = wanted_episodes([1])
+
+    stub_results([
+      Map.merge(result(@episode, "shared", nil, 20), provenance("native", "Nameless", 1)),
+      Map.merge(result(@episode, "shared", 7, 10), provenance("prowlarr", "Seven", 7))
+    ])
+
+    assert judged_provenance(series) == [{7, "prowlarr", "Seven", "https://seven.example", 7}]
+  end
+
   test "one indexer's same title at another link stays blocked by the one row" do
     %{series: series} = wanted_episodes([1])
 
@@ -333,6 +392,37 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
              )
 
     judged.rows |> Enum.map(&{&1.release.indexer_id, &1.verdict}) |> Enum.sort()
+  end
+
+  # The indexer fields of one copy, its link origin named after the indexer.
+  defp provenance(source, name, credentials_version) do
+    %{
+      indexer_source: source,
+      indexer_name: name,
+      download_url_origin:
+        "https://#{name |> String.split() |> hd() |> String.downcase()}.example",
+      credentials_version: credentials_version
+    }
+  end
+
+  # The season panel's rows for season 1, as {indexer id, source, name, origin, credentials
+  # version}, sorted.
+  defp judged_provenance(series) do
+    context = Catalog.season_acquisition_context(series, 1)
+
+    assert {:ok, judged} =
+             Acquisition.judge_season(
+               context,
+               Acquisition.searchable_numbers(context),
+               HouseholdPolicy.for_target(series)
+             )
+
+    judged.rows
+    |> Enum.map(
+      &{&1.release.indexer_id, &1.release.indexer_source, &1.release.indexer_name,
+       &1.release.download_url_origin, &1.release.credentials_version}
+    )
+    |> Enum.sort()
   end
 
   # The client answers each link with its list of answers in turn, repeating the last one; a link

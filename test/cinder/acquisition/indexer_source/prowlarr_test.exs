@@ -51,6 +51,8 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
                protocol: :torrent,
                category_ids: [],
                indexer_id: nil,
+               indexer_source: "prowlarr",
+               indexer_name: nil,
                published_at: nil
              },
              %{
@@ -61,6 +63,8 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
                protocol: :torrent,
                category_ids: [],
                indexer_id: nil,
+               indexer_source: "prowlarr",
+               indexer_name: nil,
                published_at: nil
              },
              %{
@@ -71,6 +75,8 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
                protocol: :usenet,
                category_ids: [],
                indexer_id: nil,
+               indexer_source: "prowlarr",
+               indexer_name: nil,
                published_at: nil
              },
              %{
@@ -81,8 +87,35 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
                protocol: :torrent,
                category_ids: [],
                indexer_id: nil,
+               indexer_source: "prowlarr",
+               indexer_name: nil,
                published_at: nil
              }
+           ]
+  end
+
+  # #1644: the name is for display only, so anything but a non-blank string reads as no name.
+  test "search/1 normalizes the indexer name and marks every result a Prowlarr one" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      Req.Test.json(
+        conn,
+        for {indexer, n} <- Enum.with_index([:absent, "NZBgeek", "", "  ", 42, nil, " Spaced "]) do
+          result = %{"title" => "Inception.2010.1080p-G#{n}", "downloadUrl" => "magnet:?#{n}"}
+          if indexer == :absent, do: result, else: Map.put(result, "indexer", indexer)
+        end
+      )
+    end)
+
+    assert {:ok, results} = Prowlarr.search("tt1375666")
+
+    assert Enum.map(results, &{&1.indexer_name, &1.indexer_source}) == [
+             {nil, "prowlarr"},
+             {"NZBgeek", "prowlarr"},
+             {nil, "prowlarr"},
+             {nil, "prowlarr"},
+             {nil, "prowlarr"},
+             {nil, "prowlarr"},
+             {" Spaced ", "prowlarr"}
            ]
   end
 
@@ -191,6 +224,8 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
              protocol: :torrent,
              category_ids: [],
              indexer_id: nil,
+             indexer_source: "prowlarr",
+             indexer_name: nil,
              tvdb_id: 1396,
              published_at: nil,
              query_origins: [:id_scoped]
@@ -246,6 +281,74 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
 
     # Each indexer's result is the link's first copy under its own indexer id.
     assert Map.delete(second, :indexer_id) == Map.delete(first, :indexer_id)
+  end
+
+  # #1644: each indexer's result names its own indexer, and every result is a Prowlarr one.
+  test "search_tv/3 gives each indexer's copy of one link its own indexer name" do
+    magnet = "magnet:?xt=urn:btih:shared"
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 1, "indexer" => "One"}
+          ])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 2, "indexer" => "Two"}
+          ])
+      end
+    end)
+
+    assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+
+    assert Enum.map(results, &{&1.indexer_id, &1.indexer_name, &1.indexer_source}) == [
+             {1, "One", "prowlarr"},
+             {2, "Two", "prowlarr"}
+           ]
+
+    refute Enum.any?(results, &Map.has_key?(&1, :credentials_version))
+  end
+
+  test "search_tv/3 takes each indexer's name from its first copy of a link" do
+    magnet = "magnet:?xt=urn:btih:shared"
+    copy = &%{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => &1, "indexer" => &2}
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" -> Req.Test.json(conn, [copy.(1, "One"), copy.(2, "Two")])
+        "Breaking Bad {Season:1}" -> Req.Test.json(conn, [copy.(2, "Two later")])
+      end
+    end)
+
+    assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+
+    assert Enum.map(results, &{&1.indexer_id, &1.indexer_name, &1.query_origins}) == [
+             {1, "One", [:id_scoped, :free_text]},
+             {2, "Two", [:id_scoped, :free_text]}
+           ]
+  end
+
+  test "search_tv/3 gives a folded copy with no indexer id the named copy's indexer name" do
+    magnet = "magnet:?xt=urn:btih:shared"
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01", "magnetUrl" => magnet, "indexer" => "Nameless"}
+          ])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01", "magnetUrl" => magnet, "indexerId" => 7, "indexer" => "Seven"}
+          ])
+      end
+    end)
+
+    assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+    assert Enum.map(results, &{&1.indexer_id, &1.indexer_name}) == [{7, "Seven"}]
   end
 
   test "search_tv/3 folds a copy with no indexer id into its link's copy that names one" do

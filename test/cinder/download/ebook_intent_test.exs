@@ -41,6 +41,36 @@ defmodule Cinder.Download.EbookIntentTest do
       assert Repo.all(Intent) == []
     end
 
+    # #1644: a new book intent stores the release's integer indexer id, as a TV grab's does, and
+    # its link origin, which the client submission reads back.
+    test "stores the release's indexer id and link origin on the intent" do
+      target = monitored_target()
+      test_pid = self()
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+      expect(Cinder.Download.ClientMock, :add, fn submitted, _opts ->
+        send(test_pid, {:intent_release, Repo.one!(Intent).release, submitted})
+        {:ok, "remote-1"}
+      end)
+
+      release = %EbookRelease{
+        release()
+        | download_url: "https://idx.example/get/5",
+          download_url_origin: "https://idx.example",
+          indexer_id: 5,
+          indexer_name: "Five"
+      }
+
+      assert {:ok, %BookGrab{}} = Download.grab_book_target(target, release)
+      assert_received {:intent_release, stored, submitted}
+
+      assert {stored["indexer_id"], stored["download_url_origin"], stored["title"]} ==
+               {5, "https://idx.example", release.title}
+
+      assert submitted.download_url_origin == "https://idx.example"
+    end
+
     test "re-grabbing the same release is idempotent, not a second download" do
       target = monitored_target()
 

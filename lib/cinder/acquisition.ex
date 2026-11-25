@@ -575,9 +575,12 @@ defmodule Cinder.Acquisition do
   #
   # One copy is kept per link and indexer: a refused submission blocks its title per indexer
   # (#1515), so one link from two indexers stays two candidates and the unblocked copy can still
-  # be picked. Each indexer's result is the link's merged copy under that indexer's `indexer_id`,
-  # so it carries the query origins of every copy of the link, whichever indexer sent it. A copy
-  # with no indexer id adds no result when another copy of its link names an indexer.
+  # be picked. Each indexer's result is the link's merged copy under the provenance of that
+  # indexer's first copy (`Release.put_provenance/2`: its id, source, name, link origin and
+  # credentials version), so it carries the query origins of every copy of the link, whichever
+  # indexer sent it. A copy with no indexer id adds no result when another copy of its link names
+  # an indexer. A link is a protocol and a download URL, or a protocol, title and size for a copy
+  # with no URL (`tv_link_key/1`).
   defp deduplicate_tv_releases(releases) do
     by_link =
       Enum.reduce(releases, %{}, fn release, by_link ->
@@ -592,7 +595,7 @@ defmodule Cinder.Acquisition do
     releases
     |> Enum.reject(&(is_nil(&1.indexer_id) and tv_link_key(&1) in named))
     |> Enum.uniq_by(&{tv_link_key(&1), &1.indexer_id})
-    |> Enum.map(&%{Map.fetch!(by_link, tv_link_key(&1)) | indexer_id: &1.indexer_id})
+    |> Enum.map(&Release.put_provenance(Map.fetch!(by_link, tv_link_key(&1)), &1))
   end
 
   defp tv_link_key(%Release{download_url: url, protocol: protocol})

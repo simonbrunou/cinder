@@ -6,9 +6,12 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   Reads `base_url`, `api_key` and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Searches by IMDb id with
   Prowlarr's `{ImdbId:...}` query token (`type=movie`) and returns normalized
-  release maps (`%{title, size, download_url, download_url_origin, protocol}`). `download_url`
-  falls back to a magnet link when no torrent-file URL is present; `protocol` is
-  `:usenet` for Usenet results, `:torrent` otherwise.
+  release maps (`%{title, size, download_url, download_url_origin, protocol, category_ids,
+  indexer_id, indexer_source, indexer_name, published_at}`, plus `tvdb_id` when the result
+  reports a positive integer one). `download_url` is the result's non-blank `downloadUrl`, else
+  its non-blank `magnetUrl`; `protocol` is `:usenet` for Usenet results, `:torrent` otherwise.
+  `indexer_source` is always `"prowlarr"`, and `indexer_name` is the result's `indexer` field,
+  nil when blank or not a string. No result carries a `credentials_version`.
 
   `search_tv/3` is the TV sibling: `type=tvsearch`, unioning a `{TvdbId:...}{Season:...}`
   token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
@@ -21,6 +24,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   """
   @behaviour Cinder.Acquisition.IndexerSource
 
+  alias Cinder.Acquisition.Release
   alias Cinder.HTTPPolicy
   alias Cinder.Util
 
@@ -99,8 +103,10 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
 
   # One result per link and indexer: a refused submission blocks its title per indexer (#1515), so
   # the copy from an indexer that is not blocked must reach the scorer. Each indexer's result is
-  # the link's first copy under that indexer's id, with the query origins of every copy of the link.
-  # A copy with no indexer id adds no result when another copy of its link names an indexer.
+  # the link's first copy, with the query origins of every copy of the link, under the provenance
+  # of that indexer's first copy (`Release.put_provenance/2`: its id, source, name, link origin and
+  # credentials version). A copy with no indexer id adds no result when another copy of its link
+  # names an indexer.
   defp merge_query_origins(releases) do
     by_url =
       Enum.reduce(releases, %{}, fn release, by_url ->
@@ -117,9 +123,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
     releases
     |> Enum.reject(&(is_nil(Map.get(&1, :indexer_id)) and &1.download_url in named))
     |> Enum.uniq_by(&{&1.download_url, Map.get(&1, :indexer_id)})
-    |> Enum.map(
-      &Map.put(Map.fetch!(by_url, &1.download_url), :indexer_id, Map.get(&1, :indexer_id))
-    )
+    |> Enum.map(&Release.put_provenance(Map.fetch!(by_url, &1.download_url), &1))
   end
 
   @impl true
@@ -293,6 +297,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
           protocol: protocol(result["protocol"]),
           category_ids: category_ids(result["categories"]),
           indexer_id: integer_or_nil(result["indexerId"]),
+          indexer_source: "prowlarr",
+          indexer_name: indexer_name(result["indexer"]),
           published_at: published_at(result["publishDate"])
         }
         |> put_if_present(:tvdb_id, positive_integer_or_nil(result["tvdbId"]))
@@ -306,6 +312,10 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
 
   defp integer_or_nil(value) when is_integer(value), do: value
   defp integer_or_nil(_value), do: nil
+
+  # Prowlarr's `indexer` field, the indexer's display name: a blank or non-string one is no name.
+  defp indexer_name(name) when is_binary(name), do: Util.blank_to_nil(name)
+  defp indexer_name(_name), do: nil
 
   defp positive_integer_or_nil(value) when is_integer(value) and value > 0, do: value
   defp positive_integer_or_nil(_value), do: nil

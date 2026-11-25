@@ -15,6 +15,9 @@ defmodule Cinder.Acquisition.EbookRelease do
   `query_origins` records identity-scoped and free-text provenance exactly as `Release` does — it
   is diagnostic rather than proof, because an indexer may ignore the structured author/title
   fields and match the text anyway.
+
+  The indexer provenance fields, the Prowlarr default of `indexer_source` in `new/1`, and the link
+  `Kernel.inspect/1` leaves out are `Cinder.Acquisition.Release`'s.
   """
   alias Cinder.Acquisition.BookParser
 
@@ -26,6 +29,9 @@ defmodule Cinder.Acquisition.EbookRelease do
           protocol: :torrent | :usenet,
           category_ids: [integer()] | nil,
           indexer_id: integer() | nil,
+          indexer_source: String.t() | nil,
+          indexer_name: String.t() | nil,
+          credentials_version: integer() | nil,
           published_at: DateTime.t() | nil,
           query_origins: [atom()] | nil,
           formats: [atom()] | nil,
@@ -36,6 +42,8 @@ defmodule Cinder.Acquisition.EbookRelease do
           abridged?: boolean() | nil
         }
 
+  # The link can hold an indexer's API key, so `Kernel.inspect/1` leaves it out.
+  @derive {Inspect, except: [:download_url]}
   defstruct [
     :title,
     :size,
@@ -44,6 +52,9 @@ defmodule Cinder.Acquisition.EbookRelease do
     :protocol,
     :category_ids,
     :indexer_id,
+    :indexer_source,
+    :indexer_name,
+    :credentials_version,
     :published_at,
     :query_origins,
     :formats,
@@ -67,6 +78,9 @@ defmodule Cinder.Acquisition.EbookRelease do
       protocol: Map.get(indexer_map, :protocol, :torrent),
       category_ids: Map.get(indexer_map, :category_ids),
       indexer_id: Map.get(indexer_map, :indexer_id),
+      indexer_source: Map.get(indexer_map, :indexer_source) || "prowlarr",
+      indexer_name: Map.get(indexer_map, :indexer_name),
+      credentials_version: Map.get(indexer_map, :credentials_version),
       published_at: Map.get(indexer_map, :published_at),
       query_origins: Map.get(indexer_map, :query_origins)
     }
