@@ -24,9 +24,10 @@ ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
 
 FROM ${BUILDER_IMAGE} AS builder
 
-# install build dependencies
+# install build dependencies. lazy_html (#1665) downloads a prebuilt NIF, and builds lexbor with
+# cmake when that download fails (docs/agents/ci.md "Dependency rebuild").
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git curl ca-certificates \
+  && apt-get install -y --no-install-recommends build-essential cmake git curl ca-certificates \
   && rm -rf /var/lib/apt/lists/*
 
 # Tailwind comes from curl, not from `mix assets.setup`: its installer downloads with Erlang's

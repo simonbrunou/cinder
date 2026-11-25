@@ -372,6 +372,29 @@ jobs:
           fi
           echo "Disk.exchange/2 ran mv --exchange in the release image and swapped two files"
 
+      # #1665: `Cinder.Indexers.ParserWorker` starts each worker from the running system's own
+      # ERTS and boot file, which only the release image holds as production runs it. This step
+      # runs .github/scripts/parser_worker_check.exs in the booted node through `rpc`, as the
+      # step above does. It passes only when the rpc exits 0 and prints the line
+      # `PARSER_WORKER_CHECK:ok`, and prints the rpc's output either way.
+      # test/code_health/ci_parser_worker_check_test.exs runs this text against a stub docker.
+      - name: Parser worker in the release image (#1665)
+        shell: bash
+        run: |
+          check=$(cat .github/scripts/parser_worker_check.exs)
+          status=0
+          output=$(docker exec "$CINDER_SMOKE_CONTAINER" /app/bin/cinder rpc "$check" 2>&1) || status=$?
+          printf '%s\n' "$output"
+          if [ "$status" != 0 ]; then
+            echo "::error::bin/cinder rpc exited $status, so the parser worker check did not finish"
+            exit 1
+          fi
+          if ! grep -qx 'PARSER_WORKER_CHECK:ok' <<<"$output"; then
+            echo "::error::the parser worker check printed no PARSER_WORKER_CHECK:ok line"
+            exit 1
+          fi
+          echo "ParserWorker ran lazy_html from the release's ERTS and outlived a lexbor crash"
+
       - name: Browser smoke
         env:
           CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000

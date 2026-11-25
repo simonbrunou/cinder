@@ -16,7 +16,9 @@
   fences' log under `==> mix test: the fences exited <status>`, and no partition ran.
 - `container` builds the image, boots it, runs `Disk.exchange/2`'s `mv --exchange` fallback in
   the running node (`.github/scripts/mv_exchange_check.exs`, the only CI run of a real
-  `mv --exchange`: the `test` job's coreutils lacks it), runs the Playwright browser smoke
+  `mv --exchange`: the `test` job's coreutils lacks it), runs `Indexers.ParserWorker` there
+  (`.github/scripts/parser_worker_check.exs`, the only CI run of a worker started from the
+  release's own ERTS and boot file), runs the Playwright browser smoke
   (`.github/scripts/browser_smoke.py`, `browser_lifecycle.py`), then scans the image with Trivy
   (HIGH and CRITICAL, unfixed CVEs and the CVEs listed in `.trivyignore` ignored).
 - `container` runs on a PR only when its branch changes a path of `image-inputs.txt` since it

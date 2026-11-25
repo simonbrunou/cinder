@@ -147,7 +147,7 @@ defmodule Cinder.BoundedCommandTest do
       bin = stub!(tmp, "touch #{marker}\nexec sleep 30")
       check = fn -> :ok end
 
-      for bad <- [{check, 20}, {0, check}, {2.5, check}, {20, fn _arg -> :ok end}] do
+      for bad <- [{check, 20}, {0, check}, {2.5, check}, {20, fn _os_pid, _more -> :ok end}] do
         assert_raise ArgumentError, fn -> BoundedCommand.run(bin, [], 10_000, check: bad) end
       end
 
@@ -173,6 +173,188 @@ defmodule Cinder.BoundedCommandTest do
   # child records its own pid, then sleeps 10 s, longer than the 1 s deadline, the 200 ms reap
   # wait, `OsProcess.await_record/1`'s 1 s wait and `OsProcess.dead?/1`'s 1 s poll together, so
   # it can only be dead there if the kill reached it.
+  describe "run/4 with a one-arity :check" do
+    test "the check gets the OS pid of the command", %{tmp_dir: tmp} do
+      pidfile = Path.join(tmp, "stub.pid")
+      bin = hanging_stub!(tmp, pidfile)
+
+      check = fn os_pid ->
+        if File.exists?(pidfile), do: {:halt, {os_pid, read_pid!(pidfile)}}, else: :ok
+      end
+
+      assert {:error, {:halted, {os_pid, os_pid}}} =
+               BoundedCommand.run(bin, [], 10_000, check: {20, check})
+
+      assert is_integer(os_pid)
+      assert OsProcess.dead?(os_pid)
+    end
+  end
+
+  describe "run/4 with :input" do
+    # The port never closes the command's stdin, so the stub reads the exact length.
+    test "the command reads all of it on stdin", %{tmp_dir: tmp} do
+      input = :crypto.strong_rand_bytes(1_000_000)
+      bin = stub!(tmp, "exec head -c 1000000")
+
+      assert BoundedCommand.run(bin, [], 10_000, input: input) == {:ok, input, 0}
+    end
+
+    test "a command that never reads still ends at the deadline", %{tmp_dir: tmp} do
+      pidfile = Path.join(tmp, "stub.pid")
+      bin = hanging_stub!(tmp, pidfile)
+      started = System.monotonic_time(:millisecond)
+
+      assert BoundedCommand.run(bin, [], 1_000, input: :binary.copy("x", 1_000_000)) ==
+               {:error, {:timeout, ""}}
+
+      assert System.monotonic_time(:millisecond) - started < 5_000
+      assert OsProcess.dead?(read_pid!(pidfile))
+    end
+
+    test "a command that closes stdin unread ends the call, and its process is killed", %{
+      tmp_dir: tmp
+    } do
+      pidfile = Path.join(tmp, "stub.pid")
+      bin = stub!(tmp, "#{write_pid("$$", pidfile)}\nexec 0<&-\nexec sleep 30")
+      input = :binary.copy("x", 1_000_000)
+
+      {result, trap_after, mailbox} =
+        in_process(fn ->
+          result = BoundedCommand.run(bin, [], 10_000, input: input)
+          {result, Process.info(self(), :trap_exit), Process.info(self(), :messages)}
+        end)
+
+      assert result == {:error, {:port_exit, :epipe}}
+      assert trap_after == {:trap_exit, false}
+      assert mailbox == {:messages, []}
+      assert OsProcess.dead?(read_pid!(pidfile))
+    end
+
+    test "a caller that traps exits keeps trapping and gets no message from the port", %{
+      tmp_dir: tmp
+    } do
+      bin = stub!(tmp, "exec head -c 3")
+
+      {result, trap_after, mailbox} =
+        in_process(fn ->
+          Process.flag(:trap_exit, true)
+          result = BoundedCommand.run(bin, [], 10_000, input: "abc")
+          {result, Process.info(self(), :trap_exit), Process.info(self(), :messages)}
+        end)
+
+      assert result == {:ok, "abc", 0}
+      assert trap_after == {:trap_exit, true}
+      assert mailbox == {:messages, []}
+    end
+
+    # The tasks that end with :boom log their crash.
+    @tag :capture_log
+    test "an exit signal from another linked process kills the command and exits the caller", %{
+      tmp_dir: tmp
+    } do
+      pidfile = Path.join(tmp, "stub.pid")
+      bin = hanging_stub!(tmp, pidfile)
+
+      caller =
+        start_caller!(fn ->
+          {:ok, _linked} =
+            Task.start_link(fn ->
+              OsProcess.await_record(pidfile)
+              exit(:boom)
+            end)
+
+          BoundedCommand.run(bin, [], 20_000, input: "abc")
+        end)
+
+      ref = Process.monitor(caller)
+      assert_receive {:DOWN, ^ref, :process, ^caller, :boom}, 15_000
+      assert OsProcess.dead?(read_pid!(pidfile))
+    end
+
+    # The check waits until the linked process is down, so its exit signal is queued before the
+    # call returns and only the flag's restore reads it.
+    @tag :capture_log
+    test "an exit signal that comes in as the call ends exits the caller once it returns", %{
+      tmp_dir: tmp
+    } do
+      bin = hanging_stub!(tmp, Path.join(tmp, "stub.pid"))
+      test_pid = self()
+
+      check = fn ->
+        {:ok, linked} = Task.start_link(fn -> exit(:boom) end)
+        ref = Process.monitor(linked)
+        assert_receive {:DOWN, ^ref, :process, ^linked, :boom}, 5_000
+        {:halt, :done}
+      end
+
+      caller =
+        start_caller!(fn ->
+          result = BoundedCommand.run(bin, [], 20_000, input: "abc", check: {10, check})
+          send(test_pid, {:returned, result})
+        end)
+
+      ref = Process.monitor(caller)
+      assert_receive {:DOWN, ^ref, :process, ^caller, :boom}, 15_000
+      refute_received {:returned, _result}
+    end
+
+    test "a non-binary input raises before the command is ever spawned", %{tmp_dir: tmp} do
+      marker = Path.join(tmp, "spawned")
+      bin = stub!(tmp, "touch #{marker}")
+
+      for bad <- [~c"abc", 1, ["a"]] do
+        assert_raise ArgumentError, fn -> BoundedCommand.run(bin, [], 10_000, input: bad) end
+      end
+
+      refute File.exists?(marker)
+    end
+  end
+
+  describe "run/4 with :max_output_bytes" do
+    test "output of exactly the cap passes, one byte more kills the command", %{tmp_dir: tmp} do
+      bin = stub!(tmp, "printf 0123456789")
+
+      assert BoundedCommand.run(bin, [], 10_000, max_output_bytes: 10) == {:ok, "0123456789", 0}
+
+      assert BoundedCommand.run(bin, [], 10_000, max_output_bytes: 9) ==
+               {:error, :output_too_large}
+    end
+
+    test "the cap counts the output of every chunk together", %{tmp_dir: tmp} do
+      bin = stub!(tmp, "printf 012345\nsleep 0.3\nprintf 678901\nexec sleep 30")
+
+      assert BoundedCommand.run(bin, [], 10_000, max_output_bytes: 10) ==
+               {:error, :output_too_large}
+    end
+
+    test "a command still running past the cap is killed", %{tmp_dir: tmp} do
+      pidfile = Path.join(tmp, "stub.pid")
+      bin = stub!(tmp, "#{write_pid("$$", pidfile)}\nprintf 0123456789\nexec sleep 30")
+      started = System.monotonic_time(:millisecond)
+
+      assert BoundedCommand.run(bin, [], 20_000, max_output_bytes: 5) ==
+               {:error, :output_too_large}
+
+      assert System.monotonic_time(:millisecond) - started < 10_000
+      assert OsProcess.dead?(read_pid!(pidfile))
+    end
+
+    test "a cap that is not a positive integer raises before the command is ever spawned", %{
+      tmp_dir: tmp
+    } do
+      marker = Path.join(tmp, "spawned")
+      bin = stub!(tmp, "touch #{marker}")
+
+      for bad <- [0, -1, 2.5, "10"] do
+        assert_raise ArgumentError, fn ->
+          BoundedCommand.run(bin, [], 10_000, max_output_bytes: bad)
+        end
+      end
+
+      refute File.exists?(marker)
+    end
+  end
+
   describe "run/4 kills what the command forked" do
     test "on a check halt", %{tmp_dir: tmp} do
       child_pidfile = Path.join(tmp, "child.pid")
@@ -247,6 +429,17 @@ defmodule Cinder.BoundedCommandTest do
     File.write!(path, "#!/bin/sh\n#{script}\n")
     File.chmod!(path, 0o755)
     path
+  end
+
+  # Starts `fun` under the test supervisor in a process that traps no exits and may end with any
+  # reason, and returns its pid.
+  defp start_caller!(fun),
+    do: start_supervised!({Task, fun}, id: make_ref(), restart: :temporary)
+
+  # Runs `fun` in a process of its own that traps no exits, and returns what it returns.
+  defp in_process(fun) do
+    task = Task.async(fun)
+    Task.await(task, 30_000)
   end
 
   # Every caller's check only fires once the pid file exists, so it is there to read.

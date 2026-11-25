@@ -150,8 +150,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert :yaml_elixir in Application.spec(:cinder, :applications)
     end
 
-    test "fingerprint/0 declares schema version 12 and revision 1" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 1}
+    # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck).
+    test "fingerprint/0 declares schema version 12 and revision 2" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 2}
     end
 
     test "unknown values come first, then features in the list's order" do

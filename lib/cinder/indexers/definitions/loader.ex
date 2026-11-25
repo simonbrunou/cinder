@@ -84,7 +84,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
 
   @max_bytes 524_288
   @schema_version 12
-  @revision 1
+  # 2: `Cinder.Indexers.Definitions.LoadCheck` adds the selector codes (#1665).
+  @revision 2
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode

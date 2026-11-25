@@ -13,8 +13,9 @@ defmodule Cinder.BoundedCommand do
 
   `run/4` callers: `MediaInfo.Ffprobe`, `AudioProbe.Ffprobe`, `BookArchive.Rar` (listing and
   extraction), `Filesystem.Disk`'s rooted-helper, directory-sync and `mv --exchange` fallback
-  calls, and `Subtitles.Sync.EngineWorkspace`'s seal call. A port the caller keeps open across
-  calls (`Filesystem.Disk`'s rooted port, `EngineWorkspace`'s holder) closes through
+  calls, `Subtitles.Sync.EngineWorkspace`'s seal call, and `Indexers.ParserWorker`, one call per
+  worker with `:input`, `:max_output_bytes` and a one-arity `:check`. A port the caller keeps
+  open across calls (`Filesystem.Disk`'s rooted port, `EngineWorkspace`'s holder) closes through
   `kill_and_close/1` instead. Two commands run outside both: `Cinder.Disk.CommandProbe` is a
   GenServer that owns its port across messages, though its timeout kills the same way through
   `kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync` runs under coreutils
@@ -45,22 +46,36 @@ defmodule Cinder.BoundedCommand do
 
     * `stderr_to_stdout: true` mirrors `System.cmd/3`'s option of the same name.
     * `env: [{"KEY", "value"}]` adds string variables to the child's environment.
-    * `check: {interval_ms, fun}` calls the zero-arity `fun` in the caller's process every
-      `interval_ms` (a positive integer) while the command runs, first at `interval_ms` after
-      start. `fun` returns `:ok` to continue or `{:halt, reason}` to kill the command, which makes
+    * `check: {interval_ms, fun}` calls `fun` in the caller's process every `interval_ms` (a
+      positive integer) while the command runs, first at `interval_ms` after start. A zero-arity
+      `fun` gets no argument, a one-arity `fun` gets the command's OS pid, read when the port
+      opened. `fun` returns `:ok` to continue or `{:halt, reason}` to kill the command, which makes
       `run/4` return `{:error, {:halted, reason}}`. No check starts at or after the deadline, but
       a running check is not interrupted: keep `fun` cheap and non-blocking, since a slow check
       delays the timeout by its own duration. If `fun` raises (or returns anything else), the
       command is killed before the exception propagates. `BookArchive.Rar` uses this to measure
-      the extraction directory against its expanded-size ceiling while `unrar x` runs.
+      the extraction directory against its expanded-size ceiling while `unrar x` runs, and
+      `Cinder.Indexers.ParserWorker` to read its worker's resident memory.
+    * `input: binary` writes `binary` to the command's stdin, from a separate process so that a
+      command that never reads cannot hold the caller past the deadline. A command that exits
+      before reading all of it closes the pipe, and the port then exits with `:epipe` and sends no
+      exit status; `run/4` returns `{:error, {:port_exit, reason}}` after killing the command's
+      group by the OS pid read at the open. While such a call runs, the caller traps exits, so the
+      port's exit cannot kill it. When the caller did not trap exits already, an exit signal
+      from another linked process meanwhile kills the command and then exits the caller with
+      that reason, as the signal would have, a `:normal` one aside.
+    * `max_output_bytes: n` (a positive integer) kills the command once its output passes `n`
+      bytes, and `run/4` returns `{:error, :output_too_large}`.
 
-  A malformed `:check` or `:env` raises `ArgumentError` (or `FunctionClauseError`) before the
-  command is spawned.
+  A malformed `:check`, `:env`, `:input` or `:max_output_bytes` raises `ArgumentError` (or
+  `FunctionClauseError`) before the command is spawned.
   """
   @spec run(String.t(), [String.t()], non_neg_integer(), keyword()) ::
           {:ok, binary(), non_neg_integer()}
           | {:error, {:timeout, binary()}}
           | {:error, {:halted, term()}}
+          | {:error, :output_too_large}
+          | {:error, {:port_exit, term()}}
           | {:error, Exception.t()}
           | {:error, {:port_open_failed, term()}}
   def run(bin, args, timeout_ms, opts \\ []) do
@@ -177,19 +192,86 @@ defmodule Cinder.BoundedCommand do
   def kill_os_process(_os_pid), do: :ignored
 
   defp open_and_supervise(exe, args, timeout_ms, opts) do
-    # Both raise on a malformed option, before anything is spawned: a raise once the process runs
+    # They raise on a malformed option, before anything is spawned: a raise once the process runs
     # would leave it alive and its port messages headed for the caller.
     check = check_option(opts)
+    input = input_option(opts)
+    max_output = max_output_option(opts)
     port_options = port_options(args, opts)
+    trap = if input, do: Process.flag(:trap_exit, true)
 
-    case open_port(exe, port_options) do
-      {:ok, port} ->
-        started_at = System.monotonic_time(:millisecond)
-        supervise(port, started_at + timeout_ms, schedule(check, started_at), [])
+    try do
+      case open_port(exe, port_options) do
+        {:ok, port} ->
+          started_at = System.monotonic_time(:millisecond)
 
-      {:error, _reason} = error ->
-        error
+          state = %{
+            port: port,
+            os_pid: os_pid(port),
+            deadline: started_at + timeout_ms,
+            check: schedule(check, started_at),
+            acc: [],
+            size: 0,
+            max_output: max_output,
+            trap: trap
+          }
+
+          writer = input && write_input(port, input)
+
+          try do
+            supervise(state)
+          after
+            if writer do
+              Process.exit(writer, :kill)
+              unlink_and_flush(port)
+            end
+          end
+
+        {:error, _reason} = error ->
+          error
+      end
+    after
+      if input, do: restore_trap(trap)
     end
+  end
+
+  # A caller that trapped exits before keeps every message. For one that did not, the exit
+  # messages that came in meanwhile are the signals it would have got: a `:normal` one, such as
+  # that of the port `kill_os_process/1` runs, is dropped, and any other exits the caller with its
+  # reason once the flag is back.
+  defp restore_trap(true), do: :ok
+
+  defp restore_trap(false) do
+    receive do
+      {:EXIT, _from, :normal} ->
+        restore_trap(false)
+
+      {:EXIT, _from, reason} ->
+        Process.flag(:trap_exit, false)
+        exit(reason)
+    after
+      0 -> Process.flag(:trap_exit, false)
+    end
+  end
+
+  defp os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> pid
+      nil -> nil
+    end
+  end
+
+  # `Port.command/2` suspends its caller while the port is busy, which a command that never reads
+  # keeps it, so an unlinked process writes and the caller keeps watching the deadline. Once the
+  # port closes, the write raises and the writer ends.
+  defp write_input(port, input) do
+    spawn(fn ->
+      try do
+        Port.command(port, input)
+      catch
+        _kind, _reason -> :ok
+      end
+    end)
   end
 
   # Only `Port.open/2` itself is guarded here: anything raised later, once the process is
@@ -200,20 +282,43 @@ defmodule Cinder.BoundedCommand do
     :error, reason -> {:error, {:port_open_failed, reason}}
   end
 
-  # A zero interval would make every pass of `supervise/4` run the check and never read the port.
+  # A zero interval would make every pass of `supervise/1` run the check and never read the port.
   defp check_option(opts) do
     case Keyword.get(opts, :check) do
       nil ->
         nil
 
       {interval_ms, fun} = check
-      when is_integer(interval_ms) and interval_ms > 0 and is_function(fun, 0) ->
+      when is_integer(interval_ms) and interval_ms > 0 and
+             (is_function(fun, 0) or is_function(fun, 1)) ->
         check
 
       other ->
         raise ArgumentError,
               "expected :check to be {interval_ms, fun} with a positive integer interval " <>
-                "and a zero-arity fun, got: #{inspect(other)}"
+                "and a zero- or one-arity fun, got: #{inspect(other)}"
+    end
+  end
+
+  defp input_option(opts) do
+    case Keyword.get(opts, :input) do
+      nil -> nil
+      input when is_binary(input) -> input
+      other -> raise ArgumentError, "expected :input to be a binary, got: #{inspect(other)}"
+    end
+  end
+
+  defp max_output_option(opts) do
+    case Keyword.get(opts, :max_output_bytes) do
+      nil ->
+        nil
+
+      max when is_integer(max) and max > 0 ->
+        max
+
+      other ->
+        raise ArgumentError,
+              "expected :max_output_bytes to be a positive integer, got: #{inspect(other)}"
     end
   end
 
@@ -243,30 +348,61 @@ defmodule Cinder.BoundedCommand do
   # compared against the clock before every `receive`. A fixed `after` timer restarts on every
   # matched message, so a subprocess emitting `:data` faster than the tick interval would starve
   # the `after` clause forever and neither the deadline nor the check would ever fire (#506).
-  defp supervise(port, deadline, check, acc) do
+  defp supervise(%{port: port} = state) do
     now = System.monotonic_time(:millisecond)
 
     cond do
-      now >= deadline ->
-        kill_and_reap(port, {:timeout, output(acc)})
+      now >= state.deadline ->
+        kill_and_reap(port, {:timeout, output(state.acc)})
 
-      check_due?(check, now) ->
-        run_check(port, deadline, check, acc)
+      check_due?(state.check, now) ->
+        run_check(state)
 
       true ->
         receive do
           {^port, {:data, data}} ->
-            supervise(port, deadline, check, [data | acc])
+            take_data(state, data)
 
           {^port, {:exit_status, status}} ->
             # No further messages for this port should exist, since every `:data` message was
             # already consumed above in send order before `:exit_status` — drained defensively
             # regardless, so a trapless caller can never see a stray message past this return.
             drain_immediate(port)
-            {:ok, output(acc), status}
+            {:ok, output(state.acc), status}
+
+          {:EXIT, ^port, reason} when state.trap != nil ->
+            kill_os_process(state.os_pid)
+            drain_immediate(port)
+            {:error, {:port_exit, reason}}
+
+          {:EXIT, _from, reason} when state.trap == false and reason != :normal ->
+            kill_and_close(port)
+            unlink_and_flush(port)
+            restore_trap(false)
+            exit(reason)
         after
-          wait_ms(deadline, check, now) -> supervise(port, deadline, check, acc)
+          wait_ms(state.deadline, state.check, now) -> supervise(state)
         end
+    end
+  end
+
+  defp take_data(%{max_output: max} = state, data)
+       when is_integer(max) and state.size + byte_size(data) > max do
+    kill_and_reap(state.port, :output_too_large)
+  end
+
+  defp take_data(state, data),
+    do: supervise(%{state | acc: [data | state.acc], size: state.size + byte_size(data)})
+
+  # After `Process.unlink/1` returns no exit signal from the port arrives any more, so a call with
+  # `:input` leaves no `{:EXIT, port, _}` message behind for a caller that does not trap exits.
+  defp unlink_and_flush(port) do
+    Process.unlink(port)
+
+    receive do
+      {:EXIT, ^port, _reason} -> :ok
+    after
+      0 -> :ok
     end
   end
 
@@ -275,25 +411,27 @@ defmodule Cinder.BoundedCommand do
 
   # The next check is scheduled from when this one returned, so a check slower than its own
   # interval cannot run back to back and keep the loop from reading the port.
-  defp run_check(port, deadline, {fun, interval_ms, _next_at}, acc) do
-    case call_check(port, fun) do
+  defp run_check(%{check: {fun, interval_ms, _next_at}} = state) do
+    case call_check(state, fun) do
       :ok ->
         next_at = System.monotonic_time(:millisecond) + interval_ms
-        supervise(port, deadline, {fun, interval_ms, next_at}, acc)
+        supervise(%{state | check: {fun, interval_ms, next_at}})
 
       {:halt, reason} ->
-        kill_and_reap(port, {:halted, reason})
+        kill_and_reap(state.port, {:halted, reason})
     end
   end
 
-  defp call_check(port, fun) do
-    case fun.() do
+  defp call_check(state, fun) do
+    result = if is_function(fun, 1), do: fun.(state.os_pid), else: fun.()
+
+    case result do
       :ok -> :ok
       {:halt, _reason} = halt -> halt
     end
   catch
     kind, reason ->
-      kill_and_close(port)
+      kill_and_close(state.port)
       :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
