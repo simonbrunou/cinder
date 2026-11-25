@@ -193,6 +193,19 @@ of a refused TV release first missed these functions, and review found the gaps 
 one merged field at a time: five fix commits, 33 minutes from the first finding to the clean
 re-check.
 
+Both functions run before `ReleaseJudge`, so a copy they drop never reaches the blocklist match.
+The first sees only Prowlarr results, so its keys need no source. The second drops a copy in two
+places. The `uniq_by` key, `{link, indexer_source, indexer_id}`, holds each indexer field that
+match reads. The `named` set, `{link, indexer_source}`, holds each of them but the id, and drops a
+copy with no indexer id when the set holds its entry. A change that makes the match read another
+indexer field adds that field to both, and its tests give two pairs of copies of one link: two
+that differ only in that field, and one with no id beside a named copy whose field differs.
+
+On #1645 the match gained the indexer source while the key stayed `{link, indexer_id}` and the
+set held only the link: a Prowlarr copy hid a native copy with the same indexer id, an id-less
+native copy folded into a named Prowlarr copy, and blocking the Prowlarr one left no candidate.
+The release-parser review found it.
+
 ## Imports go through the staged import
 
 Every file an import places in a library goes through `Cinder.Library.StagedImport`. The stager
