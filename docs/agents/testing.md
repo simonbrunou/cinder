@@ -449,6 +449,19 @@
   size band (`:tv_min_size`, `:tv_max_size`, read by `Cinder.Acquisition.HouseholdPolicy.band/1`)
   is one such key. When other test modules also read the key, as several read the band, set it
   from an `async: false` module.
+- A test that a `:cinder` env key picks the module a reader calls (a `{:env, key}` health probe,
+  a reader's `Application.fetch_env!/2`) sets the key, as the bullet above says, to a mock other
+  than the one `config/test.exs` names, and never to the behaviour's only mock. It stubs the
+  module `config/test.exs` names, when it names one, to answer otherwise. With the key on either
+  of those mocks, code that skips the key and names that mock passes: `:media_info` is `nil` in
+  `config/test.exs`, and `MediaInfoMock` is its one mock. When `test/test_helper.exs` defines one
+  mock for the behaviour, add a second there with `Mox.defmock` and a comment naming its use.
+  Before you reuse a mock, `rg` its name in `test/support` and `test/test_helper.exs`, and fix a
+  docstring or comment that says no other test uses it. On #1643 (PR #1692) the new
+  `Cinder.HealthTest` case stubbed `IndexerMock` only, and a `resolve/1` clause that answered
+  `IndexerMock` without reading config survived it. The fix pointed the key at `InHandIndexerMock`,
+  which made the docstring of `Cinder.IndexerStubs.anime_sweep_pick/4` false: a Standards finding,
+  two fix commits and a re-check.
 - A test that saves settings (`Cinder.Settings.save/2`, or `put/2`, `delete/1` and `save_form/1`,
   which go through it) runs in an `async: false` module that restores every
   `Cinder.Settings.env_keys/0` key, as `Cinder.SettingsTest` does. Each save rebuilds those keys
