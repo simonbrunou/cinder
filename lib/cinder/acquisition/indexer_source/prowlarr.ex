@@ -17,6 +17,9 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
   the id query alone is not enough), reusing the same normalization.
 
+  `search_movie_query/2` is the free-text movie search (`type=search`), scoped to the movie
+  category by default.
+
   `search_ebook/3` and `search_ebook_query/2` are the e-book siblings (`type=book` /
   `type=search`), scoped to the e-book category by default. `search_audiobook/3` and
   `search_audiobook_query/2` are their audiobook siblings, scoped to the audiobook category
@@ -40,6 +43,11 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   # to usenet-only results. The figure is each search's receive_timeout, and
   # `HTTPPolicy.bounded_request/2` makes it the search's total deadline too (#1348, #1414).
   @search_timeout_ms 90_000
+
+  # Newznab/Torznab standard category for Movies, the parent: Prowlarr expands a parent to its
+  # children in each indexer's category tree before it maps them to that indexer's own, so one id
+  # covers each movie subcategory an indexer carries (#1627).
+  @movie_category 2000
 
   # Newznab/Torznab standard category for Books/EBook. Deliberately NOT the 7000 Books parent,
   # which also carries magazines (7010), comics (7030) and technical manuals (7040) — the roadmap
@@ -126,8 +134,17 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
     |> Enum.map(&Release.put_provenance(Map.fetch!(by_url, &1.download_url), &1))
   end
 
+  @doc """
+  Free-text movie search (`type=search`), scoped to the movie category unless `opts` names
+  its own `categories` (anime passes 5070).
+
+  Not `type=moviesearch`: that is no Newznab search function. Prowlarr runs any type other than
+  `movie`, `music`, `tvsearch` and `book` as its basic search, which sends each Newznab or Torznab
+  indexer it asks the type as its `t`. On prod, altHUB and NinjaCentral answered each of 245
+  `moviesearch` queries over a month with no results (#1627).
+  """
   @impl true
-  def search_movie_query(query, opts), do: search_query(query, "moviesearch", opts)
+  def search_movie_query(query, opts), do: search_query(query, "search", movie_categories(opts))
 
   @impl true
   def search_tv_query(query, opts), do: search_query(query, "tvsearch", opts)
@@ -194,6 +211,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
     end
   end
 
+  defp movie_categories(opts), do: Keyword.put_new(opts, :categories, [@movie_category])
   defp categories(opts), do: Keyword.put_new(opts, :categories, [@ebook_category])
   defp audiobook_categories(opts), do: Keyword.put_new(opts, :categories, [@audiobook_category])
 

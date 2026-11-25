@@ -119,11 +119,32 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
            ]
   end
 
-  test "search_movie_query/2 sends the measured movie/category contract and retains anime metadata" do
+  # #1627: `moviesearch` is no Newznab function, Prowlarr sent it to the Newznab indexers it asked
+  # as `t=moviesearch`, and on prod altHUB and NinjaCentral answered it with no results. Prowlarr
+  # sends `search` as `t=search`, scoped here to the movie category.
+  test "search_movie_query/2 sends a free-text search scoped to the movie category by default" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
-      assert conn.params["query"] == "Kimi no Na wa 2016"
-      assert conn.params["type"] == "moviesearch"
-      assert conn.params["categories"] == "5070"
+      assert conn.request_path == "/api/v1/search"
+
+      assert conn.params == %{
+               "query" => "Dune 2021",
+               "type" => "search",
+               "categories" => "2000"
+             }
+
+      Req.Test.json(conn, [])
+    end)
+
+    assert {:ok, []} = Prowlarr.search_movie_query("Dune 2021", [])
+  end
+
+  test "search_movie_query/2 sends the caller's categories in place of the movie category and retains anime metadata" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params == %{
+               "query" => "Kimi no Na wa 2016",
+               "type" => "search",
+               "categories" => "5070"
+             }
 
       Req.Test.json(conn, [
         nil,
