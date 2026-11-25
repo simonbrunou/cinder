@@ -47,6 +47,13 @@
   to the second fix. A re-check's table of 41 Locations over both versions found the last.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
+- A field that code sets but no code reads yet, such as one a conversion copies for a later
+  issue to store, gets a test that reads it. When only a private function sets it, move that
+  function into a public one and assert its whole result: a test through the caller sees only
+  what the caller reads. On #1644 (PR #1694) `Download`'s two private book conversions copied an
+  indexer's source, name and credentials version that the download intent did not store yet.
+  The Standards and Spec reviews each dropped those fields with the suite still green, and the
+  fix moved the conversion to `Release.from_book/1`: a fix commit and a re-check.
 - A fix or a feature in client JS (`assets/js/`) gets a test where it can run. A hook's logic
   that stubs can drive (its pushes and their replies or failures, a rejoin, the browser dialog)
   lives in its own module, such as `assets/js/passkeys.js`, and gets a Node test in
