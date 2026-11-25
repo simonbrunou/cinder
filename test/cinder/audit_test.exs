@@ -8,6 +8,14 @@ defmodule Cinder.AuditTest do
   alias Cinder.Audit.AdminAudit
   alias Cinder.Catalog
 
+  test "the moduledoc covers actions that change access or credentials, not only destructive ones" do
+    {:docs_v1, _, _, _, %{"en" => moduledoc}, _, _} = Code.fetch_docs(Audit)
+    moduledoc = String.replace(moduledoc, ~r/\s+/, " ")
+
+    refute moduledoc =~ "records one destructive admin action"
+    assert moduledoc =~ "changes access or credentials"
+  end
+
   describe "log/4" do
     test "writes an audit row from an actor, action, entity struct, and detail map" do
       admin = admin_fixture()

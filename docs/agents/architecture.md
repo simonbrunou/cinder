@@ -120,6 +120,7 @@ exceptions each own one table and nothing derived:
 - `lib/cinder/library/import_stage.ex` owns `import_stages`.
 - `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines`.
 - `lib/cinder/download.ex` writes only its own `download_intents` tables.
+- `lib/cinder/indexers.ex` (`Cinder.Indexers`) is the one writer of `configured_indexers`.
 
 A new exception is legitimate only when a plan calls it out. When it lands, add it to this list.
 

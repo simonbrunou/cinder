@@ -1,6 +1,6 @@
 defmodule Cinder.Audit.AdminAudit do
   @moduledoc """
-  An append-only record of one destructive admin action (who/what/when). `detail`
+  An append-only record of one audited admin action (who/what/when). `detail`
   is a free-form map (stored as JSON TEXT by ecto_sqlite3). Rows are immutable —
   `inserted_at` only, no `updated_at`.
   """

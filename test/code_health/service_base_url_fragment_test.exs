@@ -20,9 +20,14 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
   # call to a function of the same file whose every clause returns such a value. A `:base_url`
   # argument in last place is a read, such as `Keyword.get(config, :base_url)`,
   # `config[:base_url]` or `cfg(:base_url)`, and one in a tuple literal names a key, such as a
-  # setting's `{Prowlarr, :base_url}` target. One before another argument must belong to `put`,
-  # `put_new` or `get`; any other call, such as `Keyword.update/4`, fails whole, so a new way to set
-  # a base URL needs a rule here first.
+  # setting's `{Prowlarr, :base_url}` target. One in an unqualified `field` or `validate_change`
+  # call, Ecto's schema and changeset macros, names a schema column when it sits where the macro
+  # takes the column (`@column_calls`), as `Cinder.Indexers.ConfiguredIndexer` stores a configured
+  # indexer's base URL: the request that reads the column is the sink. Such a call with
+  # `:base_url` in another place, or a qualified call of either name, such as
+  # `Ecto.Changeset.validate_change/3`, fails whole. One before another argument must
+  # belong to `put`, `put_new` or `get`; any other call, such as `Keyword.update/4`, fails whole,
+  # so a new way to set a base URL needs a rule here first.
   #
   # Forms the walk does not follow include, and passes unchecked: a URL joined onto a path before
   # it reaches a sink, through a variable or a function's argument (LibreTranslate's
@@ -38,6 +43,10 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
   @http_policy [[:HTTPPolicy], [:Cinder, :HTTPPolicy], [:"Elixir", :Cinder, :HTTPPolicy]]
   # The calls whose argument after `:base_url` is the value they set or default to.
   @value_calls [:put, :put_new, :get]
+  # The Ecto calls in which `:base_url` names a schema column, with the argument indexes that take
+  # the column: `field :base_url, ...`, piped `validate_change(:base_url, f)` and
+  # `validate_change(changeset, :base_url, f)`.
+  @column_calls %{field: [0], validate_change: [0, 1]}
 
   test "every service base URL in lib/ reaches a request through HTTPPolicy.without_fragment/1" do
     scans =
@@ -87,6 +96,10 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
         url = c[:base_url]
         HTTPPolicy.without_fragment(url)
       end
+
+      field :base_url, :string
+      def o(cs), do: cs |> validate_change(:base_url, &check/2)
+      def p(cs), do: validate_change(cs, :base_url, &check/2)
     end
     '''
 
@@ -158,12 +171,22 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
       def a(url), do: "base_url: #{url}" && :ok
       def b(o, f), do: Keyword.update(o, :base_url, "x", f)
       def c(o), do: Keyword.take(o, [:base_url]) && o == :base_url
+      def d(cs, f), do: Ecto.Changeset.validate_change(cs, :base_url, f)
+      def e(u), do: Other.field(:base_url, u)
+      def f(u), do: field(:other, :base_url, u)
+      def g(cs, f), do: validate_change(cs, :other, :base_url, f)
     end
     '''
 
     assert scan(source) == %{
-             sinks: 1,
-             failures: [{7, "Keyword.update(o, :base_url, \"x\", f)"}]
+             sinks: 5,
+             failures: [
+               {7, "Keyword.update(o, :base_url, \"x\", f)"},
+               {9, "Ecto.Changeset.validate_change(cs, :base_url, f)"},
+               {10, "Other.field(:base_url, u)"},
+               {11, "field(:other, :base_url, u)"},
+               {12, "validate_change(cs, :other, :base_url, f)"}
+             ]
            }
   end
 
@@ -232,9 +255,10 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
     end
   end
 
-  # A call with a `:base_url` argument. In last place it is a read, and a tuple literal names a key,
-  # such as a setting slot `{"url", :base_url, "URL"}`. Before another argument, the call must be
-  # one of @value_calls, and that argument is the sink; any other call fails whole.
+  # A call with a `:base_url` argument. In last place it is a read, a tuple literal names a key,
+  # such as a setting slot `{"url", :base_url, "URL"}`, and one of @column_calls names a column.
+  # Before another argument, the call must be one of @value_calls, and that argument is the sink;
+  # any other call fails whole.
   defp visit({call, meta, args} = node, acc, functions) when is_list(args) do
     case Enum.find_index(args, &(&1 == :base_url)) do
       nil ->
@@ -243,6 +267,11 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
       index when index == length(args) - 1 or call == :{} ->
         {node, acc}
 
+      index when is_atom(call) and is_map_key(@column_calls, call) ->
+        if index in Map.fetch!(@column_calls, call),
+          do: {node, acc},
+          else: {node, fail_whole(acc, node, meta)}
+
       index ->
         line = Keyword.get(meta, :line)
 
@@ -250,13 +279,17 @@ defmodule Cinder.CodeHealth.ServiceBaseUrlFragmentTest do
           value = Enum.at(args, index + 1)
           {node, check(acc, value, "base_url: #{Macro.to_string(value)}", line, functions)}
         else
-          acc = %{acc | sinks: acc.sinks + 1}
-          {node, %{acc | failures: [{line, Macro.to_string(node)} | acc.failures]}}
+          {node, fail_whole(acc, node, meta)}
         end
     end
   end
 
   defp visit(node, acc, _functions), do: {node, acc}
+
+  defp fail_whole(acc, node, meta) do
+    failure = {Keyword.get(meta, :line), Macro.to_string(node)}
+    %{acc | sinks: acc.sinks + 1, failures: [failure | acc.failures]}
+  end
 
   defp call_name({:., _, [_module, name]}), do: name
   defp call_name(name), do: name

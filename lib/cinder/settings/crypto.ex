@@ -1,13 +1,14 @@
 defmodule Cinder.Settings.Crypto do
   @moduledoc """
   Secret-row encode/decode for `Cinder.Settings` — carved out of `settings.ex` (plain code
-  motion, 1500-line cap). Secret values are encrypted at rest via `Cinder.Vault`, keyed off
-  `SECRET_KEY_BASE`; a value encrypted under a different key decodes to `:error`, never a
+  motion, 1500-line cap). Secret values are encrypted at rest through `Cinder.SecretCodec`, keyed
+  off `SECRET_KEY_BASE`; a value encrypted under a different key decodes to `:error`, never a
   raise and never the ciphertext.
   """
 
   require Logger
 
+  alias Cinder.SecretCodec
   alias Cinder.Settings.Setting
   alias Cinder.Util
 
@@ -28,7 +29,7 @@ defmodule Cinder.Settings.Crypto do
   end
 
   @doc "The stored representation for a value: encrypted+base64 for secrets, plaintext otherwise."
-  def store_value(true = _secret?, value), do: Base.encode64(Cinder.Vault.encrypt!(value))
+  def store_value(true = _secret?, value), do: SecretCodec.encode(value)
   def store_value(false = _secret?, value), do: value
 
   @doc """
@@ -41,20 +42,13 @@ defmodule Cinder.Settings.Crypto do
   def decryptable?(%Setting{is_secret: true, value: value}),
     do: match?({:ok, _}, decrypt_secret(value))
 
-  # Decrypts a secret's stored base64 ciphertext. Returns :error (never raises, never logs, never
-  # returns the ciphertext) when the value was encrypted under a different SECRET_KEY_BASE. The
-  # is_binary guard matters: Cloak's AES-GCM decrypt returns {:ok, :error} (not an error tuple, not
-  # a raise) when the GCM tag fails to authenticate — without the guard :error would be poured into
-  # Application env as a credential.
+  # A non-nil value: `SecretCodec.decode/1` answers `:absent` only for nil, which the clauses
+  # above take first.
   defp decrypt_secret(value) do
-    with {:ok, ciphertext} <- Base.decode64(value),
-         {:ok, plaintext} when is_binary(plaintext) <- Cinder.Vault.decrypt(ciphertext) do
-      {:ok, plaintext}
-    else
-      _ -> :error
+    case SecretCodec.decode(value) do
+      {:ok, plaintext} -> {:ok, plaintext}
+      :unreadable -> :error
     end
-  rescue
-    _ -> :error
   end
 
   defp warn_undecryptable(key) do

@@ -1,6 +1,7 @@
 defmodule Cinder.Audit do
   @moduledoc """
-  Admin audit trail. `log/4` records one destructive admin action.
+  Admin audit trail. `log/4` records one admin action that destroys something or changes access
+  or credentials, such as a configured indexer's base URL or API key (`Cinder.Indexers`).
 
   **The write happens inside the caller's `Repo.transaction`** — call it after the
   guard passes and before commit, so a rolled-back op (e.g. a last-admin delete)
@@ -35,7 +36,7 @@ defmodule Cinder.Audit do
   @doc """
   Like `log/4`, but for use INSIDE a `Repo.transaction`: returns the audit entry on
   success, and on a write failure rolls the enclosing transaction back with the
-  changeset (so a destructive op never commits an un-audited mutation, and the
+  changeset (so an audited op never commits an un-audited mutation, and the
   caller gets a clean {:error, changeset} instead of a raised MatchError).
   """
   def log_or_rollback(actor, action, entity, detail \\ %{}) do

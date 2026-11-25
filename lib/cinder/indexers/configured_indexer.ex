@@ -1,0 +1,239 @@
+defmodule Cinder.Indexers.ConfiguredIndexer do
+  @moduledoc """
+  What the admin saved for searching one indexer (GLOSSARY.md "Configured indexer"). Only
+  `Cinder.Indexers` writes these rows; this module holds their shape and the write-path checks.
+
+  Each refusal is a changeset error whose message Ecto already uses (`priv/gettext/errors.pot`),
+  with a `validation:` tag naming the rule, such as `{"is invalid", [validation: :base_url_query]}`.
+
+  `secrets_ciphertext` holds the row's secrets (`Cinder.Indexers.Secrets`). The virtual `secrets`
+  carries their plaintext on a read that asks for it, and `secrets_readable` says whether they
+  decrypt. Both secret fields are redacted from `inspect/1`.
+  """
+  use Ecto.Schema
+
+  import Ecto.Changeset
+
+  @type t :: %__MODULE__{}
+
+  @types [:newznab, :torznab, :cardigann]
+
+  # The settings keys each type stores as plain values.
+  @settings_keys %{newznab: ["additional_parameters"], torznab: []}
+
+  # Parameter names a Newznab `additional_parameters` value may not carry: the key belongs in the
+  # encrypted secrets, never in a plain setting.
+  @credential_parameters ["apikey", "passkey"]
+
+  schema "configured_indexers" do
+    field :name, :string
+    field :type, Ecto.Enum, values: @types
+    field :definition, :string
+    field :base_url, :string
+    field :api_path, :string
+    field :enabled, :boolean, default: true
+    field :flaresolverr, :boolean, default: false
+    field :settings, :map, default: %{}
+    field :secrets_ciphertext, :string, redact: true
+    field :priority, :integer, default: 25
+    field :prowlarr_indexer_id, :integer
+    field :lock_version, :integer, default: 1
+    field :credentials_version, :integer, default: 1
+    field :config_version, :integer, default: 1
+    field :secrets, :map, virtual: true, redact: true
+    field :secrets_readable, :boolean, virtual: true
+
+    timestamps(type: :utc_datetime)
+  end
+
+  @create_fields [
+    :name,
+    :type,
+    :definition,
+    :base_url,
+    :api_path,
+    :enabled,
+    :flaresolverr,
+    :settings,
+    :priority
+  ]
+
+  @doc "The secret field names a type stores in its ciphertext."
+  @spec secret_fields(atom()) :: [String.t()]
+  def secret_fields(type) when type in [:newznab, :torznab], do: ["api_key"]
+  def secret_fields(_type), do: []
+
+  @doc "A new row's changeset. A Cardigann row is refused until definitions can be pinned."
+  @spec create_changeset(map()) :: Ecto.Changeset.t()
+  def create_changeset(attrs) do
+    %__MODULE__{}
+    |> cast(plain(attrs), @create_fields)
+    |> refuse_cardigann()
+    |> validate()
+  end
+
+  @doc "An edit's changeset on `row`. The type and the definition stay as they were created."
+  @spec edit_changeset(t(), map()) :: Ecto.Changeset.t()
+  def edit_changeset(%__MODULE__{} = row, attrs) do
+    row
+    |> cast(plain(attrs), @create_fields)
+    |> refuse_change(:type)
+    |> refuse_change(:definition)
+    |> validate()
+  end
+
+  # Secret inputs travel apart from the plain attrs. A `secrets` key left among them would stay in
+  # the changeset's params, which a form renders from.
+  defp plain(attrs), do: Map.drop(attrs, ["secrets", :secrets])
+
+  defp refuse_cardigann(changeset) do
+    if get_field(changeset, :type) == :cardigann,
+      do: add_error(changeset, :type, "is invalid", validation: :cardigann_unsupported),
+      else: changeset
+  end
+
+  defp refuse_change(changeset, field) do
+    if Map.has_key?(changeset.changes, field),
+      do: add_error(changeset, field, "is invalid", validation: :fixed_at_create),
+      else: changeset
+  end
+
+  defp validate(changeset) do
+    changeset
+    |> update_change(:name, &String.trim/1)
+    |> validate_required([:name, :type, :base_url, :enabled, :flaresolverr, :settings, :priority])
+    |> validate_number(:priority, greater_than_or_equal_to: 1, less_than_or_equal_to: 50)
+    |> validate_change(:base_url, &base_url_errors/2)
+    |> validate_api_type_fields()
+    |> unique_constraint(:name)
+    |> check_constraint(:priority, name: :configured_indexers_priority_range)
+  end
+
+  defp validate_api_type_fields(changeset) do
+    case get_field(changeset, :type) do
+      type when type in [:newznab, :torznab] ->
+        changeset
+        |> validate_required(:api_path)
+        |> validate_change(:api_path, &api_path_errors/2)
+        |> refuse_definition()
+        |> validate_settings(type)
+
+      _other ->
+        changeset
+    end
+  end
+
+  defp refuse_definition(changeset) do
+    if get_field(changeset, :definition) == nil,
+      do: changeset,
+      else: add_error(changeset, :definition, "is invalid", validation: :definition_type)
+  end
+
+  defp validate_settings(changeset, type) do
+    settings = get_field(changeset, :settings) || %{}
+    allowed = Map.fetch!(@settings_keys, type)
+    names = parameter_names(settings["additional_parameters"])
+
+    cond do
+      Enum.any?(Map.keys(settings), &(&1 not in allowed)) ->
+        add_error(changeset, :settings, "is invalid", validation: :settings_keys)
+
+      not Enum.all?(Map.values(settings), &text?/1) ->
+        add_error(changeset, :settings, "is invalid", validation: :settings_values)
+
+      :undecodable in names ->
+        add_error(changeset, :settings, "is invalid", validation: :parameter_format)
+
+      Enum.any?(names, &(&1 in @credential_parameters)) ->
+        add_error(changeset, :settings, "is invalid", validation: :credential_parameter)
+
+      true ->
+        changeset
+    end
+  end
+
+  # UTF-8 text with no control character.
+  defp text?(value), do: is_binary(value) and String.valid?(value) and not control?(value)
+
+  defp control?(text), do: String.match?(text, ~r/[\x00-\x1F\x7F]/)
+
+  # The parameter names of a Newznab additional parameters value such as "&cat=2000&apikey=x":
+  # split on `&` and `;`, a leading `?` dropped, each name decoded as `URI.decode_www_form/1` reads
+  # it, trimmed and downcased. So a percent-encoded, `+`-spaced or capitalised spelling of a
+  # credential name reads as that name. A value with a `#`, or a name that decodes to anything but
+  # text without control characters, gives `:undecodable`.
+  # A value that is not text has no names here: the values check above refuses it first.
+  defp parameter_names(value) when not is_binary(value), do: []
+
+  defp parameter_names(value) do
+    if String.contains?(value, "#"),
+      do: [:undecodable],
+      else: value |> String.split(["&", ";"]) |> Enum.map(&parameter_name/1)
+  end
+
+  defp parameter_name(pair) do
+    [name | _value] = String.split(pair, "=", parts: 2)
+    decoded = name |> String.trim_leading("?") |> URI.decode_www_form()
+
+    if text?(decoded), do: decoded |> String.trim() |> String.downcase(), else: :undecodable
+  end
+
+  # http or https with a host and a port in range; no userinfo, query or fragment.
+  defp base_url_errors(field, url) do
+    case parse(url) do
+      {:ok, %URI{scheme: scheme}} when scheme not in ["http", "https"] ->
+        refusal(field, :base_url_scheme)
+
+      {:ok, %URI{host: host}} when host in [nil, ""] ->
+        refusal(field, :base_url_host)
+
+      {:ok, %URI{port: port}} when port not in 1..65_535 ->
+        refusal(field, :base_url_port)
+
+      {:ok, %URI{userinfo: userinfo}} when userinfo != nil ->
+        refusal(field, :base_url_userinfo)
+
+      {:ok, %URI{query: query}} when query != nil ->
+        refusal(field, :base_url_query)
+
+      {:ok, %URI{fragment: fragment}} when fragment != nil ->
+        refusal(field, :base_url_fragment)
+
+      {:ok, %URI{}} ->
+        []
+
+      :error ->
+        refusal(field, :base_url_format)
+    end
+  end
+
+  # A plain path that starts with exactly one "/": `URI.merge/2` would send a request for
+  # "//evil.example/api", key included, to that host.
+  defp api_path_errors(field, "//" <> _authority), do: refusal(field, :api_path_authority)
+
+  defp api_path_errors(field, path) do
+    case parse(path) do
+      {:ok,
+       %URI{scheme: nil, host: nil, userinfo: nil, query: nil, fragment: nil, path: "/" <> _}} ->
+        []
+
+      {:ok, %URI{}} ->
+        refusal(field, :api_path_plain)
+
+      :error ->
+        refusal(field, :api_path_format)
+    end
+  end
+
+  defp refusal(field, validation), do: [{field, {"is invalid", validation: validation}}]
+
+  # `URI.new/1` raises FunctionClauseError on a byte that is not valid UTF-8.
+  defp parse(text) do
+    with true <- String.valid?(text),
+         {:ok, uri} <- URI.new(text) do
+      {:ok, uri}
+    else
+      _ -> :error
+    end
+  end
+end
