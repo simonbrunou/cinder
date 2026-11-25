@@ -44,7 +44,7 @@ defmodule Cinder.Health do
       id: "indexer",
       group: :indexer,
       label: "Prowlarr",
-      probe: {:env, :indexer},
+      probe: {:env, :indexer_source},
       setup: :required
     }
   ]

@@ -301,5 +301,5 @@ defmodule Cinder.Acquisition.BookSearch do
   defp sort_identifiers(values, "isbn"), do: Enum.sort_by(values, &String.length/1, :desc)
   defp sort_identifiers(values, _provider), do: values
 
-  defp indexer, do: Application.fetch_env!(:cinder, :indexer)
+  defp indexer, do: Application.fetch_env!(:cinder, :indexer_source)
 end

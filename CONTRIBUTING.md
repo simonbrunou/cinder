@@ -21,9 +21,9 @@ inspecting the running app over guessing.
 ## Conventions
 
 - **External services only through behaviours** (`Cinder.Catalog.TMDB`,
-  `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`), resolved
-  from config at runtime and mocked with **Mox** in tests. **Tests never hit the network or a real
-  service.**
+  `Cinder.Acquisition.IndexerSource`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`),
+  resolved from config at runtime and mocked with **Mox** in tests. **Tests never hit the
+  network or a real service.**
 - **Status and derived-state writes go through the context choke-points**
   (`Catalog.MovieLifecycle` / `Catalog.transition_episode`) so SQLite WAL + `busy_timeout` stays
   correct under a racing poller.

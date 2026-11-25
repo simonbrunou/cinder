@@ -1,7 +1,7 @@
-defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
+defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
 
   test "search/1 queries by IMDb id and normalizes results, falling back to magnetUrl" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->

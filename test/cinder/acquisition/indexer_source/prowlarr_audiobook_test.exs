@@ -1,7 +1,7 @@
-defmodule Cinder.Acquisition.Indexer.ProwlarrAudiobookTest do
+defmodule Cinder.Acquisition.IndexerSource.ProwlarrAudiobookTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
 
   test "search_audiobook/3 issues a type=book search with brace tokens and the audiobook category" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->

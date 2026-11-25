@@ -49,7 +49,7 @@ config :cinder, Cinder.Repo,
 # External services resolve through behaviours; the concrete impl is config-selected.
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
-config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
+config :cinder, indexer_source: Cinder.Acquisition.IndexerSource.Prowlarr
 config :cinder, plex_auth: Cinder.Accounts.PlexAuth.HTTP
 config :cinder, jellyfin_auth: Cinder.Accounts.JellyfinAuth.HTTP
 

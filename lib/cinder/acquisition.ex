@@ -2,8 +2,8 @@ defmodule Cinder.Acquisition do
   @moduledoc """
   Release acquisition: search an indexer for a movie and pick the best release.
 
-  The indexer is reached only through the `Cinder.Acquisition.Indexer` behaviour,
-  resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
+  The indexer is reached only through the `Cinder.Acquisition.IndexerSource` behaviour,
+  resolved from config (`config :cinder, :indexer_source`) so tests use a Mox mock and
   never hit the network.
   """
   require Logger
@@ -570,8 +570,8 @@ defmodule Cinder.Acquisition do
   defp standard_release_values(_release, _known_values), do: []
 
   # One copy of each release, in first-seen order: the bridged seasons' queries can each return it.
-  # The copy kept carries every copy's query origins, as `Indexer.Prowlarr.search_tv/3` merges its
-  # own two queries, because the title guard reads them.
+  # The copy kept carries every copy's query origins, as `IndexerSource.Prowlarr.search_tv/3`
+  # merges its own two queries, because the title guard reads them.
   #
   # One copy is kept per link and indexer: a refused submission blocks its title per indexer
   # (#1515), so one link from two indexers stays two candidates and the unblocked copy can still
@@ -610,11 +610,12 @@ defmodule Cinder.Acquisition do
     %{kept | query_origins: origins}
   end
 
-  # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query. Query origin
-  # is not identity proof: a provider can ignore the id, and dedup can give one wrong result both
-  # origins (#315). An explicit matching result TVDB id is proof and preserves AKA titles. Without
-  # one, a known-year series requires both its title and matching year evidence; that deliberately
-  # rejects ambiguous yearless packs rather than unattendedly importing a same-named reboot.
+  # `IndexerSource.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query. Query
+  # origin is not identity proof: a provider can ignore the id, and dedup can give one wrong result
+  # both origins (#315). An explicit matching result TVDB id is proof and preserves AKA titles.
+  # Without one, a known-year series requires both its title and matching year evidence; that
+  # deliberately rejects ambiguous yearless packs rather than unattendedly importing a same-named
+  # reboot.
   defp filter_title(candidates, %{tvdb_id: nil} = series),
     do: candidates |> filter_by_title(series) |> reject_year_conflicts(series)
 
@@ -664,7 +665,7 @@ defmodule Cinder.Acquisition do
 
   # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
   # unions in a free-text title query (so scraper indexers contribute — see
-  # Indexer.Prowlarr), which can surface a same-named different show: "Charmed (2018)"
+  # IndexerSource.Prowlarr), which can surface a same-named different show: "Charmed (2018)"
   # packs for the year-1998 series. An explicit year token is the one discriminator
   # scene names reliably carry, so a candidate is dropped only when every year in its
   # title is more than a year off the series year (±1 absorbs premiere-date wobble
@@ -1086,5 +1087,5 @@ defmodule Cinder.Acquisition do
 
   # Resolve the impl at runtime (not compile_env!) so the test Mox module — defined
   # at runtime — doesn't warn under --warnings-as-errors. fetch_env! fails fast if unset.
-  defp indexer, do: Application.fetch_env!(:cinder, :indexer)
+  defp indexer, do: Application.fetch_env!(:cinder, :indexer_source)
 end

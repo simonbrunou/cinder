@@ -628,7 +628,7 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Settings saved."
     assert Settings.get("prowlarr_url") == "http://saved:9696"
 
-    assert Application.get_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr)[:base_url] ==
+    assert Application.get_env(:cinder, Cinder.Acquisition.IndexerSource.Prowlarr)[:base_url] ==
              "http://saved:9696"
   end
 

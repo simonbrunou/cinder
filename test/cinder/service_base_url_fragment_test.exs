@@ -8,7 +8,7 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
 
   import ExUnit.CaptureLog
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.Books.Metadata.{Hardcover, OpenLibrary}
   alias Cinder.Catalog.TMDB
   alias Cinder.ConfigCase

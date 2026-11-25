@@ -52,7 +52,7 @@ end
 # Real Prowlarr indexer connection, read in every environment. Unset in
 # test/CI, where the suite stubs Req regardless, so it has no effect there.
 if base_url = System.get_env("PROWLARR_URL") do
-  config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+  config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
     base_url: base_url,
     api_key: System.get_env("PROWLARR_API_KEY")
 end

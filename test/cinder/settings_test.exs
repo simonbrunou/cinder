@@ -9,7 +9,12 @@ defmodule Cinder.SettingsTest do
     only: [anime_hold_fixture: 2, movie_fixture: 1, series_fixture: 1]
 
   import Cinder.ConfigCase,
-    only: [put_media_server_bootstrap: 1, put_plex_url: 1, store_media_server_type: 1]
+    only: [
+      put_env: 2,
+      put_media_server_bootstrap: 1,
+      put_plex_url: 1,
+      store_media_server_type: 1
+    ]
 
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy}
   alias Cinder.Catalog
@@ -76,7 +81,7 @@ defmodule Cinder.SettingsTest do
     )a ++
                [
                  Cinder.Accounts.OIDC,
-                 Cinder.Acquisition.Indexer.Prowlarr,
+                 Cinder.Acquisition.IndexerSource.Prowlarr,
                  Cinder.Books.Metadata.Hardcover,
                  Cinder.Books.Metadata.OpenLibrary,
                  Cinder.Catalog.TMDB.HTTP,
@@ -606,9 +611,7 @@ defmodule Cinder.SettingsTest do
     end
 
     test "a non-secret value from env (no DB row) is a placeholder, not a value" do
-      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
-        base_url: "http://env:9696"
-      )
+      put_env(Cinder.Acquisition.IndexerSource.Prowlarr, base_url: "http://env:9696")
 
       form = Settings.form_state()
 
@@ -619,9 +622,7 @@ defmodule Cinder.SettingsTest do
     end
 
     test "a saved DB value wins: it's the value, not a placeholder" do
-      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
-        base_url: "http://env:9696"
-      )
+      put_env(Cinder.Acquisition.IndexerSource.Prowlarr, base_url: "http://env:9696")
 
       Settings.put("prowlarr_url", "http://db:9696")
 
@@ -634,9 +635,7 @@ defmodule Cinder.SettingsTest do
     test "showing the env placeholder doesn't promote env into a DB row on save" do
       # The whole point of placeholder-not-value: an untouched env-bootstrapped field stays
       # env-sourced. Submitting the (blank) field must not write a row, so clear-to-revert holds.
-      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
-        base_url: "http://env:9696"
-      )
+      put_env(Cinder.Acquisition.IndexerSource.Prowlarr, base_url: "http://env:9696")
 
       Settings.save_form(%{"prowlarr_url" => ""})
 

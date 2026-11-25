@@ -1,8 +1,8 @@
-defmodule Cinder.Acquisition.Indexer.ProwlarrDeadlineTest do
+defmodule Cinder.Acquisition.IndexerSource.ProwlarrDeadlineTest do
   # Not async: one test changes the shared Prowlarr config.
   use ExUnit.Case, async: false
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.Test.{RequestDeadlines, SilentServer}
 
   # A receive_timeout under `HTTPPolicy.bounded_request/2`'s 60 s default leaves the total deadline

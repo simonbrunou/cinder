@@ -44,8 +44,8 @@ defmodule Cinder.IndexerStubs do
   series (`Cinder.Acquisition.another_anime_series?/2`). It keeps an id-scoped one for the judge.
   So a test of such a name gives the context a TVDB id and reports that id on the result (#699).
 
-  It stubs `Cinder.Acquisition.InHandIndexerMock`, a mock no other test sets, from the calling
-  process.
+  It stubs `search_tv/3` and `search_tv_query/2` on `Cinder.Acquisition.InHandIndexerMock`, which
+  no other test stubs them on, from the calling process.
   """
   def anime_sweep_pick(releases, context, wanted_ids, opts \\ []) do
     {id_reported, unreported} =

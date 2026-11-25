@@ -26,8 +26,8 @@ You have no memory between runs. Orient first, every run.
      `select_for_ids/3` and `verdict_for_ids/2` (anime stable-id cover and its one-release verdict).
    - `lib/cinder/acquisition.ex` — `best_release/3`, `best_releases/4`, `judge_movie/3`,
      `judge_season/3`, `best_anime_movie/3`, `judge_anime_movie/3`, `judge_anime_episodes/3`,
-     the searches it runs through the `Cinder.Acquisition.Indexer` callbacks `search`/`search_tv`,
-     the title-match guards behind `title_guard/2`.
+     the searches it runs through the `Cinder.Acquisition.IndexerSource` callbacks
+     `search`/`search_tv`, the title-match guards behind `title_guard/2`.
    - `lib/cinder/acquisition/release_judge.ex` — the stages the sweep and the manual panel share
      (protocol → title guard → language; a standard season adds mapping last; anime episodes:
      protocol → role → title guard → language → mapping),

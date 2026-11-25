@@ -4,7 +4,7 @@ defmodule Cinder.Download.IntentTest do
   import Mox
   import Cinder.IndexerStubs, only: [anime_sweep_pick: 4]
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.Acquisition.Release
   alias Cinder.Catalog
   alias Cinder.Catalog.{Grab, Movie, MovieLifecycle}

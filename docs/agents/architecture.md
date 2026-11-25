@@ -14,7 +14,7 @@
 
 Every external service (TMDB, Prowlarr, torrent and Usenet clients, Jellyfin/Plex,
 Audiobookshelf, Booklore) is reached only through a behaviour, never directly from a context:
-`Cinder.Catalog.TMDB`, `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`,
+`Cinder.Catalog.TMDB`, `Cinder.Acquisition.IndexerSource`, `Cinder.Download.Client`,
 `Cinder.Library.MediaServer`, `Cinder.Books.Metadata`, `Cinder.Library.AudiobookServer`.
 
 - Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
@@ -181,7 +181,7 @@ The facade stays, and callers keep going through it (the maintainer's decision o
 ## TV search results are deduped per link and indexer
 
 Up to two functions collapse the copies of one release link that a TV search returns. The first
-is `merge_query_origins/1` in `Cinder.Acquisition.Indexer.Prowlarr`, which runs only when both
+is `merge_query_origins/1` in `Cinder.Acquisition.IndexerSource.Prowlarr`, which runs only when both
 of `search_tv/3`'s queries, the TVDB-scoped and the free-text one, succeed. The second is
 `deduplicate_tv_releases/1` in `Cinder.Acquisition` for a standard series, or `deduplicate/2` in
 `Cinder.Acquisition.Anime` for anime. The comment above each says what it merges across a link's

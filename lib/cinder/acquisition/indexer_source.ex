@@ -1,8 +1,11 @@
-defmodule Cinder.Acquisition.Indexer do
+defmodule Cinder.Acquisition.IndexerSource do
   @moduledoc """
-  Behaviour for indexer release search (Torznab via Prowlarr).
+  The indexer source seam: the behaviour a search across indexers runs through, as `GLOSSARY.md`
+  "Indexer source" defines it. Prowlarr (`Cinder.Acquisition.IndexerSource.Prowlarr`) is the one
+  source today. The app env key `:indexer_source` names the module `Cinder.Acquisition`,
+  `Cinder.Acquisition.BookSearch` and the `"indexer"` target of `Cinder.Health` call.
 
-  Prefer searching by IMDb id over free-text title. Fleshed out in Phase 2.
+  Prefer searching by IMDb id over free-text title.
   """
 
   @callback search(imdb_id :: String.t()) :: {:ok, [map()]} | {:error, term()}

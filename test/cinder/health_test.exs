@@ -446,6 +446,17 @@ defmodule Cinder.HealthTest do
              }
     end
 
+    test "the indexer target probes the module the :indexer_source env key names" do
+      put_env(:indexer_source, Cinder.Acquisition.InHandIndexerMock)
+      stub(Cinder.Acquisition.InHandIndexerMock, :health, fn -> :ok end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:error, :down} end)
+
+      [target] = targets(~w(indexer))
+
+      assert Health.check_targets([target]) == %{"indexer" => :ok}
+      assert target.probe == {:env, :indexer_source}
+    end
+
     test "a probe exceeding the timeout budget reports :timeout without holding up the others" do
       put_env(:health_probe_timeout_ms, %{"indexer" => 200})
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)

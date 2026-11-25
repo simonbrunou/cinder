@@ -86,7 +86,7 @@ config :phoenix,
 # External services are mocked in tests (Mox defs live in test/test_helper.exs).
 config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
-  indexer: Cinder.Acquisition.IndexerMock,
+  indexer_source: Cinder.Acquisition.IndexerMock,
   plex_auth: Cinder.Accounts.PlexAuthMock,
   jellyfin_auth: Cinder.Accounts.JellyfinAuthMock,
   oidc_auth: Cinder.Accounts.OIDCMock,
@@ -146,7 +146,7 @@ config :cinder, Cinder.Books.Metadata.Hardcover,
   base_url: "http://bookinfo.test",
   req_options: [plug: {Req.Test, Cinder.HardcoverStub}, retry: false]
 
-config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
   base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"

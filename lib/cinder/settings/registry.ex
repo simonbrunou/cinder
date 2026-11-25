@@ -590,12 +590,12 @@ defmodule Cinder.Settings.Registry do
                    group: :tmdb,
                    label: "TMDB API read token (v4 bearer)"
                  ),
-                 field("prowlarr_url", {Cinder.Acquisition.Indexer.Prowlarr, :base_url},
+                 field("prowlarr_url", {Cinder.Acquisition.IndexerSource.Prowlarr, :base_url},
                    group: :indexer,
                    label: "Prowlarr URL",
                    placeholder: "http://localhost:9696"
                  ),
-                 field("prowlarr_api_key", {Cinder.Acquisition.Indexer.Prowlarr, :api_key},
+                 field("prowlarr_api_key", {Cinder.Acquisition.IndexerSource.Prowlarr, :api_key},
                    shape: :secret,
                    group: :indexer,
                    label: "Prowlarr API key"

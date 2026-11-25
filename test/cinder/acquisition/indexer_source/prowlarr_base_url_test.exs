@@ -1,4 +1,4 @@
-defmodule Cinder.Acquisition.Indexer.ProwlarrBaseUrlTest do
+defmodule Cinder.Acquisition.IndexerSource.ProwlarrBaseUrlTest do
   # Prowlarr records its configured base URL as the `download_url_origin` of a release whose link
   # is on that origin. `Cinder.HTTPPolicy.source_request_target/3` refuses an origin with user info
   # or a fragment from its text, so Prowlarr records the base URL with both removed (#1286).
@@ -6,7 +6,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrBaseUrlTest do
   # end-to-end test swaps the clients' `url_resolver`, which the async client suites read.
   use ExUnit.Case, async: false
 
-  alias Cinder.Acquisition.Indexer.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.ConfigCase
   alias Cinder.Download.Client.{Nzbget, QBittorrent, Sabnzbd, Transmission}
   alias Cinder.HTTPPolicy

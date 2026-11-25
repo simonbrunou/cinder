@@ -1,6 +1,6 @@
-defmodule Cinder.Acquisition.Indexer.Prowlarr do
+defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   @moduledoc """
-  Real `Cinder.Acquisition.Indexer` impl, backed by `Req`, against Prowlarr's
+  Real `Cinder.Acquisition.IndexerSource` impl, backed by `Req`, against Prowlarr's
   unified JSON search (`GET /api/v1/search`).
 
   Reads `base_url`, `api_key` and optional `req_options` from
@@ -19,7 +19,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   `search_audiobook_query/2` are their audiobook siblings, scoped to the audiobook category
   instead.
   """
-  @behaviour Cinder.Acquisition.Indexer
+  @behaviour Cinder.Acquisition.IndexerSource
 
   alias Cinder.HTTPPolicy
   alias Cinder.Util
