@@ -107,7 +107,7 @@ FROM ${RUNNER_IMAGE} AS final
 # nothing pins to one version (docs/agents/ci.md "Venv advisory").
 # Nothing runs pip after the install, so the RUN uninstalls it: Trivy then finds no pip in the
 # venv, whose copy comes from Debian's python3-pip-whl and moves only with a Debian update.
-ARG APT_REFRESH=2026-11-23
+ARG APT_REFRESH=2026-11-25
 RUN echo "Debian packages refreshed ${APT_REFRESH}" \
   && apt-get update \
   && apt-get upgrade -y \
