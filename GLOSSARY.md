@@ -73,6 +73,12 @@ _Avoid_: indexer type (for this)
 What Cinder searches the indexers through: Prowlarr, or Cinder's own native search.
 _Avoid_: indexer backend, search provider, the indexer (for Prowlarr itself)
 
+**Incomplete search**:
+A search in which Cinder knows that some of the queries or indexers it asked failed while the rest
+answered, so a wanted release may be missing from its results. An indexer the search left out,
+because it can't take the query or is backing off, does not make the search incomplete.
+_Avoid_: partial search
+
 **Group wait**:
 Holding back an anime release from a group outside the preferred ones until a set delay after it
 was published, so a preferred group's release can arrive first. A release with no publication time
