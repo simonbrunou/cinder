@@ -116,12 +116,14 @@ current write sites by searching for `Repo\.(insert|update|delete|update_all)` a
 
 Callers hold no `Repo` mutations of their own: `lib/cinder/download/*` (including
 `Cinder.Download.BookPoller`), `acquisition.ex` and `lib/cinder/library/*`. The sanctioned
-exceptions each own one table and nothing derived:
+exceptions each own the tables named here and nothing derived:
 
 - `lib/cinder/library/import_stage.ex` owns `import_stages`.
 - `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines`.
 - `lib/cinder/download.ex` writes only its own `download_intents` tables.
 - `lib/cinder/indexers.ex` (`Cinder.Indexers`) is the one writer of `configured_indexers`.
+- `lib/cinder/indexers/definitions.ex` (`Cinder.Indexers.Definitions`) is the one writer of the
+  `indexer_definition_*` tables.
 
 A new exception is legitimate only when a plan calls it out. When it lands, add it to this list.
 
