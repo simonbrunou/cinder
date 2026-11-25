@@ -2,33 +2,38 @@
 
 - `mix test` decides when a task is done. Before you start, write the done-when as something
   `mix test` can check, then loop until it is green.
-- When the issue carries a triage Agent Brief, the done-when names a test for each requirement
-  in **Desired behavior**, each **Acceptance criteria** box and each rule that **Key interfaces**
-  keeps unchanged. On #972, prod's mount layout, a `devino-hash` mount and
-  `verify_legacy_selection`'s refusals were Desired-behavior requirements with no test until the
-  Spec review, which cost a second review round. A clause
-  that keeps today's behaviour ("as today", "still") or sets a count ("logged once") is a
-  requirement too: its test goes red when a mutation breaks only that clause. A count's test sets
-  up each way the count can repeat. On #1072, two "as today" fallbacks and a "logged once" had no
-  such test until the Spec review. The count could repeat through two callers of one check or
-  through two wanted languages sharing one track, and the second had no test until a re-check.
-  Closing them took two more review rounds, about 25 minutes. A rule that Key interfaces keeps
-  unchanged gets one test for each path of the new behaviour that reaches the rule, red when that
-  path skips it. An existing test of the rule without the new behaviour does not count. On #1132,
-  the brief kept the blocked-title rules (`AnimeParser`'s `blocked_titles`) unchanged. No test
-  put a year after a blocked title. The new year reading then let a name with another alias's
-  words before any year read as the series' own episode, where only the series' own year did
-  before. The release-parser review found it, and the fix took about 20 minutes.
-  Write that done-when down before the first full `mix test` (the first fence run on a docs-only
-  branch, below), one line per requirement or clause with the test that covers it. Put the list in
-  the PR body and paste it into the Spec reviewer's brief. On #986 and #950 such a clause reached
-  the Spec review untested (about 1.5 and 10 minutes to fix), and #1207 lost 8 minutes to an
-  untested "as today" clause and a false changelog sentence.
-  When a run, a throwaway one included, shows a path on which a Desired-behavior requirement still
-  fails, that path gets its own done-when line and its fix in the same PR. On #1290 a failed close
-  of the staged file still dropped the new removal line. The fragment named that path as an
-  exception, the Spec review flagged the requirement as partial, and the fix took a second full
-  suite and a re-check: 29 minutes from the run that proved it to the fix commit.
+- When the issue carries a triage Agent Brief, the done-when names a test for each requirement in
+  **Desired behavior**, each **Acceptance criteria** box and each rule that **Key interfaces** keeps
+  unchanged. On #972, prod's mount layout, a `devino-hash` mount and `verify_legacy_selection`'s
+  refusals were Desired-behavior requirements with no test until the Spec review, which cost
+  a second review round. A clause that keeps today's behaviour ("as today", "still") or sets
+  a count ("logged once") is a requirement too: its test goes red when a mutation breaks only
+  that clause. A count's test sets up each way the count can repeat. On #1072, two "as today"
+  fallbacks and a "logged once" had no such test until the Spec review. The count could repeat
+  through two callers of one check or through two wanted languages sharing one track, and the
+  second had no test until a re-check. Closing them took two more review rounds, about 25
+  minutes. A state the change keeps from one run to the next, such as a poller's hold between
+  ticks, reaches each such clause on every run it lasts, so the clause's test runs a later run
+  too. On #1647
+  (PR #1735) a held season group blocked the anime fallback only on the tick that set the
+  hold. Later ticks left the held episodes out and ran the fallback, where `main` blocked it:
+  a Spec finding, a fix commit and a re-check. A rule that Key interfaces keeps unchanged gets
+  one test for each path of the new behaviour that reaches the rule, red when that path skips
+  it. An existing test of the rule without the new behaviour does not count. On #1132, the brief
+  kept the blocked-title rules (`AnimeParser`'s `blocked_titles`) unchanged. No test put a year
+  after a blocked title. The new year reading then let a name with another alias's words before
+  any year read as the series' own episode, where only the series' own year did before. The
+  release-parser review found it, and the fix took about 20 minutes. Write that done-when
+  down before the first full `mix test` (the first fence run on a docs-only branch, below),
+  one line per requirement or clause with the test that covers it. Put the list in the PR body
+  and paste it into the Spec reviewer's brief. On #986 and #950 such a clause reached the Spec
+  review untested (about 1.5 and 10 minutes to fix), and #1207 lost 8 minutes to an untested
+  "as today" clause and a false changelog sentence. When a run, a throwaway one included,
+  shows a path on which a Desired-behavior requirement still fails, that path gets its own
+  done-when line and its fix in the same PR. On #1290 a failed close of the staged file still
+  dropped the new removal line. The fragment named that path as an exception, the Spec review
+  flagged the requirement as partial, and the fix took a second full suite and a re-check:
+  29 minutes from the run that proved it to the fix commit.
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
