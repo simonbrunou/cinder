@@ -102,14 +102,15 @@ defmodule Cinder.Acquisition.HouseholdPolicyTest do
            |> Enum.sort() == ["Bad.Pack", "Best.Pack"]
   end
 
-  # #1515: a refused TV submission's row carries its indexer id into every caller's blocklist,
-  # the upgrade sweep's included.
-  test "a series blocklist gives a row with an indexer id as {title, indexer_id}" do
+  # #1515, #1645: a refused TV submission's row carries its indexer source and id into every
+  # caller's blocklist, the upgrade sweep's included.
+  test "a series blocklist gives a row with an indexer id as {title, {source, indexer_id}}" do
     series = series_fixture()
 
     Repo.insert!(%BlockedRelease{
       release_title: "Refused.Pack",
       reason: "bad_torrent",
+      indexer_source: "prowlarr",
       indexer_id: 7,
       series_id: series.id
     })
@@ -120,7 +121,7 @@ defmodule Cinder.Acquisition.HouseholdPolicyTest do
       assert series
              |> HouseholdPolicy.for_target(opts)
              |> Keyword.fetch!(:release_blocklist)
-             |> Enum.sort() == [{"Refused.Pack", 7}, "Bad.Pack"]
+             |> Enum.sort() == [{"Refused.Pack", {"prowlarr", 7}}, "Bad.Pack"]
     end
   end
 end

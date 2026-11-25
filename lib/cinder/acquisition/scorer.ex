@@ -580,23 +580,25 @@ defmodule Cinder.Acquisition.Scorer do
     do: Enum.find_index(preferred, &(&1 == value)) || length(preferred)
 
   # A `release_blocklist` entry is a title, which blocks that title from every indexer, or a
-  # `{title, indexer_id}` pair (a refused TV submission, #1515), which blocks it only in a release
-  # from that indexer or from no known indexer.
-  defp blocklist_entry({title, indexer_id}), do: {String.downcase(title), indexer_id}
+  # `{title, {source, indexer_id}}` pair (a refused TV submission, #1515, #1645), which blocks it
+  # only in a release from that source whose indexer id is the entry's or nil. A release with a
+  # nil `indexer_source` reads as Prowlarr's, as `Release.new/1` defaults it.
+  defp blocklist_entry({title, {source, id}}), do: {String.downcase(title), {source, id}}
   defp blocklist_entry(title), do: {String.downcase(title), nil}
 
   # Exact (downcased) release-name exclusion. The per-item blocklist
   # passes the failed release titles as `release_blocklist`; an untitled release can't match.
   defp title_blocked?(%Release{title: nil}, _list), do: false
 
-  defp title_blocked?(%Release{title: title, indexer_id: indexer_id}, list) do
+  defp title_blocked?(%Release{title: title} = release, list) do
     title = String.downcase(title)
-
-    Enum.any?(list, fn {blocked, blocked_indexer} ->
-      blocked == title and
-        (is_nil(blocked_indexer) or is_nil(indexer_id) or blocked_indexer == indexer_id)
-    end)
+    Enum.any?(list, fn {blocked, scope} -> blocked == title and in_scope?(release, scope) end)
   end
+
+  defp in_scope?(_release, nil), do: true
+
+  defp in_scope?(%Release{indexer_source: source, indexer_id: id}, {blocked_source, blocked_id}),
+    do: (source || "prowlarr") == blocked_source and (is_nil(id) or id == blocked_id)
 
   defp contains_blocked_term?(%Release{title: nil}, _terms), do: false
 

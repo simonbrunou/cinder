@@ -92,13 +92,15 @@ defmodule Cinder.Download do
       "download_url_origin" => release.download_url_origin
     }
 
-    # The indexer that served the release, which a refusal's block row records
-    # (`abandon_reserved/2`, #1515): that row then matches the title only in a result from that
-    # indexer or from no known indexer. A release with no integer indexer id stores none.
+    # The indexer that served the release (#1515, #1645): the block row `abandon_reserved/2` tries
+    # to write on a refusal records its source and id, and a grab adopts the intent only for a
+    # copy from the same indexer (`same_release?/2`). Each key is stored only when the release
+    # holds a value of its type; `indexer_source/1` reads an intent with no source as Prowlarr's.
     release_attrs =
-      if is_integer(release.indexer_id),
-        do: Map.put(release_attrs, "indexer_id", release.indexer_id),
-        else: release_attrs
+      release_attrs
+      |> put_if("indexer_source", release.indexer_source, &is_binary/1)
+      |> put_if("indexer_id", release.indexer_id, &is_integer/1)
+      |> put_if("credentials_version", release.credentials_version, &is_integer/1)
 
     release_attrs =
       if Map.get(attrs, :operator_initiated, false),
@@ -145,6 +147,9 @@ defmodule Cinder.Download do
   rescue
     Ecto.ConstraintError -> {:error, :download_intent_busy}
   end
+
+  defp put_if(map, key, value, type?),
+    do: if(type?.(value), do: Map.put(map, key, value), else: map)
 
   defp insert_reserved_intent(attrs) do
     case %Intent{} |> Intent.reservation_changeset(attrs) |> Repo.insert() do
@@ -296,9 +301,17 @@ defmodule Cinder.Download do
        else: {:error, :download_intent_busy}
   end
 
-  defp same_release?(intent, release) do
-    intent.protocol == release.protocol and intent.release["title"] == release.title and
-      decrypt_download_url(intent.release) == {:ok, release.download_url}
+  # One link from two sources, from two indexers of one source, or from one native indexer under
+  # two credentials versions is a different release to the intent (#1645). A release with no
+  # source reads as Prowlarr's, like an intent with none.
+  defp same_release?(%Intent{release: stored} = intent, release) do
+    source = indexer_source(stored["indexer_source"])
+
+    intent.protocol == release.protocol and stored["title"] == release.title and
+      source == indexer_source(release.indexer_source) and
+      indexer_id(intent) == release.indexer_id and
+      (source != "native" or stored["credentials_version"] == release.credentials_version) and
+      decrypt_download_url(stored) == {:ok, release.download_url}
   end
 
   defp same_episode_assignment?(%Intent{kind: kind}, []) when kind in [:movie, :book_target],
@@ -919,15 +932,16 @@ defmodule Cinder.Download do
   # but `:invalid_intent_release`, which says a stored link could not be read back, not that the
   # release is bad (#1492). This is the one place both a fresh grab and a stored intent's retry
   # pass through. An operator-initiated intent (a release picked by hand, or the upgrade sweep's)
-  # is not blocked. The block row carries the indexer id the intent stored, so it does not match
+  # is not blocked. The block row it tries to write carries the indexer id the intent stored and
+  # its source, `"prowlarr"` for an intent that stored an id and no source, so it does not match
   # the same title from another indexer (another row, such as a `stalled` one, still can). For an
-  # intent stored with none, such as one reserved before #1515, the row matches the title from
-  # every indexer.
+  # intent stored with no id, such as one reserved before #1515, the row carries neither and
+  # matches the title from every indexer.
   defp abandon_reserved(%Intent{kind: kind} = intent, reason)
        when kind in [:episode, :season_pack] do
     if reason in @refused_release_errors and not operator_initiated?(intent) do
       series_id = fn -> intent_series_id(intent) end
-      Catalog.block_series_release(series_id, release_title(intent), reason, indexer_id(intent))
+      Catalog.block_series_release(series_id, release_title(intent), reason, block_scope(intent))
     end
 
     delete_intent(intent)
@@ -951,6 +965,15 @@ defmodule Cinder.Download do
 
   defp indexer_id(%Intent{release: %{"indexer_id" => id}}) when is_integer(id), do: id
   defp indexer_id(_intent), do: nil
+
+  # An intent stored with no indexer source, such as every one reserved before #1645, is
+  # Prowlarr's, the one source there was.
+  defp indexer_source(nil), do: "prowlarr"
+  defp indexer_source(source), do: source
+
+  defp block_scope(%Intent{release: stored} = intent) do
+    if id = indexer_id(intent), do: {indexer_source(stored["indexer_source"]), id}
+  end
 
   defp hold_book_target(target_id, reason, release_title, replace?) do
     case Repo.get(BookTarget, target_id) do

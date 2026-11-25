@@ -12,7 +12,7 @@ defmodule Cinder.Download.EbookIntentTest do
 
   import Mox
 
-  alias Cinder.Acquisition.EbookRelease
+  alias Cinder.Acquisition.{EbookRelease, Release}
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog
@@ -104,6 +104,31 @@ defmodule Cinder.Download.EbookIntentTest do
 
       assert {:error, :download_intent_busy} = Download.grab_book_target(target, other)
       assert [%BookGrab{download_id: "remote-1"}] = Repo.all(BookGrab)
+    end
+
+    # #1645: a book grab finds its target's stored intent through the same comparison as a movie
+    # or TV grab, so another source's copy of the intent's link answers busy.
+    test "a stored intent is busy for another source's copy of its link and adopts its own" do
+      target = monitored_target()
+      prowlarr = %EbookRelease{release() | indexer_source: "prowlarr", indexer_id: 4}
+
+      {:ok, _intent} =
+        Download.reserve_intent(%{
+          kind: :book_target,
+          target_id: target.id,
+          episode_ids: [],
+          protocol: :torrent,
+          release: Release.from_book(prowlarr)
+        })
+
+      native = %EbookRelease{prowlarr | indexer_source: "native"}
+      assert {:error, :download_intent_busy} = Download.grab_book_target(target, native)
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "remote-1"} end)
+
+      assert {:ok, %BookGrab{download_id: "remote-1"}} =
+               Download.grab_book_target(target, prowlarr)
     end
 
     test "an unmonitored target is never submitted" do

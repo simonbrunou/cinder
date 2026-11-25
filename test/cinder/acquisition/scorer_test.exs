@@ -985,27 +985,76 @@ defmodule Cinder.Acquisition.ScorerTest do
                {:rejected, :blocklisted}
     end
 
-    # #1515: a refused TV submission's entry carries the refused result's indexer id.
-    test "a {title, indexer_id} entry flags its title from that indexer or no known indexer" do
-      blocklist = [{"Bad.Release", 1}]
+    # #1515, #1645: a refused TV submission's entry carries the refused result's indexer source
+    # and id. A result with no source reads as Prowlarr's.
+    test "a {title, {source, id}} entry flags its title from that indexer or its source's unknown one" do
+      blocklist = [{"Bad.Release", {"prowlarr", 1}}]
 
       verdicts =
-        for indexer_id <- [1, 2, nil],
+        for {source, id} <- [
+              {"prowlarr", 1},
+              {"prowlarr", 2},
+              {"prowlarr", nil},
+              {"native", 1},
+              {"native", nil},
+              {nil, 1}
+            ],
             do:
-              {indexer_id,
-               Scorer.verdict(rel(title: "bad.release", indexer_id: indexer_id),
+              {source, id,
+               Scorer.verdict(rel(title: "bad.release", indexer_source: source, indexer_id: id),
                  release_blocklist: blocklist
                )}
 
       assert verdicts == [
-               {1, {:rejected, :blocklisted}},
-               {2, :ok},
-               {nil, {:rejected, :blocklisted}}
+               {"prowlarr", 1, {:rejected, :blocklisted}},
+               {"prowlarr", 2, :ok},
+               {"prowlarr", nil, {:rejected, :blocklisted}},
+               {"native", 1, :ok},
+               {"native", nil, :ok},
+               {nil, 1, {:rejected, :blocklisted}}
              ]
 
-      assert Scorer.verdict(rel(title: "Other.Release", indexer_id: 1),
+      assert Scorer.verdict(
+               rel(title: "Other.Release", indexer_source: "prowlarr", indexer_id: 1),
                release_blocklist: blocklist
              ) == :ok
+    end
+
+    test "a native {title, {source, id}} entry flags its title from that native indexer only" do
+      blocklist = [{"Bad.Release", {"native", 3}}]
+
+      verdicts =
+        for {source, id} <- [
+              {"native", 3},
+              {"native", nil},
+              {"native", 4},
+              {"prowlarr", 3},
+              {nil, 3}
+            ],
+            do:
+              {source, id,
+               Scorer.verdict(rel(title: "bad.release", indexer_source: source, indexer_id: id),
+                 release_blocklist: blocklist
+               )}
+
+      assert verdicts == [
+               {"native", 3, {:rejected, :blocklisted}},
+               {"native", nil, {:rejected, :blocklisted}},
+               {"native", 4, :ok},
+               {"prowlarr", 3, :ok},
+               {nil, 3, :ok}
+             ]
+    end
+
+    test "a title entry flags its title from every source and indexer" do
+      verdicts =
+        for {source, id} <- [{"prowlarr", 1}, {"native", 1}, {"native", nil}, {nil, nil}],
+            do:
+              Scorer.verdict(rel(title: "bad.release", indexer_source: source, indexer_id: id),
+                release_blocklist: ["Bad.Release"]
+              )
+
+      assert verdicts == List.duplicate({:rejected, :blocklisted}, 4)
     end
 
     test "flags a disallowed resolution" do

@@ -80,25 +80,44 @@ defmodule Cinder.Catalog.BlockedReleases do
   guard, so a failed lookup is logged like a failed insert. A nil `title` is a no-op.
   Non-raising; always `:ok`.
 
-  `indexer_id` scopes the row to one indexer (#1515): it then blocks `title` only in a search
-  result from that indexer or from no known indexer (`blocked_release_titles_for_series/2`). Only
-  a refused TV submission (`Cinder.Download`) passes one; nil, the default, blocks `title` from
-  every indexer.
+  `indexer`, a `{source, indexer_id}` pair with a string source and an integer id, scopes the row
+  to one indexer (#1515, #1645): it then blocks `title` only in a search result from that source
+  whose indexer id is the row's or nil (`blocked_release_titles_for_series/2`). Only a refused TV
+  submission (`Cinder.Download`) passes one; nil, the default, blocks `title` from every indexer.
+  The row records both or neither: with a non-nil `title`, any other `indexer` is logged and
+  records nothing.
   """
-  def block_series_release(series, title, reason, indexer_id \\ nil)
+  def block_series_release(series, title, reason, indexer \\ nil)
 
-  def block_series_release(_series, nil, _reason, _indexer_id), do: :ok
+  def block_series_release(_series, nil, _reason, _indexer), do: :ok
 
-  def block_series_release(series, title, reason, indexer_id) do
-    insert_quietly(fn ->
-      %{
-        release_title: title,
-        reason: to_string(reason),
-        indexer_id: indexer_id,
-        series_id: series_id(series)
-      }
-    end)
+  def block_series_release(series, title, reason, indexer) do
+    case indexer_columns(indexer) do
+      {:ok, columns} ->
+        insert_quietly(fn ->
+          Map.merge(columns, %{
+            release_title: title,
+            reason: to_string(reason),
+            series_id: series_id(series)
+          })
+        end)
+
+      :error ->
+        Logger.warning(
+          "block_series_release recorded nothing for #{inspect(title)}: " <>
+            "indexer #{inspect(indexer)} is not nil or {source, indexer_id}"
+        )
+
+        :ok
+    end
   end
+
+  defp indexer_columns(nil), do: {:ok, %{indexer_source: nil, indexer_id: nil}}
+
+  defp indexer_columns({source, id}) when is_binary(source) and is_integer(id),
+    do: {:ok, %{indexer_source: source, indexer_id: id}}
+
+  defp indexer_columns(_indexer), do: :error
 
   @doc """
   Records a season pack whose import placed nothing (every episode an arbitrated keep, #250) under
@@ -189,8 +208,9 @@ defmodule Cinder.Catalog.BlockedReleases do
   @doc """
   Release titles blocked for the series `series_id`, the `:release_blocklist` that
   `Cinder.Acquisition.Scorer` reads. A row with no indexer id gives its title as a string, which
-  blocks that title from every indexer. A row with one gives `{title, indexer_id}`, which blocks
-  that title only in a result from that indexer or from no known indexer (#1515).
+  blocks that title from every indexer. A row with one gives `{title, {source, indexer_id}}`,
+  which blocks that title only in a result from that source whose indexer id is the row's or nil
+  (#1515, #1645).
 
   Upgrade-only reasons (`#{inspect(@upgrade_only_reasons)}`) are **excluded** unless the caller
   names one in `:include_reasons`. Such a row is not "this release is bad": it is the season's
@@ -212,11 +232,11 @@ defmodule Cinder.Catalog.BlockedReleases do
         from b in BlockedRelease,
           where: b.series_id == ^series_id,
           where: is_nil(b.reason) or b.reason not in ^hidden,
-          select: {b.release_title, b.indexer_id}
+          select: {b.release_title, b.indexer_source, b.indexer_id}
       )
       |> Enum.map(fn
-        {title, nil} -> title
-        entry -> entry
+        {title, _source, nil} -> title
+        {title, source, id} -> {title, {source, id}}
       end)
 
     blocked ++ (struck_out_titles(series_id) -- blocked)
@@ -244,10 +264,11 @@ defmodule Cinder.Catalog.BlockedReleases do
   # raise here would stop the park and hot-loop the grab every tick.
   defp insert_quietly(build_attrs) do
     attrs = build_attrs.()
-    # Set on the struct, not cast: only `block_series_release/4` passes one, from a stored intent.
-    {indexer_id, cast_attrs} = Map.pop(attrs, :indexer_id)
 
-    case %BlockedRelease{indexer_id: indexer_id}
+    # Set on the struct, not cast: only `block_series_release/4` passes them, from a stored intent.
+    {indexer, cast_attrs} = Map.split(attrs, [:indexer_source, :indexer_id])
+
+    case struct(BlockedRelease, indexer)
          |> BlockedRelease.changeset(cast_attrs)
          |> Repo.insert() do
       {:ok, _} ->

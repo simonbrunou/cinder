@@ -6,12 +6,15 @@ defmodule Cinder.Catalog.BlockedRelease do
   instead one TV park that blocked nothing, and blocks its title only once the series holds three
   of them for it (`Cinder.Catalog.BlockedReleases`, #1588). Identity is the `release_title`
   string — the stable per-indexer release name — stored **verbatim**; it is `Cinder.Acquisition.Scorer` that downcases
-  both sides when matching, so this table keeps the original case. `indexer_id` is not part of
-  that identity: it narrows which search results a row matches (#1515). Only a series row written
-  for a refused TV submission (`Cinder.Download`) holds one, taken from the download intent, and
-  only when that intent stored the refused search result's indexer id; an intent reserved before
-  #1515 stored none. Such a row matches its title only in a result from that indexer or from no
-  known indexer. A row with a nil `indexer_id` matches its title in every indexer's results.
+  both sides when matching, so this table keeps the original case. `indexer_source` and
+  `indexer_id` are not part of that identity: they narrow which search results a row matches
+  (#1515, #1645). A row sets both or neither. Only a series row written for a refused TV
+  submission (`Cinder.Download`) holds them, taken from the download intent, and only when that
+  intent stored the refused search result's indexer id; an intent reserved before #1515 stored
+  none. The source is the one the intent stored, or `"prowlarr"` for an intent that stored none,
+  and a migration gave `"prowlarr"` to every row written with an id before #1645. Such a row
+  matches its title only in a result from that source whose indexer id is the row's or nil. A row
+  with neither matches its title in every indexer's results.
   Don't normalize the title on write:
   `Cinder.Catalog.MovieLifecycle.record_failure/2` bounds its re-queue loop by checking that a row it just
   wrote is readable back under the movie's exact `release_title`. A blocked release can't be re-grabbed while
@@ -29,6 +32,7 @@ defmodule Cinder.Catalog.BlockedRelease do
   schema "blocked_releases" do
     field :release_title, :string
     field :reason, :string
+    field :indexer_source, :string
     field :indexer_id, :integer
     belongs_to :movie, Movie
     belongs_to :series, Series

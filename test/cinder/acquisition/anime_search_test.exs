@@ -655,7 +655,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
     expect(IndexerMock, :search_tv_query, 2, fn
       "Show", categories: [5070] ->
-        {:ok, [Map.merge(result, provenance(2, "prowlarr", "Two later", 9))]}
+        {:ok, [Map.merge(result, provenance(2, "native", "Two later", 9))]}
 
       _query, categories: [5070] ->
         {:ok, []}
@@ -695,7 +695,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     result = Map.put(raw("86 Eighty-Six S01E01 [1080p]", "both"), :tvdb_id, 99)
 
     expect(IndexerMock, :search_tv, fn 99, "Show", 1 ->
-      {:ok, [Map.merge(result, provenance(nil, "native", "Nameless", 1))]}
+      {:ok, [Map.merge(result, provenance(nil, "prowlarr", "Nameless", 1))]}
     end)
 
     expect(IndexerMock, :search_tv_query, 2, fn

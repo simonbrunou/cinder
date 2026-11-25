@@ -2,10 +2,11 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
   @moduledoc """
   When Cinder or the client refuses for good a TV release Cinder's search picked, Cinder tries to
   block it for its series with the indexer id the download intent stored for the refused search
-  result (#1515). That row then skips the title in a result from the same indexer or from no
-  known indexer, and not in another indexer's result. A row with no indexer id (a refused result
-  with none, an intent stored without one, any other block reason) skips the title in every
-  indexer's results. Copies of one link from two indexers stay two candidates.
+  result (#1515), beside its source (#1645). That row then skips the title in a result from the
+  same indexer, or from its source with no indexer id, and not in another indexer's result. A row
+  with no indexer id (a refused result with none, an intent stored without one, any other block
+  reason) skips the title in every indexer's results. Copies of one link from two indexers stay
+  two candidates.
 
   Each search result here carries its own download link, and the client answers by link, so a
   test can refuse one link of a title and accept another. A lower-ranked 720p release with
@@ -72,7 +73,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
     test "#{profile}: one link from a blocked and an unblocked indexer is grabbed" do
       %{series: series} = wanted_episodes([1], @profile)
-      :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, 1)
+      :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", 1})
       stub_results([result(@title, "shared", 1, 20), result(@title, "shared", 2, 10)])
       stub_client(%{})
 
@@ -80,6 +81,29 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
       assert added() == ["shared"]
       assert grabbed() == ["hash-shared"]
+    end
+
+    # #1645: Prowlarr's indexer 7 and a native indexer 7 are two sites, so the search keeps one
+    # copy of a link for each, and a copy with no id folds only into a copy from its own source.
+    for {name, native_id} <- [{"the same id", 7}, {"no id", nil}] do
+      @native_id native_id
+
+      test "#{profile}: one link from a blocked Prowlarr indexer and a native one with #{name} is grabbed" do
+        %{series: series} = wanted_episodes([1], @profile)
+        :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", 7})
+
+        stub_results([
+          Map.put(result(@title, "shared", 7, 20), :indexer_source, "prowlarr"),
+          Map.put(result(@title, "shared", @native_id, 10), :indexer_source, "native")
+        ])
+
+        stub_client(%{})
+
+        poll_times(1)
+
+        assert added() == ["shared"]
+        assert grabbed() == ["hash-shared"]
+      end
     end
   end
 
@@ -104,7 +128,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
         })
 
       episode_fixture(season_fixture(series), %{episode_number: 1})
-      :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, 1)
+      :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", 1})
       copy = &Map.merge(result(@title, "shared", &1, 10), %{query_origins: &2, tvdb_id: @tvdb_id})
       stub_results([copy.(1, [:id_scoped]), copy.(2, [:free_text])])
       stub_client(%{})
@@ -118,7 +142,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
   test "the season panel lists one link from two indexers once for each" do
     %{series: series} = wanted_episodes([1])
-    :ok = Catalog.block_series_release(series.id, @episode, :bad_torrent, 1)
+    :ok = Catalog.block_series_release(series.id, @episode, :bad_torrent, {"prowlarr", 1})
 
     stub_results([
       Map.put(result(@episode, "shared", 1, 20), :query_origins, [:id_scoped]),
@@ -164,7 +188,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
     stub_results([
       Map.merge(result(@episode, "shared", 1, 20), provenance("prowlarr", "One", 3)),
       Map.merge(result(@episode, "shared", 2, 10), provenance("native", "Two", 8)),
-      Map.merge(result(@episode, "shared", 2, 10), provenance("prowlarr", "Two later", 9))
+      Map.merge(result(@episode, "shared", 2, 10), provenance("native", "Two later", 9))
     ])
 
     assert judged_provenance(series) == [
@@ -194,7 +218,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
     %{series: series} = wanted_episodes([1])
 
     stub_results([
-      Map.merge(result(@episode, "shared", nil, 20), provenance("native", "Nameless", 1)),
+      Map.merge(result(@episode, "shared", nil, 20), provenance("prowlarr", "Nameless", 1)),
       Map.merge(result(@episode, "shared", 7, 10), provenance("prowlarr", "Seven", 7))
     ])
 
@@ -334,7 +358,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
   test "the season panel's judge rejects a refused title for its indexer and no indexer only" do
     %{series: series} = wanted_episodes([1])
-    :ok = Catalog.block_series_release(series.id, @episode, :bad_torrent, 1)
+    :ok = Catalog.block_series_release(series.id, @episode, :bad_torrent, {"prowlarr", 1})
 
     stub_results([
       result(@episode, "one", 1, 20),

@@ -2,6 +2,7 @@ defmodule Cinder.CatalogTest do
   use Cinder.DataCase, async: true
 
   import Cinder.CatalogFixtures
+  import Ecto.Query
   import ExUnit.CaptureLog
   import Mox
 
@@ -437,6 +438,40 @@ defmodule Cinder.CatalogTest do
       assert :ok = Catalog.block_grab_release(grab, :no_files_matched)
       assert Catalog.blocked_release_titles_for_series(series.id) == ["Pack.S01.720p"]
     end
+
+    # #1645: a series row holds an indexer's source and id together or neither.
+    test "block_series_release/4 records a {source, id} scope and gives it back with its title" do
+      series = series_fixture()
+
+      assert :ok =
+               Catalog.block_series_release(series.id, "Native.Pack", :bad_torrent, {"native", 7})
+
+      assert :ok = Catalog.block_series_release(series.id, "Bad.Pack", :bad_torrent, nil)
+
+      assert series_rows(series.id) == [
+               {"Native.Pack", "native", 7},
+               {"Bad.Pack", nil, nil}
+             ]
+
+      assert Catalog.blocked_release_titles_for_series(series.id) ==
+               [{"Native.Pack", {"native", 7}}, "Bad.Pack"]
+    end
+
+    test "block_series_release/4 logs a scope without both a source and an id and records nothing" do
+      series = series_fixture()
+
+      for scope <- [{nil, 3}, {"native", nil}, 3] do
+        log =
+          capture_log(fn ->
+            assert :ok = Catalog.block_series_release(series.id, "Bad.Pack", :bad_torrent, scope)
+          end)
+
+        assert log =~ "block_series_release recorded nothing for \"Bad.Pack\": indexer"
+        assert log =~ inspect(scope)
+      end
+
+      assert series_rows(series.id) == []
+    end
   end
 
   describe "manual_grab_movie/2" do
@@ -855,4 +890,13 @@ defmodule Cinder.CatalogTest do
 
   defp profile(kind, handling),
     do: Enum.find(Catalog.list_profiles(kind), &(&1.handling == handling))
+
+  defp series_rows(series_id),
+    do:
+      Repo.all(
+        from b in BlockedRelease,
+          where: b.series_id == ^series_id,
+          order_by: b.id,
+          select: {b.release_title, b.indexer_source, b.indexer_id}
+      )
 end
