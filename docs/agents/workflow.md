@@ -189,6 +189,14 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
 - A fresh T3 worktree has no `deps/` or `_build/`. Run `scripts/seed-worktree` in it before any
   `mix` task, and again after a failure; its header says what it does. On a branch cut before
   the script existed, run `~/Projects/cinder/scripts/seed-worktree`.
+- `t3.json` keeps a fresh worktree free of `deps/`. Since 0.1.12, T3 Code can give a new worktree
+  thread its own worktree of a Git repository it discovers in the project folder. T3 reads
+  `t3.json` from the main checkout, and its `ignoreRepositories` entry `deps` keeps discovery out
+  of `deps/`. Without it, T3 by default creates `deps/heroicons` in the new worktree, so the seed
+  keeps that `deps/` and skips its copy, and `mix deps.get` replaces T3's worktree with a clone.
+  Each later turn of the thread then fails with "Couldn't recreate thread workspace". Moving the
+  clone out of the thread's folder lets T3 recreate its worktree and run the turn, until the next
+  `mix deps.get` replaces it again.
 - The seed also installs a runner for `.githooks/pre-push`, the format and Credo gates a push
   runs; the script's and the hook's headers say when each one skips.
 - If a test then behaves like old code, run `MIX_ENV=test mix compile --force`.
