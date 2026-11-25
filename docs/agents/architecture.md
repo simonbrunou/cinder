@@ -13,9 +13,10 @@
 ## External services go through behaviours
 
 Every external service (TMDB, Prowlarr, torrent and Usenet clients, Jellyfin/Plex,
-Audiobookshelf, Booklore) is reached only through a behaviour, never directly from a context:
-`Cinder.Catalog.TMDB`, `Cinder.Acquisition.IndexerSource`, `Cinder.Download.Client`,
-`Cinder.Library.MediaServer`, `Cinder.Books.Metadata`, `Cinder.Library.AudiobookServer`.
+Audiobookshelf, Booklore, the Prowlarr/Indexers definitions on GitHub) is reached only through a
+behaviour, never directly from a context: `Cinder.Catalog.TMDB`,
+`Cinder.Acquisition.IndexerSource`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`,
+`Cinder.Books.Metadata`, `Cinder.Library.AudiobookServer`, `Cinder.Indexers.Definitions.Source`.
 
 - Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
   The Mox mock is defined at runtime, so compile-time resolution breaks

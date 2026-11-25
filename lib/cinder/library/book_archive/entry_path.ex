@@ -21,13 +21,23 @@ defmodule Cinder.Library.BookArchive.EntryPath do
   """
   @spec safe(String.t(), String.t()) :: {:ok, String.t()} | {:error, :archive_entry_unsafe}
   def safe(raw_name, dest_dir) do
+    with {:ok, name} <- safe_name(raw_name), do: contained_target(name, dest_dir)
+  end
+
+  @doc """
+  The name rules of `safe/2` without a destination folder: trailing NUL bytes trimmed, then
+  refused when empty, absolute or holding a `..` component. `Cinder.Indexers.Definitions.Archive`
+  reads its archive in memory and checks each entry name with this.
+  """
+  @spec safe_name(String.t()) :: {:ok, String.t()} | {:error, :archive_entry_unsafe}
+  def safe_name(raw_name) do
     name = String.trim_trailing(raw_name, "\u0000")
 
     cond do
       name == "" -> {:error, :archive_entry_unsafe}
       Path.type(name) != :relative -> {:error, :archive_entry_unsafe}
       ".." in Path.split(name) -> {:error, :archive_entry_unsafe}
-      true -> contained_target(name, dest_dir)
+      true -> {:ok, name}
     end
   end
 

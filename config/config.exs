@@ -50,6 +50,7 @@ config :cinder, Cinder.Repo,
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer_source: Cinder.Acquisition.IndexerSource.Prowlarr
+config :cinder, indexer_definitions_source: Cinder.Indexers.Definitions.Source.GitHub
 config :cinder, plex_auth: Cinder.Accounts.PlexAuth.HTTP
 config :cinder, jellyfin_auth: Cinder.Accounts.JellyfinAuth.HTTP
 

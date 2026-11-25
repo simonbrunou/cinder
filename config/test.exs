@@ -87,6 +87,7 @@ config :phoenix,
 config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer_source: Cinder.Acquisition.IndexerMock,
+  indexer_definitions_source: Cinder.Indexers.Definitions.SourceMock,
   plex_auth: Cinder.Accounts.PlexAuthMock,
   jellyfin_auth: Cinder.Accounts.JellyfinAuthMock,
   oidc_auth: Cinder.Accounts.OIDCMock,
@@ -150,6 +151,10 @@ config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
   base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
+
+# The Prowlarr/Indexers definitions adapter's own test routes Req through a Req.Test stub.
+config :cinder, Cinder.Indexers.Definitions.Source.GitHub,
+  req_options: [plug: {Req.Test, Cinder.DefinitionsSourceStub}, retry: false]
 
 config :cinder, Cinder.Library.MigrationSource.Radarr,
   base_url: "http://radarr:7878",

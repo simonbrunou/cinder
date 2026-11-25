@@ -23,6 +23,10 @@ Mox.defmock(Cinder.Acquisition.IndexerMock, for: Cinder.Acquisition.IndexerSourc
 # The indexer `Cinder.IndexerStubs.anime_sweep_pick/4` stubs, so its answers never reach a test's
 # own `IndexerMock` expectations.
 Mox.defmock(Cinder.Acquisition.InHandIndexerMock, for: Cinder.Acquisition.IndexerSource)
+Mox.defmock(Cinder.Indexers.Definitions.SourceMock, for: Cinder.Indexers.Definitions.Source)
+# The source `Cinder.Indexers.Definitions.SourceTest` points `:indexer_definitions_source` at, to
+# show `Source.fetch/1` reads that key rather than naming `SourceMock`.
+Mox.defmock(Cinder.Indexers.Definitions.OtherSourceMock, for: Cinder.Indexers.Definitions.Source)
 Mox.defmock(Cinder.Download.ClientMock, for: Cinder.Download.Client)
 # Second client mock so routing tests can prove a usenet release reaches the
 # usenet-mapped client (and a torrent release does not). Wired as the :usenet
