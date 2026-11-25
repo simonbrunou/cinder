@@ -36,8 +36,8 @@ Read the matching doc before you act:
   picked or skipped.
 - [Configuration](docs/agents/configuration.md): before adding a setting or env var, or touching
   secrets, a sign-in flow, `/settings`, the auth plugs or `/api/v1`.
-- [Testing](docs/agents/testing.md): before writing a test, running `mix test` again after a
-  review fix, or calling a task done.
+- [Testing](docs/agents/testing.md): before writing a test or a migration, running `mix test`
+  again after a review fix, or calling a task done.
 - [Workflow](docs/agents/workflow.md): before starting a feature, an audit or a review, filing an
   issue, opening a PR, or cutting a release.
 - The `writing-for-agents` skill, then [workflow.md](docs/agents/workflow.md) "Agent docs":

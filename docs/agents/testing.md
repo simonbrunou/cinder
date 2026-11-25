@@ -235,6 +235,15 @@
   A statement sent right after `start_supervised!/1` queues behind that open, and on a loaded
   runner the pool dropped it on `queue_timeout` (#963). `test/code_health_test.exs` fails on a
   private repo started another way.
+- Ecto applies each migration version to a test database once. `mix test` and
+  `mix test.unchecked` migrate their database first and record each version they run, so a later
+  edit to that migration never runs there. Write the body of a migration that
+  `mix ecto.gen.migration` creates before the next test run: on #1645 the empty `change/0` ran
+  first, and the tests that read `blocked_releases` then failed with
+  `no such column: b0.indexer_source`. After any edit to a migration a test run already applied,
+  drop each test database and let the next run migrate it afresh: `MIX_ENV=test mix ecto.drop`
+  drops `cinder_test.db`, and `MIX_TEST_PARTITION=<n> MIX_ENV=test mix ecto.drop` drops
+  `cinder_test<n>.db`, for each `<n>` that `ls cinder_test*.db` lists.
 - A boot-time DB read from any process but `Cinder.Supervisor` stalls every `mix test` until the
   pool drops it: 60 to 90 s at the test env's `queue_target` (#1018). When you add a read at
   boot, gate it off in `config/test.exs`, as `warn_unprotected_at_boot` does. When you change
