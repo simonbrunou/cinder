@@ -54,6 +54,22 @@
   quiet host and 2 to 4 s at a load of 61, where a first draft with nine shapes, one load after
   another, took 19 s. On #1664 the Standards review found that `[~]` in two list slots raised
   `BadMapError`, a fix round the sweep would have saved.
+- A Cardigann engine rule that copies Prowlarr's .NET behaviour, such as a regex, a date format or
+  the replacement syntax, takes its expected values from a `dotnet fsi` run. The test names the rows
+  that came from it, the .NET call with its options and the SDK version, as the header comment of
+  `test/cinder/acquisition/indexer/cardigann/dotnet_date_test.exs` does. From the checkout,
+  `nix build --no-link --print-out-paths --inputs-from . nixpkgs#dotnet-sdk_8` prints the path of
+  the SDK the repo's flake lock pins (8.0.427 on #1712). Run `<path>/bin/dotnet fsi <script>.fsx`
+  with `TZ=UTC`, `DOTNET_CLI_TELEMETRY_OPTOUT=1`, `DOTNET_NOLOGO=1` and `HOME=<scratch dir>`, and
+  keep the script and its output in that scratch directory. `TZ=UTC` makes .NET's local zone the
+  engine's UTC: .NET gives a `zzz` row in local time and fills a layout with no date from the local
+  date. The two `DOTNET_` variables keep the welcome banner, the telemetry notice and the
+  certificate notice out of the output, and `HOME` keeps the SDK's first-run files, an HTTPS
+  development certificate among them, out of your home directory. The first run in a new scratch
+  home prints `An issue was encountered verifying workloads` on stdout, which changes no result. On
+  #1712 such runs settled nine of the eleven choices its body records, such as the `zzz` forms and
+  the `yy` pivot, and proved two review findings: `HH` and `hh` read one hour field, and `\c\` is
+  the control character 0x1C in .NET and in `:re`.
 - A bug fix starts with a test that reproduces the bug. Then make it pass.
 - New functionality, such as a choke-point, a state or a writer, ships with a test.
 - A field that code sets but no code reads yet, such as one a conversion copies for a later
