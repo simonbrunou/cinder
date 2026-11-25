@@ -3,6 +3,7 @@ defmodule Cinder.Acquisition.Anime do
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Release, ReleaseJudge, Scorer}
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Catalog.{AnimeResolver, Episode, EpisodeNumbering, TitleAlias}
   alias Cinder.Download.Intent
 
@@ -17,7 +18,27 @@ defmodule Cinder.Acquisition.Anime do
   @precedence_rank %{manual: 0, curated: 1, inferred: 2}
   @kind_rank %{scene: 0, licensed: 1, romaji: 2, native: 3, alternative: 4}
 
-  def search_movie(indexer, imdb_id, context, _opts) do
+  @doc """
+  Runs the anime movie queries through `indexer` and returns `{:ok, releases, incomplete?}`,
+  `incomplete?` true when the search is incomplete (`Report.incomplete?/1`), or the error
+  `Report.combine/1` picks when no query answered.
+  """
+  def search_movie(indexer, imdb_id, context, _opts),
+    do: indexer |> movie_search(imdb_id, context) |> with_incomplete_flag()
+
+  @doc """
+  Runs the anime episode queries for `wanted_ids` through `indexer`, in `search_movie/4`'s
+  shape.
+  """
+  def search_episodes(indexer, context, wanted_ids, _opts),
+    do: indexer |> episode_search(context, wanted_ids) |> with_incomplete_flag()
+
+  defp with_incomplete_flag({:ok, releases, report}),
+    do: {:ok, releases, Report.incomplete?(report)}
+
+  defp with_incomplete_flag({:error, _reason} = error), do: error
+
+  defp movie_search(indexer, imdb_id, context) do
     free_text_queries =
       Enum.map(search_titles(context), fn title ->
         query = "#{title} #{context.year}"
@@ -33,9 +54,9 @@ defmodule Cinder.Acquisition.Anime do
     run_queries(id_queries ++ free_text_queries, context)
   end
 
-  def search_episodes(_indexer, _context, [], _opts), do: {:ok, [], false}
+  defp episode_search(_indexer, _context, []), do: {:ok, [], Report.new()}
 
-  def search_episodes(indexer, context, wanted_ids, _opts) do
+  defp episode_search(indexer, context, wanted_ids) do
     context
     |> episode_queries(indexer, wanted_ids)
     |> Enum.take(@max_queries)
@@ -47,12 +68,18 @@ defmodule Cinder.Acquisition.Anime do
   (`Cinder.Acquisition.ReleaseJudge`, guard `{:anime_movie, context}`). The sweep picks from it
   (`Cinder.Acquisition.best_anime_movie/3`) and the manual-search panel lists it.
 
-  Returns `{:ok, judged, incomplete?}`, `incomplete?` true when some query failed, or
-  `{:error, term}` when every query failed.
+  Returns `{:ok, judged, incomplete?}`, the judged record carrying the queries' merged report
+  and `incomplete?` its `Report.incomplete?/1`, or the error `Report.combine/1` picks when no
+  query answered.
   """
   def judge_movie(indexer, imdb_id, context, opts) do
-    with {:ok, releases, incomplete?} <- search_movie(indexer, imdb_id, context, opts),
-         do: {:ok, ReleaseJudge.judge(releases, {:anime_movie, context}, opts), incomplete?}
+    with {:ok, releases, report} <- movie_search(indexer, imdb_id, context),
+         do: judged(releases, {:anime_movie, context}, opts, report)
+  end
+
+  defp judged(releases, guard, opts, report) do
+    judged = %{ReleaseJudge.judge(releases, guard, opts) | report: report}
+    {:ok, judged, Report.incomplete?(report)}
   end
 
   @doc """
@@ -60,19 +87,17 @@ defmodule Cinder.Acquisition.Anime do
   (`Cinder.Acquisition.ReleaseJudge`, guard `{:anime_episodes, context, wanted_ids}`). The sweep
   picks from it (`best_episodes/4`) and the manual-search panel lists it.
 
-  Returns `{:ok, judged, incomplete?}`, `incomplete?` true when some query failed, or
-  `{:error, term}` when every query failed.
+  Returns `judge_movie/4`'s shape.
   """
   def judge_episodes(indexer, context, wanted_ids, opts) do
-    with {:ok, releases, incomplete?} <- search_episodes(indexer, context, wanted_ids, opts) do
-      judged = ReleaseJudge.judge(releases, {:anime_episodes, context, wanted_ids}, opts)
-      {:ok, judged, incomplete?}
-    end
+    with {:ok, releases, report} <- episode_search(indexer, context, wanted_ids),
+         do: judged(releases, {:anime_episodes, context, wanted_ids}, opts, report)
   end
 
   @doc """
   The releases the anime sweep grabs for `wanted_ids`: `judge_episodes/4`'s pick
-  (`Cinder.Acquisition.ReleaseJudge.pick/1`). When some query failed and the pick doesn't cover
+  (`Cinder.Acquisition.ReleaseJudge.pick/1`). When the search is incomplete
+  (`Cinder.Acquisition.IndexerSource.Report.incomplete?/1`) and the pick doesn't cover
   `opts[:required_episode_ids]` (default `wanted_ids`), `{:error, :incomplete_search}`: the
   release it needed may be behind the failure.
   """
@@ -947,39 +972,25 @@ defmodule Cinder.Acquisition.Anime do
 
   defp within_codepoint_limit?(_value, _limit), do: false
 
-  # Nothing left to ask (no IMDb id and every title over the codepoint limit). Return an empty
-  # pool rather than raising on `hd(failures)` — a raise here only gets logged by the poller's
-  # isolate, so it would re-run every tick with nothing parked.
-  defp run_queries([], _context), do: {:ok, [], false}
-
+  # Every query's answer combined (`Report.combine/1`): the answering queries' releases with the
+  # merged report, or the error it picks when none answered. Nothing left to ask (no IMDb id and
+  # every title over the codepoint limit) gives an empty pool, not an error: a raise here only gets
+  # logged by the poller's isolate, so it would re-run every tick with nothing parked.
   defp run_queries(queries, context) do
-    outcomes = Enum.map(queries, &run_query/1)
-    successes = for {:ok, releases} <- outcomes, do: releases
-    failures = for {:error, reason} <- outcomes, do: reason
+    with {:ok, batches, report} <- queries |> Enum.map(&run_query/1) |> Report.combine() do
+      releases =
+        batches
+        |> List.flatten()
+        |> deduplicate(Map.get(context, :tvdb_id))
+        |> apply_title_guard(context)
 
-    case successes do
-      [] ->
-        {:error, hd(failures)}
-
-      _ ->
-        releases =
-          successes
-          |> List.flatten()
-          |> deduplicate(Map.get(context, :tvdb_id))
-          |> apply_title_guard(context)
-
-        {:ok, releases, failures != []}
+      {:ok, releases, report}
     end
   end
 
   defp run_query({origin, query}) do
-    case query.() do
-      {:ok, results} when is_list(results) ->
-        {:ok, Enum.flat_map(results, &build_release(&1, origin))}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    with {:ok, results, report} <- Report.from_result(query.()),
+         do: {:ok, Enum.flat_map(results, &build_release(&1, origin)), report}
   end
 
   defp build_release(%{title: title} = result, origin) when is_binary(title) do

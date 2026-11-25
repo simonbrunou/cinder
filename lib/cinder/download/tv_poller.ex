@@ -31,7 +31,7 @@ defmodule Cinder.Download.TvPoller do
   import Ecto.Query
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
-  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, ReleaseJudge}
+  alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, IndexerSource, ReleaseJudge}
   alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.{SourceRemoval, Watch}
   alias Cinder.HTTPPolicy
@@ -674,17 +674,20 @@ defmodule Cinder.Download.TvPoller do
     Enum.reject(episodes, &MapSet.member?(ids, &1.season.id))
   end
 
+  # One indexer source per series visit (`IndexerSource.configured/0`, read once): every season
+  # group and the anime fallback run on it.
   defp search_series(episodes) do
     series = hd(episodes).season.series
     summary = Catalog.media_profile_summary(series)
+    indexer = IndexerSource.configured()
 
     case summary.effective do
-      :anime -> search_anime_series(series, episodes)
-      :standard -> search_standard_series(series, episodes, summary)
+      :anime -> search_anime_series(series, episodes, indexer)
+      :standard -> search_standard_series(series, episodes, summary, indexer)
     end
   end
 
-  defp search_standard_series(series, episodes, summary) do
+  defp search_standard_series(series, episodes, summary, indexer) do
     groups = Enum.group_by(episodes, & &1.season.season_number)
     # One read of the series' numbering inputs per visit (#923). A season grabbed earlier in the
     # visit stays a native season for the later ones, and a raise here skips the whole series.
@@ -694,7 +697,7 @@ defmodule Cinder.Download.TvPoller do
       Enum.map(groups, fn {season_number, group} ->
         result =
           isolate("series #{series.id} s#{season_number}", fn ->
-            search_standard_group(group, Map.fetch!(contexts, season_number))
+            search_standard_group(group, Map.fetch!(contexts, season_number), indexer)
           end)
 
         {group, result}
@@ -719,7 +722,7 @@ defmodule Cinder.Download.TvPoller do
     # a stale marker goes the way the operator's fix would take it (#791).
     if grabbed == [] and skipped == [] and not search_failed? and
          MediaProfile.auto_anime_fallback?(summary) do
-      search_anime_series(series, episodes)
+      search_anime_series(series, episodes, indexer)
     else
       Catalog.reresolve_anime_hold(series)
       bump_not_grabbed(episodes, grabbed ++ skipped)
@@ -727,13 +730,19 @@ defmodule Cinder.Download.TvPoller do
   end
 
   # The season's release list is the manual panel's (`Acquisition.judge_season/3`); the sweep
-  # claims only the episodes due this tick.
-  defp search_standard_group(episodes, %{series: series, season_number: season_number} = context) do
+  # claims only the episodes due this tick. A `:no_match` from an incomplete search is the error
+  # `:incomplete_search`: the release it needed may be behind the failure, so the visit reads the
+  # group as failed and runs no anime fallback.
+  defp search_standard_group(
+         episodes,
+         %{series: series, season_number: season_number} = context,
+         indexer
+       ) do
     numbers = Enum.map(episodes, & &1.episode_number)
+    opts = Keyword.put(HouseholdPolicy.for_target(series), :indexer_source, indexer)
 
-    with {:ok, judged} <-
-           Acquisition.judge_season(context, numbers, HouseholdPolicy.for_target(series)),
-         {:ok, assignments} <- ReleaseJudge.pick(judged) do
+    with {:ok, judged} <- Acquisition.judge_season(context, numbers, opts),
+         {:ok, assignments} <- ReleaseJudge.sweep_pick(judged) do
       {:ok, Enum.flat_map(assignments, &grab_assignment(&1, episodes))}
     else
       :no_match ->
@@ -748,14 +757,14 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  defp search_anime_series(series, episodes) do
+  defp search_anime_series(series, episodes, indexer) do
     wanted_ids = Enum.map(episodes, & &1.id)
     context = Catalog.anime_series_acquisition_context(series)
 
     case AnimePreferences.resolve(series, Settings.anime_defaults()) do
       {:ok, policy} ->
         Catalog.set_anime_hold(series, nil)
-        search_anime_with_policy(series, episodes, context, wanted_ids, policy)
+        search_anime_with_policy(series, episodes, context, wanted_ids, policy, indexer)
 
       {:error, reason} ->
         # DB-visible hold (surfaced on /activity), re-evaluated every sweep: the next
@@ -766,8 +775,8 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  defp search_anime_with_policy(series, episodes, context, wanted_ids, policy) do
-    opts = HouseholdPolicy.for_target(series) ++ [anime_policy: policy]
+  defp search_anime_with_policy(series, episodes, context, wanted_ids, policy, indexer) do
+    opts = HouseholdPolicy.for_target(series) ++ [anime_policy: policy, indexer_source: indexer]
 
     case Acquisition.best_anime_releases(context, wanted_ids, opts) do
       {:ok, %{assignments: assignments, waiting: waiting}} ->

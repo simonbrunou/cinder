@@ -2,13 +2,15 @@ defmodule Cinder.Acquisition do
   @moduledoc """
   Release acquisition: search an indexer for a movie and pick the best release.
 
-  The indexer is reached only through the `Cinder.Acquisition.IndexerSource` behaviour,
-  resolved from config (`config :cinder, :indexer_source`) so tests use a Mox mock and
-  never hit the network.
+  The indexer is reached only through the `Cinder.Acquisition.IndexerSource` behaviour. Each
+  search entry takes the source module as `indexer_source:` in its opts, or reads
+  `IndexerSource.configured/0` once when the opt is absent, and sends every seam call of that
+  search to it (`IndexerSource.pop_opt/1`). The judge never receives the opt.
   """
   require Logger
 
-  alias Cinder.Acquisition.{Anime, AnimeParser, Scorer}
+  alias Cinder.Acquisition.{Anime, AnimeParser, IndexerSource, Scorer}
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.ReleaseJudge
   alias Cinder.Catalog.{Episode, EpisodeNumbering}
@@ -17,16 +19,20 @@ defmodule Cinder.Acquisition do
 
   @doc """
   The release the movie sweep grabs for the movie `context` describes
-  (`Cinder.Catalog.movie_acquisition_context/1`): `judge_movie/3`'s pick
-  (`Cinder.Acquisition.ReleaseJudge.pick/1`). `opts` is the household policy
+  (`Cinder.Catalog.movie_acquisition_context/1`): `judge_movie/3`'s sweep pick
+  (`Cinder.Acquisition.ReleaseJudge.sweep_pick/1`). `opts` is the household policy
   (`Cinder.Acquisition.HouseholdPolicy.for_target/2`).
 
   Returns `{:ok, %Release{}}`, `:no_match` (no results, or none survive the rules),
-  `:no_language_match` (a strict audio pick removed every candidate), or `{:error, term}`
-  (indexer failure, passed through).
+  `:no_language_match` (a strict audio pick removed every candidate),
+  `{:error, :incomplete_search}` when the pick is `:no_match` or `:no_language_match` and the
+  search's report is incomplete (`Cinder.Acquisition.IndexerSource.Report.incomplete?/1`: the
+  release it needed may be behind the failure), or `{:error, term}` (indexer failure, passed
+  through).
   """
   def best_release(imdb_id, context, opts \\ []) do
-    with {:ok, judged} <- judge_movie(imdb_id, context, opts), do: ReleaseJudge.pick(judged)
+    with {:ok, judged} <- judge_movie(imdb_id, context, opts),
+         do: ReleaseJudge.sweep_pick(judged)
   end
 
   @doc """
@@ -39,23 +45,28 @@ defmodule Cinder.Acquisition do
   and the stricter Title.Year guard re-establishes the identity the id would have pinned
   (`{:title_year, title, year}`). The guard follows the id that was searched, not
   `context.imdb_id`: the sweep can fetch an id the context doesn't carry yet.
-  """
-  def judge_movie(imdb_id, context, opts \\ [])
 
-  def judge_movie(imdb_id, context, opts) when imdb_id in [nil, ""] do
-    with {:ok, releases} <- title_search(context.title, context.year),
-         do: {:ok, ReleaseJudge.judge(releases, {:title_year, context.title, context.year}, opts)}
+  The judged record carries the search's report (`Cinder.Acquisition.IndexerSource.Report`).
+  """
+  def judge_movie(imdb_id, context, opts \\ []) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
+    judge_movie_with(indexer, imdb_id, context, opts)
   end
 
-  def judge_movie(imdb_id, context, opts) do
-    case indexer().search(imdb_id) do
-      {:ok, raw} ->
-        {:ok, ReleaseJudge.judge(Enum.map(raw, &Release.new/1), {:imdb, context}, opts)}
-
-      {:error, _reason} = error ->
-        error
+  defp judge_movie_with(indexer, imdb_id, context, opts) when imdb_id in [nil, ""] do
+    with {:ok, releases, report} <- title_search(indexer, context.title, context.year) do
+      guard = {:title_year, context.title, context.year}
+      {:ok, judged(releases, guard, opts, report)}
     end
   end
+
+  defp judge_movie_with(indexer, imdb_id, context, opts) do
+    with {:ok, raw, report} <- Report.from_result(indexer.search(imdb_id)),
+         do: {:ok, judged(Enum.map(raw, &Release.new/1), {:imdb, context}, opts, report)}
+  end
+
+  defp judged(releases, guard, opts, report),
+    do: %{ReleaseJudge.judge(releases, guard, opts) | report: report}
 
   @doc """
   The release the anime movie sweep grabs: `judge_anime_movie/3`'s pick
@@ -63,8 +74,9 @@ defmodule Cinder.Acquisition do
 
   Returns what the pick returns (`{:ok, %Release{}}`, `:no_match`, `:no_language_match`,
   `{:waiting_for_preferred_group, %{retry_at: retry_at}}`), `{:error, :incomplete_search}` when
-  nothing matched and some query failed (the release it needed may be behind the failure), or
-  `{:error, term}` when every query failed.
+  nothing matched and the search is incomplete (a query failed, or an indexer failed:
+  `Cinder.Acquisition.IndexerSource.Report.incomplete?/1`), so the release it needed may be
+  behind the failure, or `{:error, term}` when no query answered.
   """
   def best_anime_movie(imdb_id, context, opts \\ []) do
     with {:ok, judged, incomplete?} <- judge_anime_movie(imdb_id, context, opts) do
@@ -83,8 +95,10 @@ defmodule Cinder.Acquisition do
   Returns `{:ok, judged, incomplete?}` or `{:error, term}`
   (`Cinder.Acquisition.Anime.judge_movie/4`).
   """
-  def judge_anime_movie(imdb_id, context, opts \\ []),
-    do: Anime.judge_movie(indexer(), imdb_id, context, opts)
+  def judge_anime_movie(imdb_id, context, opts \\ []) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
+    Anime.judge_movie(indexer, imdb_id, context, opts)
+  end
 
   @doc """
   The releases the upgrade sweep (`Cinder.Catalog.UpgradeHunter`) considers for one TV
@@ -115,24 +129,28 @@ defmodule Cinder.Acquisition do
   end
 
   defp judge_upgrade_season(series, season_number, wanted_numbers, opts) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
     {mappings, opts} = Keyword.pop(opts, :mappings, [])
     vetted_elsewhere = EpisodeNumbering.contested_native_codes(mappings, season_number)
-    judge_releases(series, season_number, wanted_numbers, nil, vetted_elsewhere, opts)
+    judge_releases(indexer, series, season_number, wanted_numbers, nil, vetted_elsewhere, opts)
   end
 
-  defp search_tv_seasons(indexer, series, [season_number]) do
-    indexer.search_tv(series.tvdb_id, series.title, season_number)
-  end
-
+  # Halts on the first call that returns any error, `{:indexers_backing_off, retry_at}` and
+  # `:no_indexers` included, and returns that error as it is; otherwise every call's rows in
+  # season order, and their reports merged in that order.
   defp search_tv_seasons(indexer, series, season_numbers) do
-    Enum.reduce_while(season_numbers, {:ok, []}, fn season_number, {:ok, batches} ->
-      case indexer.search_tv(series.tvdb_id, series.title, season_number) do
-        {:ok, raw_results} -> {:cont, {:ok, [raw_results | batches]}}
-        {:error, _reason} = error -> {:halt, error}
+    Enum.reduce_while(season_numbers, {:ok, [], Report.new()}, fn season_number,
+                                                                  {:ok, batches, report} ->
+      case Report.from_result(indexer.search_tv(series.tvdb_id, series.title, season_number)) do
+        {:ok, raw_results, call_report} ->
+          {:cont, {:ok, [raw_results | batches], Report.merge(report, call_report)}}
+
+        {:error, _reason} = error ->
+          {:halt, error}
       end
     end)
     |> case do
-      {:ok, batches} -> {:ok, batches |> Enum.reverse() |> List.flatten()}
+      {:ok, batches, report} -> {:ok, batches |> Enum.reverse() |> List.flatten(), report}
       {:error, _reason} = error -> error
     end
   end
@@ -142,7 +160,8 @@ defmodule Cinder.Acquisition do
   ids: `judge_anime_episodes/3`'s pick (`Cinder.Acquisition.Anime.best_episodes/4`).
   """
   def best_anime_releases(context, wanted_episode_ids, opts \\ []) do
-    Anime.best_episodes(indexer(), context, wanted_episode_ids, opts)
+    {indexer, opts} = IndexerSource.pop_opt(opts)
+    Anime.best_episodes(indexer, context, wanted_episode_ids, opts)
   end
 
   @doc """
@@ -151,7 +170,8 @@ defmodule Cinder.Acquisition do
   (`Cinder.Acquisition.Anime.best_episode_upgrades/5`).
   """
   def best_anime_upgrades(context, wanted_episode_ids, upgrade?, opts \\ []) do
-    Anime.best_episode_upgrades(indexer(), context, wanted_episode_ids, upgrade?, opts)
+    {indexer, opts} = IndexerSource.pop_opt(opts)
+    Anime.best_episode_upgrades(indexer, context, wanted_episode_ids, upgrade?, opts)
   end
 
   @doc """
@@ -162,8 +182,10 @@ defmodule Cinder.Acquisition do
   Returns `{:ok, judged, incomplete?}` or `{:error, term}`
   (`Cinder.Acquisition.Anime.judge_episodes/4`).
   """
-  def judge_anime_episodes(context, wanted_ids, opts \\ []),
-    do: Anime.judge_episodes(indexer(), context, wanted_ids, opts)
+  def judge_anime_episodes(context, wanted_ids, opts \\ []) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
+    Anime.judge_episodes(indexer, context, wanted_ids, opts)
+  end
 
   @doc """
   The release judge's title guard: the releases automatic selection keeps as the target's own.
@@ -277,12 +299,15 @@ defmodule Cinder.Acquisition do
   operator may search what the sweep is resting. It changes the set-cover's band and the rows'
   verdicts, never `kept`, the seasons searched or the bridge.
 
-  Returns `{:ok, %ReleaseJudge{}}`, or the first failed query's `{:error, term}`.
+  Returns `{:ok, %ReleaseJudge{}}`, carrying the season queries' reports merged in search order,
+  or the first failed query's `{:error, term}`.
   """
   def judge_season(context, wanted_numbers, opts) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
     opts = Keyword.put(opts, :pack_episode_count, context.episode_count)
 
     judge_releases(
+      indexer,
       context.series,
       context.season_number,
       wanted_numbers,
@@ -292,7 +317,15 @@ defmodule Cinder.Acquisition do
     )
   end
 
-  defp judge_releases(series, season_number, wanted_numbers, numbering, vetted_elsewhere, opts) do
+  defp judge_releases(
+         indexer,
+         series,
+         season_number,
+         wanted_numbers,
+         numbering,
+         vetted_elsewhere,
+         opts
+       ) do
     {alternate_seasons, opts} =
       case numbering do
         %{search_seasons: seasons, scorer: scorer, held: held} ->
@@ -305,8 +338,8 @@ defmodule Cinder.Acquisition do
           {[], opts}
       end
 
-    case search_tv_seasons(indexer(), series, [season_number | alternate_seasons]) do
-      {:ok, raw} ->
+    case search_tv_seasons(indexer, series, [season_number | alternate_seasons]) do
+      {:ok, raw, report} ->
         releases =
           raw
           |> Enum.map(&Release.new/1)
@@ -314,8 +347,7 @@ defmodule Cinder.Acquisition do
           |> Enum.map(&resolve_bridged_release(&1, season_number, numbering))
           |> Enum.map(&mark_vetted_elsewhere(&1, season_number, vetted_elsewhere))
 
-        {:ok,
-         ReleaseJudge.judge(releases, {:series, series, season_number, wanted_numbers}, opts)}
+        {:ok, judged(releases, {:series, series, season_number, wanted_numbers}, opts, report)}
 
       {:error, _} = error ->
         error
@@ -736,13 +768,11 @@ defmodule Cinder.Acquisition do
   # judge drops what the Title.Year guard rejects from the sweep's pool, but the manual panel must
   # keep listing everything — the guard is deliberately strict, so a title convention it fails
   # closed on is exactly when the operator needs to see and override the rows.
-  defp title_search(title, year) do
+  defp title_search(indexer, title, year) do
     query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
 
-    case indexer().search_movie_query(query, []) do
-      {:ok, raw} -> {:ok, Enum.map(raw, &Release.new/1)}
-      {:error, _reason} = error -> error
-    end
+    with {:ok, raw, report} <- Report.from_result(indexer.search_movie_query(query, [])),
+         do: {:ok, Enum.map(raw, &Release.new/1), report}
   end
 
   # An IMDb-scoped search is scope, not identity proof — the TV lesson of #315. An indexer can
@@ -1087,8 +1117,4 @@ defmodule Cinder.Acquisition do
       _ -> string
     end
   end
-
-  # Resolve the impl at runtime (not compile_env!) so the test Mox module — defined
-  # at runtime — doesn't warn under --warnings-as-errors. fetch_env! fails fast if unset.
-  defp indexer, do: Application.fetch_env!(:cinder, :indexer_source)
 end

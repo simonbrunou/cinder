@@ -50,17 +50,29 @@ defmodule Cinder.Acquisition.BookSearch do
 
   ## Partial failure is reported, not hidden
 
-  `search/2` returns `{:ok, releases, complete?}`. `complete? == false` means at least one query
-  errored, so an empty or thin result set may be an outage rather than an absence — the same
-  distinction `Cinder.Acquisition.Anime.search_movie/4` carries as its `failed?` flag, and the
-  same one `Cinder.Books.Identity` draws between "no reliable match" and "providers unavailable".
-  Only an all-queries-failed search returns `{:error, :indexer_unavailable}`.
+  `search/3` returns `{:ok, releases, complete?}`. `complete? == false` means the search is
+  incomplete (`Cinder.Acquisition.IndexerSource.Report.incomplete?/1`: a query errored, or an
+  indexer failed), so an empty or thin result set may be an outage rather than an absence. That
+  is the same distinction `Cinder.Acquisition.Anime.search_movie/4` carries as its `incomplete?`
+  flag, and the same one `Cinder.Books.Identity` draws between "no reliable match" and "providers
+  unavailable". A query whose indexers were all backing off (`{:indexers_backing_off, retry_at}`)
+  or that had no indexer (`:no_indexers`) does not make the search incomplete. When no query
+  answered, the search returns the error `Report.combine/1` picks: the first error among the
+  queries that is neither of those two, such as `{:prowlarr_status, 500}` under Prowlarr; else
+  the backoff that ends first; else `:no_indexers`. When that first error is
+  `{:no_indexer_answered, report}`, its report merges every such error's report.
+
+  ## One source per search
+
+  Every query of one search goes to one indexer source: the module `opts[:indexer_source]` names,
+  else `Cinder.Acquisition.IndexerSource.configured/0`, read once when the search starts.
   """
 
   require Logger
 
-  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease}
+  alias Cinder.Acquisition.{AudiobookRelease, BookKind, BookScorer, EbookRelease, IndexerSource}
   alias Cinder.Acquisition.BookSearch.NormalizedWork
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Books.{Edition, Identifier, Work}
 
   @max_identifier_queries 3
@@ -94,14 +106,24 @@ defmodule Cinder.Acquisition.BookSearch do
   and the identifiers under the plan's `identifiers_key`, or a
   `Cinder.Acquisition.BookSearch.NormalizedWork`, which is searched as it is.
 
-  Returns `{:ok, releases, complete?}`, every release the plan's kind of struct, or
-  `{:error, :indexer_unavailable}` when every query failed. Releases are deduped by
-  `download_url`, with `query_origins` merged so a release found by both an identifier probe and a
-  free-text query keeps both provenances.
+  `opts[:indexer_source]` is the source module every query of the search goes to, else
+  `Cinder.Acquisition.IndexerSource.configured/0`.
+
+  Returns `{:ok, releases, complete?}`, every release the plan's kind of struct, or, when no
+  query answered, `{:error, reason}`, the reason the moduledoc's "Partial failure" picks.
+  Releases are deduped by `download_url`, with `query_origins` merged so a release found by both
+  an identifier probe and a free-text query keeps both provenances.
   """
-  @spec search(Work.t() | NormalizedWork.t() | map(), plan()) ::
-          {:ok, [release()], boolean()} | {:error, :indexer_unavailable}
-  def search(work, %{media_kind: kind} = plan) do
+  @spec search(Work.t() | NormalizedWork.t() | map(), plan(), keyword()) ::
+          {:ok, [release()], boolean()} | {:error, term()}
+  def search(work, plan, opts \\ []) do
+    {indexer, _opts} = IndexerSource.pop_opt(opts)
+
+    with {:ok, releases, report} <- search_with(indexer, work, plan),
+         do: {:ok, releases, not Report.incomplete?(report)}
+  end
+
+  defp search_with(indexer, work, %{media_kind: kind} = plan) do
     %NormalizedWork{title: title, authors: authors, identifiers: identifiers} =
       normalize(work, plan)
 
@@ -110,10 +132,13 @@ defmodule Cinder.Acquisition.BookSearch do
     identifier_queries =
       identifiers
       |> Enum.take(@max_identifier_queries)
-      |> Enum.map(fn id -> {:identifier, fn -> text_query(kind, id) end} end)
+      |> Enum.map(fn id -> {:identifier, fn -> text_query(indexer, kind, id) end} end)
 
-    structured = [{:structured, fn -> structured_query(kind, author, title) end}]
-    free_text = [{:free_text, fn -> text_query(kind, free_text_query(title, author)) end}]
+    structured = [{:structured, fn -> structured_query(indexer, kind, author, title) end}]
+
+    free_text = [
+      {:free_text, fn -> text_query(indexer, kind, free_text_query(title, author)) end}
+    ]
 
     run(identifier_queries ++ structured ++ free_text, kind)
   end
@@ -121,18 +146,21 @@ defmodule Cinder.Acquisition.BookSearch do
   @doc """
   Searches, then evaluates every candidate against `work`.
 
-  Returns `{:ok, %{accepted: [...], rejected: [...], complete?: boolean}}` — see
-  `Cinder.Acquisition.BookScorer.evaluate_all/3` for the two lists, and `search/2` for
-  `complete?`. `opts` are the scorer's (`:language`, `:blocked_terms`, ...).
+  Returns `{:ok, %{accepted: [...], rejected: [...], complete?: boolean, report: report}}` — see
+  `Cinder.Acquisition.BookScorer.evaluate_all/3` for the two lists, `search/3` for `complete?`
+  and its error, and `Cinder.Acquisition.IndexerSource.Report` for `report`, every query's report
+  merged in query order. `opts` are the scorer's (`:language`, `:blocked_terms`, ...), plus
+  `search/3`'s `indexer_source:`, which the scorer never receives.
   """
   @spec candidates(Work.t() | NormalizedWork.t() | map(), plan(), keyword()) ::
-          {:ok, map()} | {:error, :indexer_unavailable}
+          {:ok, map()} | {:error, term()}
   def candidates(work, plan, opts) do
+    {indexer, opts} = IndexerSource.pop_opt(opts)
     work = normalize(work, plan)
 
-    with {:ok, releases, complete?} <- search(work, plan) do
+    with {:ok, releases, report} <- search_with(indexer, work, plan) do
       result = BookScorer.evaluate_all(releases, work, opts)
-      {:ok, Map.put(result, :complete?, complete?)}
+      {:ok, Map.merge(result, %{complete?: not Report.incomplete?(report), report: report})}
     end
   end
 
@@ -141,38 +169,35 @@ defmodule Cinder.Acquisition.BookSearch do
   defp free_text_query(title, nil), do: title
   defp free_text_query(title, author), do: "#{title} #{author}"
 
+  # Every query runs, in query order; `Report.combine/1` keeps the answers in that order. Query
+  # order is evidence order, and dedupe keeps first-seen, so an identifier-probe hit stays ahead
+  # of the same release found by free text.
   defp run(queries, kind) do
-    {batches, failures} =
-      Enum.reduce(queries, {[], 0}, fn {label, query}, {batches, failures} ->
-        case query.() do
-          {:ok, raw} ->
-            {[Enum.map(raw, &release(kind, &1)) | batches], failures}
+    answers =
+      Enum.map(queries, fn {label, query} ->
+        case Report.from_result(query.()) do
+          {:ok, raw, report} ->
+            {:ok, Enum.map(raw, &release(kind, &1)), report}
 
-          {:error, reason} ->
+          {:error, reason} = error ->
             Logger.info("#{log_label(kind)}: #{label} query failed: #{inspect(reason)}")
-            {batches, failures + 1}
+            error
         end
       end)
 
-    # Reverse before flattening: query order is evidence order, and dedupe keeps first-seen, so an
-    # identifier-probe hit must stay ahead of the same release found by free text.
-    results = batches |> Enum.reverse() |> List.flatten()
-
-    if failures == length(queries) do
-      {:error, :indexer_unavailable}
-    else
-      {:ok, dedupe(results), failures == 0}
-    end
+    with {:ok, batches, report} <- Report.combine(answers),
+         do: {:ok, batches |> List.flatten() |> dedupe(), report}
   end
 
   # The indexer callbacks, release struct and log label of each book kind.
-  defp structured_query(:ebook, author, title), do: indexer().search_ebook(author, title, [])
+  defp structured_query(indexer, :ebook, author, title),
+    do: indexer.search_ebook(author, title, [])
 
-  defp structured_query(:audiobook, author, title),
-    do: indexer().search_audiobook(author, title, [])
+  defp structured_query(indexer, :audiobook, author, title),
+    do: indexer.search_audiobook(author, title, [])
 
-  defp text_query(:ebook, query), do: indexer().search_ebook_query(query, [])
-  defp text_query(:audiobook, query), do: indexer().search_audiobook_query(query, [])
+  defp text_query(indexer, :ebook, query), do: indexer.search_ebook_query(query, [])
+  defp text_query(indexer, :audiobook, query), do: indexer.search_audiobook_query(query, [])
 
   defp release(:ebook, raw), do: EbookRelease.new(raw)
   defp release(:audiobook, raw), do: AudiobookRelease.new(raw)
@@ -302,6 +327,4 @@ defmodule Cinder.Acquisition.BookSearch do
   # ambiguity, so its values keep their order.
   defp sort_identifiers(values, "isbn"), do: Enum.sort_by(values, &String.length/1, :desc)
   defp sort_identifiers(values, _provider), do: values
-
-  defp indexer, do: Application.fetch_env!(:cinder, :indexer_source)
 end

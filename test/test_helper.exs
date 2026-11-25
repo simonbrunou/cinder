@@ -23,6 +23,9 @@ Mox.defmock(Cinder.Acquisition.IndexerMock, for: Cinder.Acquisition.IndexerSourc
 # The indexer `Cinder.IndexerStubs.anime_sweep_pick/4` stubs, so its answers never reach a test's
 # own `IndexerMock` expectations.
 Mox.defmock(Cinder.Acquisition.InHandIndexerMock, for: Cinder.Acquisition.IndexerSource)
+# The source a test passes as a search's `indexer_source:` opt while the env names `IndexerMock`,
+# so a search that reads the env instead of the opt reaches the other mock.
+Mox.defmock(Cinder.Acquisition.PassedIndexerMock, for: Cinder.Acquisition.IndexerSource)
 Mox.defmock(Cinder.Indexers.Definitions.SourceMock, for: Cinder.Indexers.Definitions.Source)
 # The source `Cinder.Indexers.Definitions.SourceTest` points `:indexer_definitions_source` at, to
 # show `Source.fetch/1` reads that key rather than naming `SourceMock`.

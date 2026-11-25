@@ -2,7 +2,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
   # Sets PROWLARR_URL, an OS env var every process reads, to read config/runtime.exs.
   use ExUnit.Case, async: false
 
-  alias Cinder.Acquisition.{IndexerMock, IndexerSource, InHandIndexerMock}
+  alias Cinder.Acquisition.{IndexerMock, IndexerSource, InHandIndexerMock, PassedIndexerMock}
 
   # The names this seam had before #1643, built so no source line spells them.
   @old_behaviour Module.concat([Cinder.Acquisition, Indexer])
@@ -27,12 +27,25 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 
-  test "the seam keeps its nine callbacks, and the adapter and both mocks implement it" do
+  test "the seam keeps its nine callbacks, and the adapter and the mocks implement it" do
     assert Enum.sort(IndexerSource.behaviour_info(:callbacks)) == @callbacks
 
     assert IndexerSource in behaviours(IndexerSource.Prowlarr)
     assert IndexerMock.__mock_for__() == [IndexerSource]
     assert InHandIndexerMock.__mock_for__() == [IndexerSource]
+    assert PassedIndexerMock.__mock_for__() == [IndexerSource]
+  end
+
+  test "configured/0 and pop_opt/1 read the source the :indexer_source env names" do
+    Cinder.ConfigCase.put_env(:indexer_source, InHandIndexerMock)
+
+    assert IndexerSource.configured() == InHandIndexerMock
+    assert IndexerSource.pop_opt(a: 1) == {InHandIndexerMock, [a: 1]}
+  end
+
+  test "pop_opt/1 takes the indexer_source opt out of the opts when it is set" do
+    assert IndexerSource.pop_opt(a: 1, indexer_source: PassedIndexerMock, b: 2) ==
+             {PassedIndexerMock, [a: 1, b: 2]}
   end
 
   test "the test env names the mock under :indexer_source and sets no :indexer key" do

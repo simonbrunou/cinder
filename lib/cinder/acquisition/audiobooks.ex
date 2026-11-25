@@ -36,15 +36,17 @@ defmodule Cinder.Acquisition.Audiobooks do
   (with `:author`) preloaded, or a plain map with `:title`, `:authors`, and optionally
   `:identifiers` (ASIN/ISBN strings, ASIN-priority order) and `:series`.
 
-  Returns `{:ok, [%AudiobookRelease{}], complete?}`, or `{:error, reason}` when every query
-  failed — see `BookSearch.search/2`.
+  Returns `{:ok, [%AudiobookRelease{}], complete?}`, or `{:error, reason}` when no query
+  answered — see `BookSearch.search/3`. `opts` takes only `indexer_source:`, the source every
+  query goes to (`BookSearch.search/3`).
   """
-  @spec search(Work.t() | map()) :: {:ok, [AudiobookRelease.t()], boolean()} | {:error, term()}
-  def search(work), do: BookSearch.search(work, @plan)
+  @spec search(Work.t() | map(), keyword()) ::
+          {:ok, [AudiobookRelease.t()], boolean()} | {:error, term()}
+  def search(work, opts \\ []), do: BookSearch.search(work, @plan, opts)
 
   @doc """
   Searches, then evaluates every candidate against `work` — see `BookSearch.candidates/3`.
-  `opts` are the scorer's (`:language`, `:blocked_terms`, ...).
+  `opts` are the scorer's (`:language`, `:blocked_terms`, ...), plus `indexer_source:`.
   """
   @spec candidates(Work.t() | map(), keyword()) :: {:ok, map()} | {:error, term()}
   def candidates(work, opts \\ []), do: BookSearch.candidates(work, @plan, opts)

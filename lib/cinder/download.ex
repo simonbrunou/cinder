@@ -20,6 +20,7 @@ defmodule Cinder.Download do
     AudiobookRelease,
     EbookRelease,
     HouseholdPolicy,
+    IndexerSource,
     Release
   }
 
@@ -1290,8 +1291,14 @@ defmodule Cinder.Download do
     with {:ok, imdb_id} <- ensure_imdb_id(movie), do: search_movie(movie, imdb_id)
   end
 
+  # One indexer source per search (`IndexerSource.configured/0`, read once): the standard search
+  # and its anime fallback both run on it.
   defp search_movie(movie, imdb_id) do
-    opts = HouseholdPolicy.for_target(movie)
+    opts =
+      movie
+      |> HouseholdPolicy.for_target()
+      |> Keyword.put(:indexer_source, IndexerSource.configured())
+
     summary = Catalog.media_profile_summary(movie)
     context = Catalog.movie_acquisition_context(movie)
 

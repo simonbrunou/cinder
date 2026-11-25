@@ -55,6 +55,10 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   `kept` is what the selection runs over, in indexer order: `Cinder.Acquisition.Scorer` breaks
   ties by input order. `pick/1` is the selection.
 
+  `report` is the search's report (`Cinder.Acquisition.IndexerSource.Report`). `judge/3` leaves
+  it empty, and the search entry in `Cinder.Acquisition` or `Cinder.Acquisition.Anime` that ran
+  the search puts its report there.
+
   Each row of `rows` carries:
 
   - `dropped_at`: the first stage that dropped the release, or nil if it was kept.
@@ -89,8 +93,9 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.{Anime, Language, Scorer}
+  alias Cinder.Acquisition.IndexerSource.Report
 
-  defstruct [:guard, rows: [], kept: [], language: :off, opts: []]
+  defstruct [:guard, rows: [], kept: [], language: :off, opts: [], report: %Report{}]
 
   @movie_guards [:imdb, :title_year, :anime_movie]
   @anime_guards [:anime_movie, :anime_episodes]
@@ -114,7 +119,8 @@ defmodule Cinder.Acquisition.ReleaseJudge do
           rows: [row()],
           kept: [struct()],
           language: :off | :applied | :fell_back | :no_language_match,
-          opts: keyword()
+          opts: keyword(),
+          report: Report.t()
         }
 
   @doc """
@@ -159,13 +165,15 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   (`Scorer.select_for/4`): each chosen release with the still-wanted episode numbers it covers,
   or `:no_match`, which is also what a strict audio pick that left nothing gives.
   """
-  @spec pick(t()) ::
+  @type pick_result ::
           {:ok, struct()}
           | :no_match
           | :no_language_match
           | {:waiting_for_preferred_group, map()}
           | {:ok, %{assignments: [map()], waiting: map() | nil}}
           | {:ok, [{struct(), [integer()]}]}
+
+  @spec pick(t()) :: pick_result()
   def pick(%__MODULE__{guard: guard, language: :no_language_match})
       when elem(guard, 0) in @movie_guards,
       do: :no_language_match
@@ -181,6 +189,23 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   def pick(%__MODULE__{guard: guard} = judged) when elem(guard, 0) in @movie_guards,
     do: Scorer.select(judged.kept, judged.opts)
+
+  @doc """
+  What a standard movie or season sweep grabs: `pick/1`, except that a pick that found nothing
+  (`:no_match`, `:no_language_match`) from an incomplete search
+  (`Cinder.Acquisition.IndexerSource.Report.incomplete?/1` on `report`) is
+  `{:error, :incomplete_search}`, since the release it needed may be behind the failure.
+  """
+  @spec sweep_pick(t()) :: pick_result() | {:error, :incomplete_search}
+  def sweep_pick(%__MODULE__{} = judged) do
+    case pick(judged) do
+      miss when miss in [:no_match, :no_language_match] ->
+        if Report.incomplete?(judged.report), do: {:error, :incomplete_search}, else: miss
+
+      result ->
+        result
+    end
+  end
 
   defp pin_clock(opts) do
     if Keyword.get(opts, :anime_policy),

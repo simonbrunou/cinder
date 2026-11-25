@@ -275,7 +275,7 @@ defmodule Cinder.Acquisition.BookSearchTest do
 
       expect(IndexerMock, @kinds[kind].text, fn _query, _opts -> {:error, :timeout} end)
 
-      assert {:error, :indexer_unavailable} = @kinds[kind].search.search(@work)
+      assert @kinds[kind].search.search(@work) == {:error, :timeout}
     end
 
     test "candidates/2 propagates an indexer outage", %{kind: kind} do
@@ -285,7 +285,7 @@ defmodule Cinder.Acquisition.BookSearchTest do
 
       expect(IndexerMock, @kinds[kind].text, fn _query, _opts -> {:error, :timeout} end)
 
-      assert {:error, :indexer_unavailable} = @kinds[kind].search.candidates(@work)
+      assert @kinds[kind].search.candidates(@work) == {:error, :timeout}
     end
   end
 

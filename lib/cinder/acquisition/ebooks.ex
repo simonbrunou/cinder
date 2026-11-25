@@ -31,19 +31,20 @@ defmodule Cinder.Acquisition.Ebooks do
   (with `:author`) preloaded, or a plain map with `:title`, `:authors`, and optionally `:isbns`
   and `:series`.
 
-  Returns `{:ok, [%EbookRelease{}], complete?}`, or `{:error, reason}` when every query failed —
-  see `BookSearch.search/2`.
+  Returns `{:ok, [%EbookRelease{}], complete?}`, or `{:error, reason}` when no query answered —
+  see `BookSearch.search/3`.
 
-  Takes no options: the queries are derived entirely from the plan and the work, and the scoring
-  options belong to `candidates/2`. An `opts` here would be a parameter that reads as meaningful
-  and changes nothing.
+  `opts` takes only `indexer_source:`, the source every query goes to (`BookSearch.search/3`):
+  the queries are derived entirely from the plan and the work, and the scoring options belong to
+  `candidates/2`.
   """
-  @spec search(Work.t() | map()) :: {:ok, [EbookRelease.t()], boolean()} | {:error, term()}
-  def search(work), do: BookSearch.search(work, @plan)
+  @spec search(Work.t() | map(), keyword()) ::
+          {:ok, [EbookRelease.t()], boolean()} | {:error, term()}
+  def search(work, opts \\ []), do: BookSearch.search(work, @plan, opts)
 
   @doc """
   Searches, then evaluates every candidate against `work` — see `BookSearch.candidates/3`.
-  `opts` are the scorer's (`:language`, `:blocked_terms`, ...).
+  `opts` are the scorer's (`:language`, `:blocked_terms`, ...), plus `indexer_source:`.
   """
   @spec candidates(Work.t() | map(), keyword()) :: {:ok, map()} | {:error, term()}
   def candidates(work, opts \\ []), do: BookSearch.candidates(work, @plan, opts)
