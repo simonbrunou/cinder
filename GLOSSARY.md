@@ -73,6 +73,12 @@ _Avoid_: indexer type (for this)
 What Cinder searches the indexers through: Prowlarr, or Cinder's own native search.
 _Avoid_: indexer backend, search provider, the indexer (for Prowlarr itself)
 
+**Backoff**:
+A time during which Cinder's searches skip a configured indexer after a request through it hit a
+limit or failed for a reason other than rejected credentials. Every backoff ends at a set time, and
+a failure backoff also ends on a passing Test or a new base URL, credentials or indexer definition.
+_Avoid_: disabled (the admin's own switch), held, paused, blocked
+
 **Incomplete search**:
 A search in which Cinder knows that some of the queries or indexers it asked failed while the rest
 answered, so a wanted release may be missing from its results. An indexer the search left out,
