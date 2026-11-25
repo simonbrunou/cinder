@@ -44,7 +44,14 @@ _Avoid_: tracker (for both protocols), provider, source
 
 **Indexer definition**:
 The description of how to search one indexer, log in to it and read its results.
-_Avoid_: indexer config, scraper, Cardigann file
+_Avoid_: indexer config, scraper, Cardigann file, definition source
+
+**Held definition update**:
+A newer version of an indexer's definition that the indexer does not run yet, because it fails to
+load, uses a feature Cinder has not built, needs a newer Cinder, or, for an indexer with
+credentials, would send them to a new host or trust other certificates. The indexer keeps
+searching with the version it runs, so it is not stopped the way an item that needs attention is.
+_Avoid_: pending update, blocked update
 
 **Indexer type**:
 How Cinder talks to one indexer: the Newznab API, the Torznab API, or the site's own pages read
