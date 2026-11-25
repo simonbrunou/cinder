@@ -8,15 +8,18 @@ defmodule Cinder.Download.TvPoller do
      matches immediately, and durably holds unmatched videos on the grab for operator review.
      A clean grab closes normally; transient FS errors are bounded-retried, and content with no
      usable video is parked so its episodes re-search.
-  3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
-     searches Standard series by season and Anime series by stable episode IDs. A season a
-     request approval armed is first checked against the TV library roots
+  3. **search** — sweeps `wanted_episodes`, skipping search-parked, backed-off and held
+     episodes, then searches Standard series by season and Anime series by stable episode IDs.
+     A season a request approval armed is first checked against the TV library roots
      (`Cinder.Library.SeasonAdoption`), so the episodes already there are adopted, not searched.
+     A search that reached no indexer counts no attempt, and holds its episodes out of the pass
+     until their `retry_at` or for `no_indexers_hold` seconds (`PollerSkeleton`).
 
-  Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
-  after a crash/restart — the same OTP payoff the movie poller proves. State and the download
-  watch are shared with the movie pipeline (`Cinder.Download.Watch.check/2`); episode/grab writes
-  go through `Cinder.Catalog` choke-points, so the WAL + `busy_timeout` correctness holds.
+  Every tick re-derives its work from the DB, so it recovers cleanly after a crash/restart — the
+  same OTP payoff the movie poller proves. A restart loses the search holds it keeps in the
+  process's memory, so each held episode is searched once more. State and the download watch
+  are shared with the movie pipeline (`Cinder.Download.Watch.check/2`); episode/grab writes go
+  through `Cinder.Catalog` choke-points, so the WAL + `busy_timeout` correctness holds.
 
   Bounded retry uses the grab's `download_attempts` counter; `mark_grab_downloaded` resets it at
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
@@ -562,17 +565,32 @@ defmodule Cinder.Download.TvPoller do
   defp search_wanted(retry_after) do
     pending = Download.pending_episode_ids()
 
-    _checks =
-      Catalog.wanted_episodes()
-      |> Enum.reject(
-        &(MapSet.member?(pending, &1.id) or
-            &1.search_attempts >= Catalog.search_budget())
+    candidates =
+      Enum.reject(
+        Catalog.wanted_episodes(),
+        &(MapSet.member?(pending, &1.id) or &1.search_attempts >= Catalog.search_budget())
       )
+
+    unheld = reject_held_searches(candidates)
+    held_series = held_series(candidates, unheld)
+
+    _checks =
+      unheld
       |> Enum.filter(&search_due?(&1, search_gap(&1, retry_after)))
       |> Enum.group_by(& &1.season.series.id)
-      |> Enum.reduce(0, &search_series_after_check/2)
+      |> Enum.reduce(0, &search_series_after_check(&1, &2, held_series))
 
     :ok
+  end
+
+  # The series with an episode under a search hold. Each visit of such a series runs no anime
+  # fallback until the hold ends, as on each tick a raised or held season group blocks it.
+  defp held_series(candidates, unheld) do
+    unheld_ids = MapSet.new(unheld, & &1.id)
+
+    candidates
+    |> Enum.reject(&MapSet.member?(unheld_ids, &1.id))
+    |> MapSet.new(& &1.season.series.id)
   end
 
   # How long a wanted episode waits after its last fruitless search, as a multiple of
@@ -589,11 +607,12 @@ defmodule Cinder.Download.TvPoller do
 
   defp search_gap(_episode, retry_after), do: retry_after
 
-  defp search_series_after_check({series_id, episodes}, checks) do
+  defp search_series_after_check({series_id, episodes}, checks, held_series) do
     {episodes, checks} = check_library_first(series_id, episodes, checks)
+    held? = MapSet.member?(held_series, series_id)
 
     if episodes != [],
-      do: isolate("series #{series_id}", fn -> search_series(episodes) end)
+      do: isolate("series #{series_id}", fn -> search_series(episodes, held?) end)
 
     checks
   end
@@ -675,19 +694,20 @@ defmodule Cinder.Download.TvPoller do
   end
 
   # One indexer source per series visit (`IndexerSource.configured/0`, read once): every season
-  # group and the anime fallback run on it.
-  defp search_series(episodes) do
+  # group and the anime fallback run on it. `held?` says whether another episode of the series is
+  # under a search hold.
+  defp search_series(episodes, held?) do
     series = hd(episodes).season.series
     summary = Catalog.media_profile_summary(series)
     indexer = IndexerSource.configured()
 
     case summary.effective do
       :anime -> search_anime_series(series, episodes, indexer)
-      :standard -> search_standard_series(series, episodes, summary, indexer)
+      :standard -> search_standard_series(series, episodes, summary, indexer, held?)
     end
   end
 
-  defp search_standard_series(series, episodes, summary, indexer) do
+  defp search_standard_series(series, episodes, summary, indexer, held?) do
     groups = Enum.group_by(episodes, & &1.season.season_number)
     # One read of the series' numbering inputs per visit (#923). A season grabbed earlier in the
     # visit stays a native season for the later ones, and a raise here skips the whole series.
@@ -709,10 +729,14 @@ defmodule Cinder.Download.TvPoller do
         {_group, _other} -> []
       end)
 
+    # A raised group is skipped. A group whose search reached no indexer (each one that could
+    # take a query skipped, or none enabled) is held by `hold_search/2`: like a raised group, it
+    # counts no attempt and runs no anime fallback. While the hold lasts, `held?` blocks the
+    # fallback on later visits.
     skipped =
       Enum.flat_map(outcomes, fn
         {_group, {:ok, _ids}} -> []
-        {_group, {:error, _reason}} -> []
+        {group, {:error, reason}} -> held_ids(group, reason)
         {group, _exception} -> Enum.map(group, & &1.id)
       end)
 
@@ -720,13 +744,18 @@ defmodule Cinder.Download.TvPoller do
 
     # One decision on the Anime hold per visit: the anime fallback makes it when it runs, otherwise
     # a stale marker goes the way the operator's fix would take it (#791).
-    if grabbed == [] and skipped == [] and not search_failed? and
+    if grabbed == [] and skipped == [] and not search_failed? and not held? and
          MediaProfile.auto_anime_fallback?(summary) do
       search_anime_series(series, episodes, indexer)
     else
       Catalog.reresolve_anime_hold(series)
       bump_not_grabbed(episodes, grabbed ++ skipped)
     end
+  end
+
+  defp held_ids(group, reason) do
+    ids = Enum.map(group, & &1.id)
+    if hold_search(ids, reason), do: ids, else: []
   end
 
   # The season's release list is the manual panel's (`Acquisition.judge_season/3`); the sweep
@@ -795,7 +824,8 @@ defmodule Cinder.Download.TvPoller do
           "anime search failed for series #{series.id}: #{HTTPPolicy.sanitize_log(reason)}"
         )
 
-        bump_not_grabbed(episodes, [])
+        # A search that reached no indexer holds every episode of the search, with no attempt.
+        unless hold_search(wanted_ids, reason), do: bump_not_grabbed(episodes, [])
     end
   end
 

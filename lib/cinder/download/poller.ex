@@ -11,11 +11,14 @@ defmodule Cinder.Download.Poller do
      `record_failure/2`.
   3. **search_requested** — sweeps `:requested` and `:searching` movies through
      `Download.start/1` (indexer search + client add). Backoff: a just-failed movie is skipped
-     until `search_retry_after` seconds have elapsed; its failure is recorded once.
+     until `search_retry_after` seconds have elapsed; its failure is recorded once. A search
+     that reached no indexer records no failure, and holds the movie out of the pass until its
+     `retry_at` or for `no_indexers_hold` seconds (`PollerSkeleton`).
 
   What a failure means (count it, park, re-queue, revert or hold) is the lifecycle's decision,
-  not the poller's. Holds no in-flight state: every tick re-derives its work from the DB, so it
-  recovers cleanly after a crash/restart.
+  not the poller's. Every tick re-derives its work from the DB, so it recovers cleanly after a
+  crash/restart. A restart loses the search holds it keeps in the process's memory, so each held
+  movie is searched once more.
   """
   require Logger
 
@@ -60,7 +63,9 @@ defmodule Cinder.Download.Poller do
     do: StagedImport.run(fn -> import_one(movie) end)
 
   defp search_requested(retry_after) do
-    movies = Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching)
+    movies =
+      (Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching))
+      |> reject_held_searches()
 
     for movie <- movies, search_due?(movie, retry_after) do
       isolate("movie #{movie.id}", fn -> search_one(movie) end)
@@ -104,8 +109,14 @@ defmodule Cinder.Download.Poller do
            ] ->
         :ok
 
+      # Not a failed search either: it reached no indexer, since every indexer that could take a
+      # query was skipped (`{:indexers_backing_off, retry_at}`) or none is enabled
+      # (`:no_indexers`). Skip with no write, and hold the movie out of the search pass until
+      # `retry_at`, or for `no_indexers_hold` seconds, so no tick in between searches it or
+      # writes its row (`hold_search/2`, `SearchHoldTest`). Every other error goes to
+      # `write_back_search/2`.
       {:error, reason} ->
-        write_back_search(movie, reason)
+        if hold_search([movie.id], reason), do: :ok, else: write_back_search(movie, reason)
     end
   end
 

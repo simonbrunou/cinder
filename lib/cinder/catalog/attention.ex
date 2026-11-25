@@ -5,7 +5,10 @@ defmodule Cinder.Catalog.Attention do
 
     * `phase`: `:active` (Cinder is working on it), `:attention` (it needs attention: `/activity`
       offers an action or names a fix that resolves it), `:waiting` (it waits on a change the
-      operator does not make; no item waits today) or `:idle` (nothing in progress);
+      operator does not make; no item classifies as waiting today: a title a poller holds while
+      every indexer that could take its search is in backoff, `GLOSSARY.md`'s one waiting item,
+      is held in the poller's memory, which this module does not read) or `:idle` (nothing in
+      progress);
     * `reason`: why it needs attention or waits (`nil` otherwise);
     * `badge`: the `<.status_badge>` status it wears (`nil` for a book target);
     * `actions`: its offered actions, one atom per operator function, in render order;

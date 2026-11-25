@@ -301,7 +301,9 @@ _Avoid_: remedy, resolution, correction (a subtitle timing change)
 
 **Waiting item**:
 An item Cinder skips until something changes that the operator does not have to change. It needs
-no attention. No item waits today: an anime hold reason that cleared on its own would.
+no attention. A movie or episode waits while every configured indexer that could take its search is
+in backoff, until the first of those backoffs ends. A title Cinder holds back because no indexer is
+enabled is not a waiting item, since the operator must enable one.
 _Avoid_: held item, paused item (a paused book target is idle)
 
 ### Requests

@@ -1,10 +1,12 @@
 defmodule Cinder.Download.PollerSkeleton do
   @moduledoc """
-  Shared GenServer skeleton for the household's periodic, stateless background workers.
-  Each holds no in-flight state — every tick re-derives its work from the DB/filesystem
-  and reschedules itself — so it recovers cleanly after a crash. This injects that
-  identical lifecycle (`start_link`/`poll`/`init`/`handle_*`/`schedule`/`config_interval`)
-  plus the per-unit `isolate/2` guard.
+  Shared GenServer skeleton for the household's periodic background workers. Every tick
+  re-derives its work from the DB/filesystem and reschedules itself, so a worker recovers
+  cleanly after a crash. A restart loses what the process keeps in its own memory, such as the
+  stateful flavour's throttled warnings and search holds below.
+  This injects that identical lifecycle
+  (`start_link`/`poll`/`init`/`handle_*`/`schedule`/`config_interval`) plus the per-unit
+  `isolate/2` guard.
 
   Two flavours, selected by `:stateful`:
 
@@ -28,6 +30,14 @@ defmodule Cinder.Download.PollerSkeleton do
         @default_interval 5_000
         use Cinder.Download.PollerSkeleton, log_prefix: "book poller", search_backoff: false
 
+    A poller with the backoff also gets the search hold, for a search that reached no indexer:
+    `{:indexers_backing_off, retry_at}` (every indexer that could take a query was skipped) or
+    `:no_indexers` (none enabled). `hold_search/2` tells the caller to skip its strike or
+    attempt, and holds the units until `retry_at`, or for the `no_indexers_hold:` start option's
+    seconds (default 60). `reject_held_searches/1` drops the held units from a search pass. The
+    holds live in the poller process's dictionary, beside `warn_throttled/2`'s keys, so a restart
+    forgets them and each held unit is searched once more.
+
   - The slow sweeps (`Cinder.Catalog.Refresher`, `Cinder.Subtitles.Sweeper`) use
     `stateful: false`: a no-arg `do_poll/0` pass, no backoff, and an `:infinity`
     `poll/1` call timeout — a pass can issue many external calls (1 + N TMDB fetches,
@@ -37,14 +47,13 @@ defmodule Cinder.Download.PollerSkeleton do
         use Cinder.Download.PollerSkeleton, log_prefix: "refresher", stateful: false
 
   Both flavours stamp their completion time into `:persistent_term` after each pass,
-  exposed non-blocking via `status/0` — the one piece of state here that is not
-  DB-derived (VM-global, so it survives a crash but is *not* per-test isolated; a test
-  that runs `poll/1` should erase `{module, :last_run}`). The stateless flavour's
-  `status/0` feeds the `/activity` sweeps view (`Cinder.Jobs`); the stateful flavour's
-  feeds `/healthz` (`CinderWeb.HealthController`). The stateful flavour also records its
-  tick in flight in `Cinder.Download.PollerProgress`: `run/1` flags the tick from its start to
-  its end, and `isolate/2` stamps progress as each unit starts and finishes, nested and raising
-  units included. `/healthz` judges a tick in flight by that progress (unhealthy after
+  exposed non-blocking via `status/0`. The stamp is VM-global, so it survives a crash but is
+  *not* per-test isolated: a test that runs `poll/1` should erase `{module, :last_run}`. The
+  stateless flavour's `status/0` feeds the `/activity` sweeps view (`Cinder.Jobs`); the
+  stateful flavour's feeds `/healthz` (`CinderWeb.HealthController`). The stateful flavour also
+  records its tick in flight in `Cinder.Download.PollerProgress`: `run/1` flags the tick from its
+  start to its end, and `isolate/2` stamps progress as each unit starts and finishes, nested and
+  raising units included. `/healthz` judges a tick in flight by that progress (unhealthy after
   10 minutes with none), and an idle poller by its last tick (unhealthy once it ended more than
   3 intervals ago). `init/1` clears the in-flight state on every (re)start, so a poller killed
   mid-tick falls back to the idle rule. A test that erases `{module, :last_run}` and
@@ -73,6 +82,9 @@ defmodule Cinder.Download.PollerSkeleton do
     {search_state, search_backoff_defs} =
       if search_backoff do
         {quote do
+           # Beside the holds it times, in the process dictionary, since the hold helper below
+           # runs deep in a search unit, where the state does not reach.
+           Process.put(:no_indexers_hold, Keyword.get(opts, :no_indexers_hold, 60))
            %{search_retry_after: Keyword.get(opts, :search_retry_after, @search_retry_after)}
          end,
          quote do
@@ -84,6 +96,52 @@ defmodule Cinder.Download.PollerSkeleton do
 
            defp search_due?(unit, retry_after),
              do: DateTime.diff(DateTime.utc_now(), unit.updated_at) >= retry_after
+
+           # The units of this search pass that no search hold covers. It also drops each hold
+           # that has ended and each hold of a unit no longer in the pass, so the map stays
+           # bounded by the pass.
+           defp reject_held_searches(units) do
+             now = DateTime.utc_now()
+             in_pass = MapSet.new(units, & &1.id)
+
+             holds =
+               :search_holds
+               |> Process.get(%{})
+               |> Map.filter(fn {id, until} ->
+                 MapSet.member?(in_pass, id) and DateTime.compare(now, until) == :lt
+               end)
+
+             Process.put(:search_holds, holds)
+             Enum.reject(units, &Map.has_key?(holds, &1.id))
+           end
+
+           # Whether `reason` is a search that reached no indexer: every indexer that could take a
+           # query was skipped (`{:indexers_backing_off, retry_at}`), or none is enabled. Such a
+           # search costs the units `ids` no strike and no attempt, so the caller skips its
+           # failure write when this returns true. Each unit is then held until `retry_at`, or
+           # `no_indexers_hold` seconds from now. An end that is not in the future holds nothing,
+           # so the next tick searches the unit again.
+           defp hold_search(ids, reason) do
+             case search_hold_end(reason) do
+               nil ->
+                 false
+
+               until ->
+                 if DateTime.compare(DateTime.utc_now(), until) == :lt do
+                   holds = Process.get(:search_holds, %{})
+                   Process.put(:search_holds, Map.merge(holds, Map.new(ids, &{&1, until})))
+                 end
+
+                 true
+             end
+           end
+
+           defp search_hold_end({:indexers_backing_off, %DateTime{} = retry_at}), do: retry_at
+
+           defp search_hold_end(:no_indexers),
+             do: DateTime.add(DateTime.utc_now(), Process.get(:no_indexers_hold), :second)
+
+           defp search_hold_end(_reason), do: nil
          end}
       else
         {quote(do: %{}), nil}
