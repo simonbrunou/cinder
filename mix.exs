@@ -130,9 +130,9 @@ defmodule Cinder.MixProject do
       {:cloak, "~> 1.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
-      # test/code_health/beam_version_pins_test.exs reads the workflows with it. mix_audit pulls
-      # it in too, but a mix_audit release that drops it must not take the fence's parser along.
-      {:yaml_elixir, "~> 2.11", only: [:dev, :test], runtime: false},
+      # Cinder.Indexers.Definitions.Loader reads Cardigann definitions at runtime with the yamerl
+      # it brings in, and the code_health fences read the workflows with it.
+      {:yaml_elixir, "~> 2.11"},
       {:mox, "~> 1.3", only: :test}
     ]
   end

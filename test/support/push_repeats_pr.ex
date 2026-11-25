@@ -3,8 +3,8 @@ defmodule Cinder.PushRepeatsPr do
   Tells the merging agent whether the CI run that a merge starts on `main` repeats the PR run's
   jobs and steps (AGENTS.md "Merge authority", #1254). It ports simonbrunou.bzh's
   `scripts/check-push-repeats-pr.js` and garde-manger's `scripts/check-push-repeats-pr.ts`. It
-  sits under test/support because it reads YAML with yamerl, which yaml_elixir brings in for dev
-  and test only, and a worktree that `scripts/seed-worktree` seeded holds only `_build/test`.
+  sits under test/support because a worktree that `scripts/seed-worktree` seeded holds only
+  `_build/test`. It reads YAML with yamerl, which yaml_elixir brings in.
   Run it after `git fetch origin`, with the SHA the PR's CI passed:
 
       MIX_ENV=test mix run --no-start scripts/check-push-repeats-pr.exs <pushed SHA>
