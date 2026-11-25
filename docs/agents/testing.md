@@ -238,6 +238,16 @@
 - Tests never hit the network or a real service. `config/test.exs` points each external-service
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md).
+- To show the request an adapter sends outside the suite, for a PR's test path, run a script
+  with `MIX_ENV=test mix run --no-start` against a local listener that logs each request line,
+  such as Python's `http.server`. `--no-start` starts neither Cinder nor its dependencies, so the
+  script first runs `Application.ensure_all_started(:req)`, then starts
+  `Cinder.HTTPPolicy.TaskSupervisor` with `Task.Supervisor.start_link/1`, since
+  `HTTPPolicy.bounded_request/2` runs each request under it. It points the config key the
+  adapter reads at the listener with `Application.put_env/3`, whose new list drops any
+  `req_options` plug `config/test.exs` sets there. It calls the adapter module itself:
+  `config/test.exs` points each behaviour at its Mox mock. On #1627 (PR #1701) the first run
+  exited on the missing supervisor, and the first draft of this bullet left out `:req`.
 - Inject a one-time filesystem failure with `Cinder.Test.BarrierFilesystem.fail_once/1` or
   `fail_in_order/1`. Each fails the test when the failure never fired. A failure armed by hand
   with `Application.put_env` gets no such check: keep that for a failure that must stay armed.
