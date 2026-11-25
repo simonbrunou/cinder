@@ -54,6 +54,18 @@
   quiet host and 2 to 4 s at a load of 61, where a first draft with nine shapes, one load after
   another, took 19 s. On #1664 the Standards review found that `[~]` in two list slots raised
   `BadMapError`, a fix round the sweep would have saved.
+- A check that scans an untrusted pattern's text for a construct it refuses, such as
+  `BoundedRegex`'s `\C`, has a test that runs every short string through each entry point. The
+  strings are built from the backslash, the letters of the construct and of each escape that changes
+  how the engine reads the characters after it (`c`, `Q` and `E` for `\C`), and the brackets of
+  classes and groups. They are as long as the construct plus the longest escape that can hide it:
+  five for `\C`, the length of `\c\\C`. Each string must be refused, or run without the harm the
+  construct causes: for `\C`, a raise or text that is not UTF-8.
+  `test/cinder/acquisition/indexer/cardigann/bounded_regex_test.exs` "no short escape or bracket
+  pattern raises or gives text that is not UTF-8" is the model: `\ C c Q E [ ] ( )`, 66,429 patterns
+  in under half a second. On #1670 (PR #1712) the Spec review found `\C`, and the re-check then
+  found `\c\\C` hiding a real `\C` from the first fix's scan, a second fix round the sweep would
+  have saved.
 - A Cardigann engine rule that copies Prowlarr's .NET behaviour, such as a regex, a date format or
   the replacement syntax, takes its expected values from a `dotnet fsi` run. The test names the rows
   that came from it, the .NET call with its options and the SDK version, as the header comment of

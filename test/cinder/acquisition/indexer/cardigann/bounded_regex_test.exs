@@ -190,10 +190,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.BoundedRegexTest do
       assert BoundedRegex.first_group("(\\c\\C)", <<0x1C, ?C>>) == {:ok, <<0x1C, ?C>>}
     end
 
-    test "no short pattern over the escape characters raises or gives text that is not UTF-8" do
+    test "no short escape or bracket pattern raises or gives text that is not UTF-8" do
       # The second review round on `\C` (#1670) found a bypass, so this runs every pattern of up
-      # to five characters over the characters that start, end or quote an escape, on a subject
-      # holding a two-byte and a control character, through each entry point.
+      # to five characters, the length of `\c\\C`, over the backslash, the escape letters `C`,
+      # `c`, `Q` and `E` and the class and group brackets, on a subject holding a two-byte and a
+      # control character, through each entry point.
       alphabet = ["\\", "C", "c", "Q", "E", "[", "]", "(", ")"]
       patterns = Enum.flat_map(1..5, &words(alphabet, &1))
       subject = <<0x1C>> <> "éC\\cQ"
