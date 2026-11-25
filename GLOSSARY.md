@@ -42,6 +42,13 @@ _Avoid_: search opts, scorer opts
 One site Cinder searches for releases: a torrent tracker or a Usenet indexer.
 _Avoid_: tracker (for both protocols), provider, source
 
+**Configured indexer**:
+What the admin saved for searching one indexer: its indexer type, its indexer definition
+(Cardigann only), its base URL and its settings, any credentials among them. Two configured
+indexers can reach the same indexer, such as one through the site's own API and one as generic
+Newznab or Torznab at Prowlarr's per-indexer endpoint.
+_Avoid_: indexer config (for this or an indexer definition), indexer instance, indexer entry
+
 **Indexer definition**:
 The description of how to search one indexer, log in to it and read its results.
 _Avoid_: indexer config, scraper, Cardigann file, definition source
