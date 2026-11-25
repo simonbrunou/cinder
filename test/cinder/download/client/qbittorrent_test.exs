@@ -1,7 +1,7 @@
 defmodule Cinder.Download.Client.QBittorrentTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Download.Client.QBittorrent
+  alias Cinder.Download.Client.{Fetch, QBittorrent}
 
   # 40 hex chars; the impl lowercases what it extracts.
   @hash "0123456789ABCDEF0123456789ABCDEF01234567"
@@ -289,7 +289,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     stub_torrent_flow(torrent_bytes)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 pins an untrusted torrent fetch to the validated address" do
@@ -314,7 +316,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, _hash} =
-             QBittorrent.add(%{download_url: "https://tracker.test/pinned.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/pinned.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 fetches a v2-only .torrent and returns qBittorrent's truncated id" do
@@ -327,7 +331,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     stub_torrent_flow(torrent_bytes)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/v2.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/v2.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 fetches a hybrid .torrent and returns its canonical truncated v2 id" do
@@ -341,14 +347,16 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     stub_torrent_flow(torrent_bytes)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/hybrid.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/hybrid.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 returns :bad_torrent when the URL returns a non-torrent body" do
     stub_torrent_flow("<html>nope</html>")
 
     assert {:error, :bad_torrent} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/x"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/x"}, fetch: &Fetch.bytes/3)
   end
 
   test "status/1 normalizes a completed torrent" do
@@ -603,7 +611,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do
@@ -693,7 +703,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 rejects an unparseable redirect-to-magnet without contacting qBittorrent" do
@@ -716,7 +728,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :unsupported_download_url} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"},
+               fetch: &Fetch.bytes/3
+             )
 
     assert_received :fetched
     refute_received {:qbit_request, _}
@@ -747,7 +761,10 @@ defmodule Cinder.Download.Client.QBittorrentTest do
       end
     end)
 
-    assert {:ok, ^expected} = QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 rejects a redirect to a non-http scheme" do
@@ -758,7 +775,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :unsupported_download_url} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   defp login(conn) do
@@ -824,7 +843,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     for scheme <- ["http", "HTTP", "https", "HTTPS"] do
       url = "#{scheme}://indexer.example/file.torrent"
-      assert QBittorrent.add(%{download_url: url}) == {:ok, expected}
+      assert QBittorrent.add(%{download_url: url}, fetch: &Fetch.bytes/3) == {:ok, expected}
     end
 
     assert_received {:fetched, :http, 80, "/file.torrent"}
@@ -871,7 +890,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     for scheme <- ["magnet", "MAGNET"] do
       url = "https://indexer.example/dl/#{scheme}"
-      assert QBittorrent.add(%{download_url: url}) == {:ok, String.downcase(@hash)}
+
+      assert QBittorrent.add(%{download_url: url}, fetch: &Fetch.bytes/3) ==
+               {:ok, String.downcase(@hash)}
     end
 
     assert_received {:posted, "magnet:?" <> _ = lower}
@@ -892,7 +913,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :invalid_url} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "login cools down after a definitive auth failure: one attempt per process" do
@@ -970,7 +993,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :response_too_large} =
-             QBittorrent.add(%{download_url: "https://tracker.test/oversized.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/oversized.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   # The login refuses, so the test ends before an upload, which `Req.Test`'s body parser caps at
@@ -994,7 +1019,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert byte_size(torrent) == cap
 
     assert {:error, :login_failed} =
-             QBittorrent.add(%{download_url: "https://tracker.test/big.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/big.torrent"},
+               fetch: &Fetch.bytes/3
+             )
 
     assert_received :login
   end
@@ -1029,7 +1056,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
-             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"})
+             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 follows five http redirects and refuses a sixth without contacting qBittorrent" do
@@ -1051,7 +1078,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :too_many_redirects} =
-             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"})
+             QBittorrent.add(%{download_url: "https://tracker.test/hop/0"}, fetch: &Fetch.bytes/3)
 
     for n <- 0..5, do: assert_received({:hop, ^n})
     refute_received {:hop, _}
@@ -1060,7 +1087,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
   test "add/1 rejects an unsafe torrent URL before the request" do
     assert {:error, :forbidden_address} =
-             QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
+             QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 strips a magnet tracker that resolves to a forbidden address" do
@@ -1194,7 +1223,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 strips a .torrent url-list web seed that resolves to a forbidden address" do
@@ -1224,7 +1255,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 uploads a .torrent whose embedded endpoints all resolve to safe addresses" do
@@ -1237,7 +1270,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     stub_torrent_flow(torrent_bytes)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 allows a private URL proven to share the configured indexer origin" do
@@ -1269,10 +1304,13 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:ok, ^expected} =
-             QBittorrent.add(%{
-               download_url: "http://127.0.0.1:9696/file/1",
-               download_url_origin: "http://127.0.0.1:9696"
-             })
+             QBittorrent.add(
+               %{
+                 download_url: "http://127.0.0.1:9696/file/1",
+                 download_url_origin: "http://127.0.0.1:9696"
+               },
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 never restores indexer-origin trust after a cross-origin redirect" do
@@ -1294,10 +1332,13 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :forbidden_address} =
-             QBittorrent.add(%{
-               download_url: "https://127.0.0.1:9696/file/1",
-               download_url_origin: "https://127.0.0.1:9696"
-             })
+             QBittorrent.add(
+               %{
+                 download_url: "https://127.0.0.1:9696/file/1",
+                 download_url_origin: "https://127.0.0.1:9696"
+               },
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 revalidates and rejects an unsafe torrent redirect" do
@@ -1312,7 +1353,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert {:error, :forbidden_address} =
-             QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"})
+             QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "files/1 returns the torrent's file names" do

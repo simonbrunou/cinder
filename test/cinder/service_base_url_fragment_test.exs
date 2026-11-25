@@ -12,7 +12,7 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
   alias Cinder.Books.Metadata.{Hardcover, OpenLibrary}
   alias Cinder.Catalog.TMDB
   alias Cinder.ConfigCase
-  alias Cinder.Download.Client.{QBittorrent, Sabnzbd}
+  alias Cinder.Download.Client.{Fetch, QBittorrent, Sabnzbd}
   alias Cinder.Library.AudiobookServer.Audiobookshelf
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.Library.MigrationSource.{Radarr, Readarr, Sonarr}
@@ -54,9 +54,11 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
        [{"GET", "/api/v1/search"}]},
       {"SABnzbd health/0", Sabnzbd, :base_url, "http://localhost:8080", Cinder.SabnzbdStub,
        &json/1, &Sabnzbd.health/0, [{"GET", "/api"}, {"GET", "/api"}]},
-      {"SABnzbd add/1", Sabnzbd, :base_url, "http://localhost:8080", Cinder.SabnzbdStub,
-       &sabnzbd_add/1, fn -> Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?id=9"}) end,
-       [{"GET", "/getnzb/1"}, {"POST", "/api"}]},
+      {"SABnzbd add/2", Sabnzbd, :base_url, "http://localhost:8080", Cinder.SabnzbdStub,
+       &sabnzbd_add/1,
+       fn ->
+         Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?id=9"}, fetch: &Fetch.bytes/3)
+       end, [{"GET", "/getnzb/1"}, {"POST", "/api"}]},
       {"qBittorrent login and health/0", QBittorrent, :base_url, "http://localhost:8080",
        Cinder.QBittorrentStub, &qbittorrent/1, &QBittorrent.health/0,
        [{"POST", "/api/v2/auth/login"}, {"GET", "/api/v2/app/webapiVersion"}]},

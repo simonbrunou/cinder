@@ -1,7 +1,7 @@
 defmodule Cinder.Download.Client.NzbgetTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Download.Client.Nzbget
+  alias Cinder.Download.Client.{Fetch, Nzbget}
 
   @key "01234567-89ab-cdef-0123-456789abcdef"
 
@@ -48,7 +48,8 @@ defmodule Cinder.Download.Client.NzbgetTest do
     assert {:ok, "42"} =
              Nzbget.add(
                %{title: "Movie", download_url: "https://provider.test/file.nzb"},
-               operation_key: @key
+               operation_key: @key,
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -67,7 +68,10 @@ defmodule Cinder.Download.Client.NzbgetTest do
     end)
 
     assert {:error, :invalid_url} =
-             Nzbget.add(%{download_url: "https://provider.test/redirect"}, operation_key: @key)
+             Nzbget.add(%{download_url: "https://provider.test/redirect"},
+               operation_key: @key,
+               fetch: &Fetch.bytes/3
+             )
   end
 
   defp drain_requests(acc \\ []) do
@@ -117,7 +121,9 @@ defmodule Cinder.Download.Client.NzbgetTest do
           {"https://indexer.example/dl/magnet", {:error, :unsupported_download_url},
            fetched.("/dl/magnet")}
         ] do
-      assert {url, Nzbget.add(%{download_url: url}, operation_key: @key)} == {url, expected}
+      assert {url, Nzbget.add(%{download_url: url}, operation_key: @key, fetch: &Fetch.bytes/3)} ==
+               {url, expected}
+
       assert {url, drain_requests()} == {url, requests}
     end
   end

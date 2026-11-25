@@ -514,4 +514,75 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
 
     assert {:error, :response_too_large} = Prowlarr.search("tt1375666")
   end
+
+  describe "fetch_download/3" do
+    # The options a client builds, with the test seams `Cinder.Download.Client.Fetch` reads.
+    defp fetch_opts(extra \\ []) do
+      [
+        max_bytes: 64,
+        error_tag: :torrent_fetch_status,
+        allow_magnet: true,
+        plug: {Req.Test, Cinder.ProwlarrFetchStub},
+        resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end
+      ] ++ extra
+    end
+
+    defp stub_fetch(fun) do
+      test_pid = self()
+
+      Req.Test.stub(Cinder.ProwlarrFetchStub, fn conn ->
+        send(test_pid, {:fetched, conn.host, conn.request_path})
+        fun.(conn)
+      end)
+    end
+
+    test "answers the link's bytes, fetched from the link itself" do
+      stub_fetch(&Plug.Conn.send_resp(&1, 200, "torrent bytes"))
+
+      assert {:ok, "torrent bytes"} =
+               Prowlarr.fetch_download(
+                 "https://indexer.example/dl/1.torrent",
+                 "https://indexer.example",
+                 fetch_opts()
+               )
+
+      assert_received {:fetched, "indexer.example", "/dl/1.torrent"}
+    end
+
+    test "answers a magnet redirect and a fetch error as Fetch.bytes/3 does" do
+      stub_fetch(fn
+        %{request_path: "/magnet"} = conn ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "magnet:?xt=urn:btih:abc")
+          |> Plug.Conn.send_resp(302, "")
+
+        conn ->
+          Plug.Conn.send_resp(conn, 503, "")
+      end)
+
+      origin = "https://indexer.example"
+
+      assert {:magnet, "magnet:?xt=urn:btih:abc"} =
+               Prowlarr.fetch_download("#{origin}/magnet", origin, fetch_opts())
+
+      assert {:error, {:torrent_fetch_status, 503}} =
+               Prowlarr.fetch_download("#{origin}/gone", origin, fetch_opts())
+    end
+
+    # `Cinder.Download` adds the intent's provenance to the options; `Fetch` reads none of it.
+    test "fetches the same way with the provenance keys in the options" do
+      stub_fetch(&Plug.Conn.send_resp(&1, 200, "nzb bytes"))
+
+      opts = fetch_opts(indexer_source: "prowlarr", indexer_id: 7, credentials_version: 2)
+
+      assert {:ok, "nzb bytes"} =
+               Prowlarr.fetch_download(
+                 "https://indexer.example/dl/2",
+                 "https://indexer.example",
+                 opts
+               )
+
+      assert_received {:fetched, "indexer.example", "/dl/2"}
+    end
+  end
 end

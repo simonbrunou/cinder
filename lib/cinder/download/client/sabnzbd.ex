@@ -7,8 +7,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Auth is just the API key as
   a query param — no stateful login.
 
-  `add/1` fetches the release's NZB itself — bounded, redirect-revalidated, through
-  `Cinder.Download.Client.Fetch` (the fetch the torrent clients and NZBGet share) — and hands
+  `add/2` fetches the release's NZB itself, through the `fetch:` function in its options, as the
+  torrent clients and NZBGet do: `Cinder.Download` builds it to call the `fetch_download/3` of the
+  indexer source the grab recorded, and the Prowlarr source's is the bounded,
+  redirect-revalidated `Cinder.Download.Client.Fetch.bytes/3`. It hands
   SABnzbd the bytes via `mode=addfile`, rather than `mode=addurl` (which would have
   SABnzbd resolve DNS and follow redirects for that URL itself, outside
   `HTTPPolicy`'s SSRF checks entirely). The returned `nzo_id` is the `download_id`
@@ -38,7 +40,6 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   require Logger
 
-  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
 
@@ -61,7 +62,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @impl true
   def add(%{download_url: url} = release, opts) when is_binary(url) do
     # Fetch the NZB ourselves instead of handing SABnzbd the raw URL via `addurl`, through the
-    # same checked fetch as the torrent clients and NZBGet.
+    # same `fetch:` function as the torrent clients and NZBGet.
     fetch_opts = [
       max_bytes: @max_nzb_bytes,
       error_tag: :nzb_fetch_status,
@@ -70,7 +71,8 @@ defmodule Cinder.Download.Client.Sabnzbd do
       resolver: config()[:url_resolver]
     ]
 
-    with {:ok, bytes} <- Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
+    with {:ok, bytes} <-
+           Keyword.fetch!(opts, :fetch).(url, Map.get(release, :download_url_origin), fetch_opts) do
       add_file(bytes, release, opts)
     end
   end

@@ -85,10 +85,12 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
     # #1645: Prowlarr's indexer 7 and a native indexer 7 are two sites, so the search keeps one
     # copy of a link for each, and a copy with no id folds only into a copy from its own source.
+    # No fetch source maps "native" before #1651, so the intent for the native copy retries with
+    # no add/2 call (#1650): the test reads the intent the pick reserved.
     for {name, native_id} <- [{"the same id", 7}, {"no id", nil}] do
       @native_id native_id
 
-      test "#{profile}: one link from a blocked Prowlarr indexer and a native one with #{name} is grabbed" do
+      test "#{profile}: one link from a blocked Prowlarr indexer and a native one with #{name} is picked" do
         %{series: series} = wanted_episodes([1], @profile)
         :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", 7})
 
@@ -101,8 +103,12 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
 
         poll_times(1)
 
-        assert added() == ["shared"]
-        assert grabbed() == ["hash-shared"]
+        assert [%Intent{release: stored, last_error: ":unknown_indexer_source"}] =
+                 Repo.all(Intent)
+
+        assert {stored["indexer_source"], stored["indexer_id"]} == {"native", @native_id}
+        assert added() == []
+        assert grabbed() == []
       end
     end
   end

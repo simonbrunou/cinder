@@ -165,7 +165,9 @@ defmodule Cinder.Download.TvPollerTest do
   defp stub_accept_then_crash(remote_id) do
     {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+    stub(Cinder.Download.ClientMock, :add, fn _release, opts ->
+      key = Keyword.fetch!(opts, :operation_key)
+
       Agent.update(accepted, fn state ->
         %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, remote_id)}
       end)

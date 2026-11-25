@@ -8,7 +8,6 @@ defmodule Cinder.Download.Client.Transmission do
   """
   @behaviour Cinder.Download.Client
 
-  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.{EndpointVetter, PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
@@ -53,7 +52,7 @@ defmodule Cinder.Download.Client.Transmission do
       resolver: config()[:url_resolver]
     ]
 
-    case Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
+    case Keyword.fetch!(opts, :fetch).(url, Map.get(release, :download_url_origin), fetch_opts) do
       {:ok, bytes} -> add_torrent(bytes, opts)
       {:magnet, magnet} -> add_magnet(magnet, opts)
       {:error, reason} -> {:error, reason}

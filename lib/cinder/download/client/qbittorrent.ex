@@ -24,7 +24,6 @@ defmodule Cinder.Download.Client.QBittorrent do
   """
   @behaviour Cinder.Download.Client
 
-  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.{EndpointVetter, PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
@@ -128,7 +127,7 @@ defmodule Cinder.Download.Client.QBittorrent do
       resolver: Keyword.get(config(), :url_resolver)
     ]
 
-    case Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts) do
+    case Keyword.fetch!(opts, :fetch).(url, Map.get(release, :download_url_origin), fetch_opts) do
       {:ok, bytes} -> add_torrent_bytes(bytes, opts)
       # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
       # magnet: URI — route it through the magnet add path.

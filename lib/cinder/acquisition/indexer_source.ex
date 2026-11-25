@@ -6,6 +6,10 @@ defmodule Cinder.Acquisition.IndexerSource do
   returns it, each search reads it once ("One source per search" below), and the `"indexer"`
   target of `Cinder.Health` calls it.
 
+  A download client fetches a grab's http(s) link through `fetch_download/3` of the source its
+  download intent recorded, not the configured one (`Cinder.Download.fetch_source/1`). A magnet
+  link needs no fetch, and an intent whose source maps to no module makes none.
+
   Prefer searching by IMDb id over free-text title.
 
   ## What a search callback returns
@@ -108,6 +112,24 @@ defmodule Cinder.Acquisition.IndexerSource do
 
   @doc "Lightweight reachability check — `:ok` if the indexer answers, else `{:error, reason}`."
   @callback health() :: :ok | {:error, term()}
+
+  @doc """
+  Fetches a grab's download link for a download client: `{:ok, bytes}`, `{:magnet, link}` for a
+  link that redirects to a magnet when `opts` sets `allow_magnet: true`, or `{:error, reason}`, as
+  `Cinder.Download.Client.Fetch.bytes/3` answers. `source_origin` is the origin the release
+  recorded for its link, or `nil`.
+
+  `opts` are the client's fetch options, its test seams (`:plug`, `:resolver`) included, plus the
+  intent's provenance that `Cinder.Download.fetch_function/2` adds: `:indexer_source`, the
+  source's name (`"prowlarr"` for an intent that records none), and `:indexer_id` and
+  `:credentials_version`, each `nil` when the intent records none.
+  """
+  @callback fetch_download(
+              url :: String.t(),
+              source_origin :: String.t() | nil,
+              opts :: keyword()
+            ) ::
+              {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
 
   @doc """
   The source module the app env key `:indexer_source` names: what a search uses when its caller

@@ -7,7 +7,7 @@ defmodule Cinder.Download.Client.DownloadUrlRefusalTest do
   use ExUnit.Case, async: false
 
   alias Cinder.ConfigCase
-  alias Cinder.Download.Client.{Nzbget, QBittorrent, Sabnzbd, Transmission}
+  alias Cinder.Download.Client.{Fetch, Nzbget, QBittorrent, Sabnzbd, Transmission}
 
   @origin "https://indexer.example"
   @pinned "93.184.216.34"
@@ -73,7 +73,8 @@ defmodule Cinder.Download.Client.DownloadUrlRefusalTest do
 
   defp add(client, url, origin) do
     client.add(%{download_url: url, download_url_origin: origin, title: "Movie"},
-      operation_key: "01234567-89ab-cdef-0123-456789abcdef"
+      operation_key: "01234567-89ab-cdef-0123-456789abcdef",
+      fetch: &Fetch.bytes/3
     )
   end
 

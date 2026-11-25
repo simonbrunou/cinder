@@ -94,20 +94,16 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
         ] do
       @stored stored
       @offered offered
-      @adopts adopts
+
+      @outcome (cond do
+                  not adopts -> :busy
+                  elem(stored, 0) == "native" -> :adopts_unmapped
+                  true -> :adopts
+                end)
 
       test name, %{movie: movie} do
         {:ok, _intent} = reserve(:movie, movie.id, [], release(@stored))
-
-        if @adopts do
-          expect_add("hash-adopted")
-
-          assert {:ok, %{download_id: "hash-adopted"}} =
-                   Download.grab_movie(movie, release(@offered))
-        else
-          assert {:error, :download_intent_busy} = Download.grab_movie(movie, release(@offered))
-          assert movie_intent(movie).status == :reserved
-        end
+        assert_grab(movie, release(@offered), @outcome)
       end
     end
   end
@@ -142,11 +138,11 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
     for {name, stored, row} <- [
           {"with an id and no source writes a row with the Prowlarr source and its id",
            {nil, 1, nil}, {"prowlarr", 1}},
-          {"with a native source writes a row with that source and its id", {"native", 1, nil},
-           {"native", 1}},
+          {"with the Prowlarr source writes a row with that source and its id",
+           {"prowlarr", 1, nil}, {"prowlarr", 1}},
           {"with no id writes a row with no source and no id", {nil, nil, nil}, {nil, nil}},
-          {"with a source and no id writes a row with no source and no id", {"native", nil, nil},
-           {nil, nil}}
+          {"with a source and no id writes a row with no source and no id",
+           {"prowlarr", nil, nil}, {nil, nil}}
         ] do
       @stored stored
       @row row
@@ -161,6 +157,27 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
         {source, id} = @row
         assert blocked(series.id) == [{@title, "bad_torrent", source, id}]
       end
+    end
+
+    # No fetch source maps "native" before #1651 (#1650), so the client's add/2 never gets the
+    # release, cannot refuse it, and no row is written: the intent retries.
+    test "with a native source never reaches the client's add/2 and writes no row", %{
+      series: series,
+      episode: episode
+    } do
+      {:ok, intent} = reserve(:episode, episode.id, [episode.id], release({"native", 1, nil}))
+      test_pid = self()
+      stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+      stub(ClientMock, :add, fn _release, _opts ->
+        send(test_pid, :added)
+        {:error, :bad_torrent}
+      end)
+
+      assert {:error, :unknown_indexer_source} = Download.reconcile_intent(intent)
+      refute_received :added
+      assert blocked(series.id) == []
+      assert %Intent{status: :reserved, attempt_count: 1} = Repo.get(Intent, intent.id)
     end
   end
 
@@ -188,6 +205,23 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
   defp expect_add(remote_id) do
     expect(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
     expect(ClientMock, :add, fn _release, _opts -> {:ok, remote_id} end)
+  end
+
+  defp assert_grab(movie, offered, :busy) do
+    assert {:error, :download_intent_busy} = Download.grab_movie(movie, offered)
+    assert %Intent{status: :reserved, attempt_count: 0} = movie_intent(movie)
+  end
+
+  # No fetch source maps "native" before #1651 (#1650): the grab adopts the intent, whose
+  # submission then retries with no add/2 call.
+  defp assert_grab(movie, offered, :adopts_unmapped) do
+    assert {:error, :unknown_indexer_source} = Download.grab_movie(movie, offered)
+    assert %Intent{status: :reserved, attempt_count: 1} = movie_intent(movie)
+  end
+
+  defp assert_grab(movie, offered, :adopts) do
+    expect_add("hash-adopted")
+    assert {:ok, %{download_id: "hash-adopted"}} = Download.grab_movie(movie, offered)
   end
 
   defp movie_intent(movie), do: Repo.get_by!(Intent, kind: :movie, target_id: movie.id)

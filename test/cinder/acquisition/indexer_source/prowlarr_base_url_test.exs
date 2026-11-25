@@ -8,7 +8,7 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrBaseUrlTest do
 
   alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.ConfigCase
-  alias Cinder.Download.Client.{Nzbget, QBittorrent, Sabnzbd, Transmission}
+  alias Cinder.Download.Client.{Fetch, Nzbget, QBittorrent, Sabnzbd, Transmission}
   alias Cinder.HTTPPolicy
 
   # Each row: the configured base URL, a link on its origin, and the origin Prowlarr records.
@@ -157,7 +157,12 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrBaseUrlTest do
 
       answers =
         for {client, _stub, _tag} <- @clients do
-          answer = client.add(release, operation_key: "01234567-89ab-cdef-0123-456789abcdef")
+          answer =
+            client.add(release,
+              operation_key: "01234567-89ab-cdef-0123-456789abcdef",
+              fetch: &Fetch.bytes/3
+            )
+
           {client, answer, drain()}
         end
 

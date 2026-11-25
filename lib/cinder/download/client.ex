@@ -4,6 +4,12 @@ defmodule Cinder.Download.Client do
   that Cinder owns.
   """
 
+  @doc """
+  Adds `release` and answers the client's id for it. `opts` carries `operation_key:`, the marker
+  Cinder tags the download with, and `fetch:`, the function a client calls to fetch an http(s)
+  `download_url` (`Cinder.Download.fetch_function/2`): a client fetches such a link only through
+  it, and raises `KeyError` without it. A magnet link needs no fetch.
+  """
   @callback add(release :: map(), opts :: keyword()) ::
               {:ok, id :: String.t()} | {:error, term()}
 

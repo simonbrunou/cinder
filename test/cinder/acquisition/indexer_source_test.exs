@@ -9,6 +9,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
   @old_prowlarr Module.concat([Cinder.Acquisition, Indexer, Prowlarr])
 
   @callbacks [
+    fetch_download: 3,
     health: 0,
     search: 1,
     search_audiobook: 3,
@@ -27,7 +28,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 
-  test "the seam keeps its nine callbacks, and the adapter and the mocks implement it" do
+  test "the seam keeps its ten callbacks, and the adapter and the mocks implement it" do
     assert Enum.sort(IndexerSource.behaviour_info(:callbacks)) == @callbacks
 
     assert IndexerSource in behaviours(IndexerSource.Prowlarr)

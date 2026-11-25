@@ -905,7 +905,9 @@ defmodule Cinder.Download.PollerTest do
 
       accepted = start_supervised!({Agent, fn -> %{adds: 0, jobs: %{}} end})
 
-      stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+      stub(Cinder.Download.ClientMock, :add, fn _release, opts ->
+        key = Keyword.fetch!(opts, :operation_key)
+
         Agent.update(accepted, fn state ->
           %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, "hash-crash")}
         end)

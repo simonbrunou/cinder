@@ -1,7 +1,7 @@
 defmodule Cinder.Download.Client.TransmissionTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Download.Client.Transmission
+  alias Cinder.Download.Client.{Fetch, Transmission}
 
   @hash "0123456789abcdef0123456789abcdef01234567"
 
@@ -123,7 +123,8 @@ defmodule Cinder.Download.Client.TransmissionTest do
     assert {:error, :invalid_url} =
              Transmission.add(
                %{download_url: "https://tracker.test/dl/123"},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -164,7 +165,8 @@ defmodule Cinder.Download.Client.TransmissionTest do
     assert {:ok, @hash} =
              Transmission.add(
                %{download_url: "https://tracker.test/file.torrent"},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -242,7 +244,7 @@ defmodule Cinder.Download.Client.TransmissionTest do
 
     for scheme <- ["http", "HTTP", "https", "HTTPS"] do
       url = "#{scheme}://indexer.example/file.torrent"
-      assert Transmission.add(%{download_url: url}) == {:ok, @hash}
+      assert Transmission.add(%{download_url: url}, fetch: &Fetch.bytes/3) == {:ok, @hash}
       assert_received {:submitted, ^torrent_bytes}
     end
 
@@ -285,7 +287,7 @@ defmodule Cinder.Download.Client.TransmissionTest do
 
     for scheme <- ["magnet", "MAGNET"] do
       url = "https://indexer.example/dl/#{scheme}"
-      assert Transmission.add(%{download_url: url}) == {:ok, @hash}
+      assert Transmission.add(%{download_url: url}, fetch: &Fetch.bytes/3) == {:ok, @hash}
     end
 
     assert_received {:submitted, "magnet:?" <> _ = lower}

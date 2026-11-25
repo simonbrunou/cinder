@@ -783,6 +783,9 @@ defmodule Cinder.Download do
     end
   end
 
+  # The client fetches the link only through `fetch:`, which reaches the source the intent recorded
+  # (#1650). An intent whose source maps to no module makes no fetch and no add: its reason goes to
+  # `schedule_retry/2`, as a client error outside `@permanent_submission_errors` does.
   defp add_decrypted_release(intent, client, download_url) do
     release = %Release{
       title: intent.release["title"],
@@ -791,15 +794,54 @@ defmodule Cinder.Download do
       protocol: intent.protocol
     }
 
-    case client.add(release, operation_key: intent.operation_key) do
-      {:ok, remote_id} ->
-        store_remote_id(intent, remote_id)
-
+    with {:ok, module, provenance} <- fetch_source(intent),
+         fetch = fetch_function(module, provenance),
+         {:ok, remote_id} <-
+           client.add(release, operation_key: intent.operation_key, fetch: fetch) do
+      store_remote_id(intent, remote_id)
+    else
       {:error, reason} when reason in @permanent_submission_errors ->
         abandon_reserved(intent, reason)
 
       {:error, reason} ->
         schedule_retry(intent, reason)
+    end
+  end
+
+  @doc """
+  The indexer source that fetches `intent`'s download link, read from the source the intent
+  recorded and never from the configured one: `{:ok, module, provenance}`, where `provenance` is
+  `[indexer_source: "prowlarr", indexer_id:, credentials_version:]`, the last two `nil` when the
+  intent records none. An intent with no recorded source, such as one reserved before #1645, is
+  Prowlarr's. Any other source answers `{:error, :unknown_indexer_source}`.
+  """
+  @spec fetch_source(Intent.t()) :: {:ok, module(), keyword()} | {:error, :unknown_indexer_source}
+  def fetch_source(%Intent{release: stored} = intent) do
+    case indexer_source(stored["indexer_source"]) do
+      "prowlarr" ->
+        {:ok, IndexerSource.Prowlarr,
+         [
+           indexer_source: "prowlarr",
+           indexer_id: indexer_id(intent),
+           credentials_version: stored["credentials_version"]
+         ]}
+
+      _other ->
+        {:error, :unknown_indexer_source}
+    end
+  end
+
+  @doc """
+  The `fetch:` function a download client calls with its link, origin and fetch options: it calls
+  `module.fetch_download/3` with those options plus `provenance`, whose keys replace any key of
+  the same name.
+  """
+  @spec fetch_function(module(), keyword()) ::
+          (String.t(), String.t() | nil, keyword() ->
+             {:ok, binary()} | {:magnet, String.t()} | {:error, term()})
+  def fetch_function(module, provenance) do
+    fn url, source_origin, opts ->
+      module.fetch_download(url, source_origin, Keyword.merge(opts, provenance))
     end
   end
 

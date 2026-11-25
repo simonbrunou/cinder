@@ -8,7 +8,6 @@ defmodule Cinder.Download.Client.Nzbget do
   """
   @behaviour Cinder.Download.Client
 
-  alias Cinder.Download.Client.Fetch
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
 
@@ -31,7 +30,8 @@ defmodule Cinder.Download.Client.Nzbget do
       resolver: config()[:url_resolver]
     ]
 
-    with {:ok, bytes} <- Fetch.bytes(url, Map.get(release, :download_url_origin), fetch_opts),
+    with {:ok, bytes} <-
+           Keyword.fetch!(opts, :fetch).(url, Map.get(release, :download_url_origin), fetch_opts),
          {:ok, id} <- append(bytes, release, Keyword.get(opts, :operation_key)) do
       {:ok, to_string(id)}
     end

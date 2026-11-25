@@ -1,7 +1,7 @@
 defmodule Cinder.Download.Client.TorrentFetchDeadlineTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Download.Client.{Nzbget, QBittorrent, Transmission}
+  alias Cinder.Download.Client.{Fetch, Nzbget, QBittorrent, Transmission}
   alias Cinder.Test.RequestDeadlines
 
   @fetch_paths ["/file/1", "/file/2"]
@@ -31,7 +31,9 @@ defmodule Cinder.Download.Client.TorrentFetchDeadlineTest do
 
     assert {{:error, {:torrent_fetch_status, 404}}, [90_000, 90_000]} =
              fetch_deadlines(fn ->
-               QBittorrent.add(%{download_url: "https://tracker.test/file/1"})
+               QBittorrent.add(%{download_url: "https://tracker.test/file/1"},
+                 fetch: &Fetch.bytes/3
+               )
              end)
   end
 
@@ -40,7 +42,9 @@ defmodule Cinder.Download.Client.TorrentFetchDeadlineTest do
 
     assert {{:error, {:torrent_fetch_status, 404}}, [90_000, 90_000]} =
              fetch_deadlines(fn ->
-               Transmission.add(%{download_url: "https://tracker.test/file/1"}, [])
+               Transmission.add(%{download_url: "https://tracker.test/file/1"},
+                 fetch: &Fetch.bytes/3
+               )
              end)
   end
 
@@ -51,7 +55,9 @@ defmodule Cinder.Download.Client.TorrentFetchDeadlineTest do
 
     assert {{:error, {:nzb_fetch_status, 404}}, [60_000, 60_000]} =
              fetch_deadlines(fn ->
-               Nzbget.add(%{title: "Movie", download_url: "https://provider.test/file/1"}, [])
+               Nzbget.add(%{title: "Movie", download_url: "https://provider.test/file/1"},
+                 fetch: &Fetch.bytes/3
+               )
              end)
   end
 end

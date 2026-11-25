@@ -28,6 +28,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   @behaviour Cinder.Acquisition.IndexerSource
 
   alias Cinder.Acquisition.Release
+  alias Cinder.Download.Client.Fetch
   alias Cinder.HTTPPolicy
   alias Cinder.Util
 
@@ -247,6 +248,11 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
       other -> error(other)
     end
   end
+
+  # A Prowlarr link is fetched as every client fetched it before #1650: through `Fetch.bytes/3`
+  # with the client's options as they come. `Fetch` reads none of the provenance keys.
+  @impl true
+  def fetch_download(url, source_origin, opts), do: Fetch.bytes(url, source_origin, opts)
 
   # `HTTPPolicy.bounded_request/2` takes the receive_timeout left after the caller's opts and the
   # configured `req_options` merge as the total deadline when it is past 60s: 90s for every search

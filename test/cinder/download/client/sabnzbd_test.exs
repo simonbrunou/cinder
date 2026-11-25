@@ -5,7 +5,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   import ExUnit.CaptureLog
 
   alias Cinder.ConfigCase
-  alias Cinder.Download.Client.Sabnzbd
+  alias Cinder.Download.Client.{Fetch, Sabnzbd}
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
 
@@ -75,7 +75,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "SABnzbd_nzo_abc"} =
-             Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
+             Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 pins an untrusted NZB fetch to the validated address" do
@@ -91,7 +93,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-pinned"} =
-             Sabnzbd.add(%{download_url: "https://provider.test/pinned.nzb"})
+             Sabnzbd.add(%{download_url: "https://provider.test/pinned.nzb"},
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/1 never tells SABnzbd the URL — addfile carries file bytes, not the URL" do
@@ -109,7 +113,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       end
     end)
 
-    assert {:ok, "nzo-1"} = Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1"})
+    assert {:ok, "nzo-1"} =
+             Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 rejects an SSRF redirect during the NZB fetch before ever contacting SABnzbd" do
@@ -126,7 +131,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:error, :forbidden_address} =
-             Sabnzbd.add(%{download_url: "http://provider.test/redirect"})
+             Sabnzbd.add(%{download_url: "http://provider.test/redirect"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 refuses a fetch redirect whose host is not valid UTF-8, before SABnzbd hears of it" do
@@ -143,7 +148,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:error, :invalid_url} =
-             Sabnzbd.add(%{download_url: "http://provider.test/redirect"})
+             Sabnzbd.add(%{download_url: "http://provider.test/redirect"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/2 names the job with the operation key when the release has no title" do
@@ -153,7 +158,10 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-123"} =
-             Sabnzbd.add(%{download_url: "http://x/nzb"}, operation_key: "op-123")
+             Sabnzbd.add(%{download_url: "http://x/nzb"},
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/2 names the job after the release title, suffixed with the operation key" do
@@ -168,7 +176,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-123"} =
              Sabnzbd.add(
                %{download_url: "http://x/nzb", title: "Cowboy.Bebop.S01E22.1080p.BluRay-Kitsune"},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -179,7 +188,10 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-123"} =
-             Sabnzbd.add(%{download_url: "http://x/nzb", title: ""}, operation_key: "op-123")
+             Sabnzbd.add(%{download_url: "http://x/nzb", title: ""},
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "add/2 sanitizes filesystem-hostile characters out of the title" do
@@ -191,7 +203,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-123"} =
              Sabnzbd.add(
                %{download_url: "http://x/nzb", title: ~s(A/B\\C:D*?"<>|)},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -208,7 +221,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-123"} =
              Sabnzbd.add(
                %{download_url: "http://x/nzb", title: long_title},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -226,7 +240,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-123"} =
              Sabnzbd.add(
                %{download_url: "http://x/nzb", title: long_title},
-               operation_key: "op-123"
+               operation_key: "op-123",
+               fetch: &Fetch.bytes/3
              )
   end
 
@@ -459,7 +474,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => []})
     end)
 
-    assert {:error, :add_rejected} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+    assert {:error, :add_rejected} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 returns :add_rejected when SABnzbd reports status false" do
@@ -467,7 +483,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       Req.Test.json(conn, %{"status" => false, "error" => "nope"})
     end)
 
-    assert {:error, :add_rejected} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+    assert {:error, :add_rejected} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 rejects a non-binary download_url without calling SABnzbd" do
@@ -520,7 +537,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
           {"https://indexer.example/dl/magnet", {:error, :unsupported_download_url},
            fetched.("/dl/magnet")}
         ] do
-      assert {url, Sabnzbd.add(%{download_url: url})} == {url, expected}
+      assert {url, Sabnzbd.add(%{download_url: url}, fetch: &Fetch.bytes/3)} == {url, expected}
       assert {url, drain_requests()} == {url, requests}
     end
   end
@@ -558,7 +575,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub_redirect_hops(1_000, "/never")
 
     assert {:error, :too_many_redirects} =
-             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"})
+             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"}, fetch: &Fetch.bytes/3)
 
     assert drain_requests() == hops(0..5)
   end
@@ -568,7 +585,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub_redirect_hops(5, "magnet:?xt=urn:btih:#{hash}&dn=Movie")
 
     assert {:error, :unsupported_download_url} =
-             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"})
+             Sabnzbd.add(%{download_url: "https://indexer.example/hop/0"}, fetch: &Fetch.bytes/3)
 
     assert drain_requests() == hops(0..5)
   end
@@ -582,7 +599,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:error, :response_too_large} =
-             Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"})
+             Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"},
+               fetch: &Fetch.bytes/3
+             )
 
     assert drain_requests() == [{"93.184.216.34", "/big.nzb"}]
   end
@@ -607,7 +626,11 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     ConfigCase.put_config(Sabnzbd, req_options: [adapter: sabnzbd, retry: false])
     stub(fn conn -> Req.Test.text(conn, nzb) end)
 
-    assert {:ok, "nzo-big"} = Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"})
+    assert {:ok, "nzo-big"} =
+             Sabnzbd.add(%{download_url: "https://indexer.example/big.nzb"},
+               fetch: &Fetch.bytes/3
+             )
+
     assert_received {:addfile, :post, "/api", true}
   end
 
@@ -628,7 +651,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       end
     end)
 
-    assert {:error, {:sabnzbd_status, 503}} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+    assert {:error, {:sabnzbd_status, 503}} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, fetch: &Fetch.bytes/3)
 
     assert_received :add_called
     refute_received :add_called
@@ -641,7 +665,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       Req.Test.json(conn, %{"status" => 1, "nzo_ids" => ["SABnzbd_nzo_z"]})
     end)
 
-    assert {:ok, "SABnzbd_nzo_z"} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+    assert {:ok, "SABnzbd_nzo_z"} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, fetch: &Fetch.bytes/3)
   end
 
   test "status/1 normalizes a queued download's progress and eta" do
@@ -1139,7 +1164,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       log =
         capture_log(fn ->
           assert {:error, {:sabnzbd_status, ^status}} =
-                   Sabnzbd.add(%{download_url: "https://provider.test/getnzb"})
+                   Sabnzbd.add(%{download_url: "https://provider.test/getnzb"},
+                     fetch: &Fetch.bytes/3
+                   )
         end)
 
       refute_received {:attacker_called, _}
@@ -1151,7 +1178,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub(fn _conn -> flunk("unsafe provider URL must not reach SABnzbd") end)
 
     assert {:error, :forbidden_address} =
-             Sabnzbd.add(%{download_url: "http://127.0.0.1/private.nzb"})
+             Sabnzbd.add(%{download_url: "http://127.0.0.1/private.nzb"}, fetch: &Fetch.bytes/3)
   end
 
   test "add/1 delegates a private URL proven to share the configured indexer origin" do
@@ -1168,10 +1195,13 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-proxy"} =
-             Sabnzbd.add(%{
-               download_url: "http://127.0.0.1:9696/getnzb/1",
-               download_url_origin: "http://127.0.0.1:9696"
-             })
+             Sabnzbd.add(
+               %{
+                 download_url: "http://127.0.0.1:9696/getnzb/1",
+                 download_url_origin: "http://127.0.0.1:9696"
+               },
+               fetch: &Fetch.bytes/3
+             )
   end
 
   test "status/1 rejects an oversized JSON response" do
