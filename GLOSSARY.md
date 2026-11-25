@@ -40,11 +40,20 @@ _Avoid_: search opts, scorer opts
 
 **Indexer**:
 One site Cinder searches for releases: a torrent tracker or a Usenet indexer.
-_Avoid_: tracker (for both kinds), provider, source
+_Avoid_: tracker (for both protocols), provider, source
 
 **Indexer definition**:
 The description of how to search one indexer, log in to it and read its results.
 _Avoid_: indexer config, scraper, Cardigann file
+
+**Indexer type**:
+How Cinder talks to one indexer: the Newznab API, the Torznab API, or the site's own pages read
+through an indexer definition (Cardigann).
+_Avoid_: indexer kind, indexer protocol (protocol is torrent or Usenet), implementation
+
+**Privacy**:
+How open an indexer is, as its indexer definition declares it: public, semi-private or private.
+_Avoid_: indexer type (for this)
 
 **Indexer source**:
 What Cinder searches the indexers through: Prowlarr, or Cinder's own native search.
