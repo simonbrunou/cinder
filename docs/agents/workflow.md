@@ -53,6 +53,16 @@ Work too large for one session starts with `/wayfinder` instead. Incoming issues
 - Paste the bullet above into each reviewer's brief before you start the reviewer. Briefs written
   from the `code-review` skill alone let reviewers run tests or a mutation in the author's
   checkout on #884, #960, #1004 and #939.
+- Before you start the reviewers, run `git fetch origin`, then list the agent docs `main`
+  changed after the branch's base:
+  `git diff --name-only $(git merge-base HEAD origin/main) origin/main -- AGENTS.md docs/agents`.
+  Each reviewer reads each listed file from the tree the PR merges into, since a checkout of the
+  branch holds the base's copy. In your checkout of the branch, run
+  `git merge-tree --write-tree origin/main HEAD`, and put the tree hash on its first line in each
+  brief, with `git show <tree>:<path>` as the read. That tree keeps the branch's own edits too. A
+  non-zero exit is a conflict: resolve it first as "Merge conflicts" below says. On #1718 the
+  Standards review called a test comment's citation of a testing.md rule false, because that rule
+  reached `main` after the branch's base.
 - In a T3 thread, start each `delegate_task` reviewer at high effort in `target.options`
   (`reasoningEffort: "high"` for Codex, whose default model starts at `low`; `effort: "high"`
   for Claude), and with `isolation: "worktree"` when its brief allows the mutation check. The
