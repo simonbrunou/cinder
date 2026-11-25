@@ -50,7 +50,7 @@ Read the matching doc before you act:
 - [Subtitle sync](docs/agents/subtitle-sync.md): before changing `Cinder.Subtitles.Sync`, its
   engine or its timing rules.
 - [Code navigation](docs/agents/code-navigation.md): before finding callers or dependents in
-  `lib/` or `test/`, or inspecting the running dev app.
+  `lib/` or `test/`, or serving or inspecting the dev app.
 - [History](docs/agents/history.md): when you need the reason behind a past decision, or what is
   left on the roadmap.
 

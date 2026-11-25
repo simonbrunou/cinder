@@ -36,3 +36,7 @@ A page with data needs the dev seed first:
 `mix run priv/repo/seeds.exs && PORT=4123 mix phx.server` (an admin whose login it prints, setup
 marked complete, one TV grab with an undecided file on `/activity`; `mix ecto.setup` runs it on a
 new database).
+
+To check the movie page's manual-search panel with results, a search report or an error you
+choose, serve the dev app with `scripts/dev-manual-search.exs` instead: it answers with a fake
+indexer source, and its header gives the command, the login and the movies to open.
