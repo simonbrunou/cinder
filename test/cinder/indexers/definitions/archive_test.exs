@@ -1,6 +1,7 @@
 defmodule Cinder.Indexers.Definitions.ArchiveTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.CallTrace
   alias Cinder.Indexers.Definitions.{Archive, Set}
   alias Cinder.Indexers.Definitions.Set.{DefinitionFile, Versions}
   alias Cinder.Test.DefinitionsZip
@@ -389,42 +390,14 @@ defmodule Cinder.Indexers.Definitions.ArchiveTest do
     end
   end
 
-  # Sums the bytes each `:zlib.safeInflate/2` call returns while `fun` runs in this process. The
-  # tracer is another process: a process that traces itself gets no trace messages.
+  # Sums the bytes each `:zlib.safeInflate/2` call returns while `fun` runs in this process.
   defp inflated_bytes(fun) do
-    mfa = {:zlib, :safeInflate, 2}
-    test_pid = self()
-    tracer = start_supervised!({Task, fn -> sum_inflated(test_pid, 0) end})
-    :erlang.trace_pattern(mfa, [{:_, [], [{:return_trace}]}], [:global])
-    :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+    {result, calls} = CallTrace.calls({:zlib, :safeInflate, 2}, fun)
 
-    result =
-      try do
-        fun.()
-      after
-        :erlang.trace(self(), false, [:call])
-        :erlang.trace_pattern(mfa, false, [:global])
-      end
+    inflated =
+      for %{result: {:return, inflated}} <- calls,
+          do: IO.iodata_length(elem(inflated, tuple_size(inflated) - 1))
 
-    # The runtime may still be delivering trace messages; once it reports them delivered, the
-    # tracer has them all in its mailbox ahead of `:done`.
-    ref = :erlang.trace_delivered(self())
-    assert_receive {:trace_delivered, _pid, ^ref}
-    send(tracer, :done)
-    assert_receive {:inflated, total}
-    {result, total}
-  end
-
-  defp sum_inflated(test_pid, total) do
-    receive do
-      {:trace, _pid, :return_from, {:zlib, :safeInflate, 2}, result} ->
-        sum_inflated(test_pid, total + IO.iodata_length(elem(result, tuple_size(result) - 1)))
-
-      {:trace, _pid, :call, {:zlib, :safeInflate, 2}, _args} ->
-        sum_inflated(test_pid, total)
-
-      :done ->
-        send(test_pid, {:inflated, total})
-    end
+    {result, Enum.sum(inflated)}
   end
 end

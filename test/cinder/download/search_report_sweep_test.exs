@@ -24,6 +24,7 @@ defmodule Cinder.Download.SearchReportSweepTest do
   }
 
   alias Cinder.Acquisition.IndexerSource.Report
+  alias Cinder.CallTrace
   alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Download
   alias Cinder.Download.{Poller, TvPoller}
@@ -312,38 +313,12 @@ defmodule Cinder.Download.SearchReportSweepTest do
     end
   end
 
-  # The opts, the last argument, that the first call of the arity-3 function `{module, name}`
-  # receives while `fun` runs, through a call trace. A process does not receive the trace messages
-  # of its own calls, so a helper process collects them. The module is `async: false`, so no other
-  # test turns the pattern off meanwhile.
+  # The opts, the last argument, of the first call to the arity-3 function `{module, name}` while
+  # `fun` runs.
   defp traced_opts({module, name}, fun) do
-    test_pid = self()
+    {_result, [%{args: [_first, _second, opts]} | _calls]} =
+      CallTrace.calls({module, name, 3}, fun)
 
-    tracer =
-      start_supervised!(
-        {Task,
-         fn ->
-           receive do
-             {:trace, _pid, :call, {^module, ^name, [_first, _second, opts]}} ->
-               send(test_pid, {:traced_opts, opts})
-           end
-         end},
-        id: make_ref()
-      )
-
-    # A pattern on a module not loaded yet matches nothing.
-    Code.ensure_loaded!(module)
-    :erlang.trace(self(), true, [:call, {:tracer, tracer}])
-    assert :erlang.trace_pattern({module, name, 3}, true, [:local]) == 1
-
-    try do
-      fun.()
-    after
-      :erlang.trace_pattern({module, name, 3}, false, [:local])
-      :erlang.trace(self(), false, [:call])
-    end
-
-    assert_receive {:traced_opts, opts}
     opts
   end
 end

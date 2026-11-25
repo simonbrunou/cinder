@@ -513,6 +513,11 @@
   `IndexerMock` without reading config survived it. The fix pointed the key at `InHandIndexerMock`,
   which made the docstring of `Cinder.IndexerStubs.anime_sweep_pick/4` false: a Standards finding,
   two fix commits and a re-check.
+- A test that checks what a function was called with or returned (the opts a judge got, the
+  bytes `:zlib.safeInflate/2` gave back) reads them from `Cinder.CallTrace.calls/2`, whose
+  moduledoc lists the traps of a hand-written `:erlang.trace`. On #1646 a hand-written trace
+  failed twice: it got no message for the test process's own calls, then its pattern matched no
+  function in a module that was not loaded yet.
 - A test that saves settings (`Cinder.Settings.save/2`, or `put/2`, `delete/1` and `save_form/1`,
   which go through it) runs in an `async: false` module that restores every
   `Cinder.Settings.env_keys/0` key, as `Cinder.SettingsTest` does. Each save rebuilds those keys
