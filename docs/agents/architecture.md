@@ -405,6 +405,14 @@ Every call a poller makes has a bound:
   way through `BoundedCommand.kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync`, which
   runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
   interpreter (#954).
+- A child `erl` writes to its own stdout from C, so a protocol on a child VM's output reads
+  another descriptor, as the `Cinder.Indexers.ParserWorker` moduledoc says. A host `mix release`
+  runs nix's ERTS, which writes nothing there, so prove such a protocol in the image. Build and
+  boot it as [ci.md](ci.md) "Browser scripts locally" steps 1 to 3 say, then run the call through
+  `docker exec <name> /app/bin/cinder rpc`, as CI's step "Parser worker in the release image
+  (#1665)" runs `.github/scripts/parser_worker_check.exs`. That check passes when the rpc exits 0
+  and prints `PARSER_WORKER_CHECK:ok`. On #1665 (PR #1718) a host release passed and CI's image
+  failed.
 - Archive extraction carries entry-count and expanded-size ceilings.
 - Seven directory walks go through `Cinder.Library.BoundedWalk.run/3`, a supervised task with a
   deadline that answers `{:error, :timeout}`: `Cinder.Library.safe_walk/1`, which every importer
