@@ -2,8 +2,16 @@ defmodule Cinder.Catalog.BlockedReleases do
   @moduledoc """
   The release blocklist for movies and series: every write to `blocked_releases` but the
   retention prune (`Cinder.Accounts.Janitor`), and every read release selection makes of it. A
-  blocked release is one Cinder will not grab again for that movie or series; its `reason` says
-  why.
+  row records a blocked release, one Cinder will not grab again for that movie or series, and its
+  `reason` says why, or a park strike (below).
+
+  A TV grab with a release title that parks without a block leaves a park strike instead: one row
+  per park, under a reason that blocks nothing alone. Once a series holds three strikes for one
+  release title, `blocked_release_titles_for_series/2` blocks that title, so a release that parks
+  on every grab stops being grabbed (#1588). A manual episode or season Search that puts an
+  episode of the series back in the search clears the series' strikes (`clear_park_strikes/1`),
+  and the retention prune ages each strike out on its own. Clearing the strikes lifts no other
+  block on the title.
 
   Two kinds of write:
 
@@ -13,8 +21,9 @@ defmodule Cinder.Catalog.BlockedReleases do
       parked, a submission whose reservation is never dropped. A refused or raised insert is
       logged and swallowed, and the call returns `:ok` (mirrors
       `Cinder.Download.SourceRemoval.best_effort_remove/2`).
-    * **Strict** (`block_policy_mismatch/3`): for a caller inside a transaction whose other
-      writes must not commit without the row, so it gets `{:error, changeset}` back.
+    * **Strict** (`block_policy_mismatch/3`, `record_park_strike!/2`): for a caller inside a
+      transaction whose other writes must not commit without the row. The first returns
+      `{:error, changeset}`; the second raises.
 
   Nothing here broadcasts.
   """
@@ -30,6 +39,12 @@ defmodule Cinder.Catalog.BlockedReleases do
   # `blocked_release_titles_for_series/2`.
   @no_upgrade_reason "no_upgrade"
   @upgrade_only_reasons [@no_upgrade_reason]
+
+  # #1588. One row per TV park that blocked nothing. A title blocks only once a series holds
+  # `@park_strikes_to_block` of them, so a host fault that parks a good release once or twice
+  # leaves it grabbable.
+  @park_strike_reason "park_strike"
+  @park_strikes_to_block 3
 
   @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
@@ -129,6 +144,43 @@ defmodule Cinder.Catalog.BlockedReleases do
 
   def clear_stalled_blocklist(_scope), do: :ok
 
+  @doc """
+  Records one park strike for `title` in the series `series_id`, inside the caller's park
+  transaction, so only a park that commits counts. A nil `series_id` (a grab with no linked
+  episode) or a nil or empty `title` records nothing. Raises when the insert fails, which rolls
+  the park back with it.
+  """
+  def record_park_strike!(series_id, title)
+      when is_nil(series_id) or is_nil(title) or title == "",
+      do: :ok
+
+  def record_park_strike!(series_id, title) do
+    %BlockedRelease{}
+    |> BlockedRelease.changeset(%{
+      release_title: title,
+      reason: @park_strike_reason,
+      series_id: series_id
+    })
+    |> Repo.insert!()
+
+    :ok
+  end
+
+  @doc """
+  Deletes every park strike of the series `series_id`, so each of its titles takes three more
+  parks before its strikes block it. A block of another reason on the title stays. The manual
+  episode and season Searches call it next to `clear_stalled_blocklist/1`, when they put an
+  episode of the series back in the search.
+  """
+  def clear_park_strikes(series_id) when is_integer(series_id) do
+    Repo.delete_all(
+      from b in BlockedRelease,
+        where: b.series_id == ^series_id and b.reason == @park_strike_reason
+    )
+
+    :ok
+  end
+
   @doc "Downcased-or-not release titles blocked for `movie` (the exact strings stored)."
   def blocked_release_titles(%Movie{id: movie_id}),
     do:
@@ -146,20 +198,38 @@ defmodule Cinder.Catalog.BlockedReleases do
   from the wanted-episode sweep or the manual panel would strand that pack for the janitor's
   whole retention window — wrong the moment an episode of the season is deleted, lost or
   re-monitored. `Cinder.Catalog.UpgradeHunter` is the only caller that should include it.
+
+  A park strike row never gives its title alone, whatever `:include_reasons` names. A title that
+  holds three or more strikes in the series is given as a plain title, which blocks it from every
+  indexer (#1588).
   """
   def blocked_release_titles_for_series(series_id, opts \\ []) do
     included = opts |> Keyword.get(:include_reasons, []) |> Enum.map(&to_string/1)
+    hidden = [@park_strike_reason | @upgrade_only_reasons -- included]
 
+    blocked =
+      Repo.all(
+        from b in BlockedRelease,
+          where: b.series_id == ^series_id,
+          where: is_nil(b.reason) or b.reason not in ^hidden,
+          select: {b.release_title, b.indexer_id}
+      )
+      |> Enum.map(fn
+        {title, nil} -> title
+        entry -> entry
+      end)
+
+    blocked ++ (struck_out_titles(series_id) -- blocked)
+  end
+
+  defp struck_out_titles(series_id) do
     Repo.all(
       from b in BlockedRelease,
-        where: b.series_id == ^series_id,
-        where: is_nil(b.reason) or b.reason not in ^(@upgrade_only_reasons -- included),
-        select: {b.release_title, b.indexer_id}
+        where: b.series_id == ^series_id and b.reason == @park_strike_reason,
+        group_by: b.release_title,
+        having: count(b.id) >= @park_strikes_to_block,
+        select: b.release_title
     )
-    |> Enum.map(fn
-      {title, nil} -> title
-      entry -> entry
-    end)
   end
 
   defp scope_attrs(movie: id), do: %{movie_id: id}

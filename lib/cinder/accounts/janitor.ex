@@ -10,7 +10,9 @@ defmodule Cinder.Accounts.Janitor do
   * `admin_audit` rows older than the retention window (`@audit_retention_days`, default 365);
   * `blocked_releases` rows older than `@blocked_release_retention_days` (default 180) — release
     rejections (mostly anime verification blocks) accrue one row per distinct release name and are
-    never re-blocked, so once a title has moved well past a bad release its row is dead weight.
+    never re-blocked, so once a title has moved well past a bad release its row is dead weight. A
+    TV park strike (`Cinder.Catalog.BlockedReleases`, #1588) is one row per park, pruned on its
+    own age, so its strikes stop blocking a title once fewer than three remain.
 
   Holds no state — re-derives its work from the DB each tick, so it recovers cleanly after a crash.
   Runs daily, `:start_poller`-gated like the pollers so the suite doesn't auto-run it. Each delete

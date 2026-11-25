@@ -2,6 +2,7 @@ defmodule Cinder.Download.MoveOnImportTest do
   # async: false — drives the global pollers and toggles a global Application env key.
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   # The remove paths log on {:error,_}/raise; capture so output stays pristine.
@@ -10,10 +11,11 @@ defmodule Cinder.Download.MoveOnImportTest do
   alias Cinder.Books
   alias Cinder.Books.BookGrab
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, Movie}
   alias Cinder.ConfigCase
   alias Cinder.Download
   alias Cinder.Download.{Intent, IntentEpisode, Poller, SourceRemoval, TvPoller}
+  alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -188,6 +190,22 @@ defmodule Cinder.Download.MoveOnImportTest do
   # branch (Library.stage_anime_episodes) instead of the standard-TV import. Mirrors
   # tv_poller_test.exs's anime_standard_snapshot/downloaded_policy_grab pattern.
   defp tv_policy_grab(episode, content_path, release_title) do
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "nzo-tv-reject",
+        download_protocol: :usenet,
+        release_title: release_title,
+        content_path: content_path,
+        mapping_snapshot: anime_snapshot(episode),
+        release_policy_snapshot: release_policy_snapshot(release_title),
+        mapping_status: :resolved
+      })
+
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
+    grab
+  end
+
+  defp anime_snapshot(episode) do
     canonical_value =
       "S01E#{episode.episode_number |> Integer.to_string() |> String.pad_leading(2, "0")}"
 
@@ -205,7 +223,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       "evidence" => nil
     }
 
-    snapshot = %{
+    %{
       "version" => 2,
       "parser_context" => %{"title" => "Show", "aliases" => [], "year" => 2008},
       "mappings" => [mapping],
@@ -226,20 +244,6 @@ defmodule Cinder.Download.MoveOnImportTest do
         ]
       }
     }
-
-    grab =
-      Repo.insert!(%Grab{
-        download_id: "nzo-tv-reject",
-        download_protocol: :usenet,
-        release_title: release_title,
-        content_path: content_path,
-        mapping_snapshot: snapshot,
-        release_policy_snapshot: release_policy_snapshot(release_title),
-        mapping_status: :resolved
-      })
-
-    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
-    grab
   end
 
   describe "SourceRemoval.remove_after_import/3 (the client-remove side)" do
@@ -948,6 +952,86 @@ defmodule Cinder.Download.MoveOnImportTest do
       {grab, e1}
     end
 
+    # A downloaded grab on its last import attempt whose folder listing fails: a park that blocks
+    # nothing (`:eacces` is not one of `Watch.failure?/1`'s codes).
+    defp transient_park_grab(protocol, download_id, content_path) do
+      {series, season} = series_tree()
+      e1 = episode(season, 1)
+      {:ok, grab} = Catalog.create_grab(download_id, protocol, [e1.id], "Show.S01.Pack-GRP")
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, content_path)
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 9])
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+      {grab, series}
+    end
+
+    # A downloaded usenet pack on its last import attempt whose one video stages, then fails to
+    # commit: the sidecar listing that `StagedImport.place_video/5` runs after the stage is
+    # prepared moves every prepared stage back to `:preparing`, so the writer's
+    # `ImportStage.mark_committed!/1` refuses with `:stale_import_stage`.
+    # `:anime` builds a resolved anime-mapping grab instead, whose writer is `finish_grab/3`.
+    defp failing_commit_grab(download_id, content_path, kind \\ :standard) do
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      grab = downloaded_usenet_grab(kind, e1, download_id, content_path)
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 9])
+      video = {Path.join(content_path, "Show.S01E01.1080p.mkv"), 3_000_000_000}
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn ^content_path ->
+        Repo.update_all(from(s in ImportStage, where: s.state == :prepared),
+          set: [state: :preparing]
+        )
+
+        {:ok, [video]}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        if candidate_path?(path) or not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+          do:
+            {:ok,
+             %File.Stat{
+               type: :regular,
+               size: 3_000_000_000,
+               inode: 1,
+               major_device: 1,
+               mtime: {{2026, 7, 13}, {12, 0, 0}}
+             }},
+          else: {:error, :enoent}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      {grab, e1}
+    end
+
+    defp downloaded_usenet_grab(:standard, episode, download_id, content_path) do
+      {:ok, grab} = Catalog.create_grab(download_id, :usenet, [episode.id], "Show.S01.Pack-GRP")
+      {:ok, grab} = Catalog.mark_grab_downloaded(grab, content_path)
+      grab
+    end
+
+    defp downloaded_usenet_grab(:anime, episode, download_id, content_path) do
+      grab =
+        Repo.insert!(%Grab{
+          download_id: download_id,
+          download_protocol: :usenet,
+          release_title: "Show.S01.Pack-GRP",
+          content_path: content_path,
+          mapping_snapshot: anime_snapshot(episode),
+          mapping_status: :resolved
+        })
+
+      Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
+      grab
+    end
+
     defp upgrading_movie(tmdb_id, protocol, download_id) do
       movie_fixture(%{
         tmdb_id: tmdb_id,
@@ -1093,17 +1177,12 @@ defmodule Cinder.Download.MoveOnImportTest do
       refute_removals()
     end
 
-    # Not a blocklisted release: it may be re-picked, so neither its job nor its payload is touched.
-    test "a usenet grab parked after a transient import error keeps its job and payload" do
+    # #1588: a park that blocks nothing still removes the payload. A re-pick of the release
+    # downloads it again into a new `<title>.cinder-<key>` folder, so the kept copy was never
+    # imported. One such park leaves the release grabbable.
+    test "a usenet grab parked after a transient import error removes its job and payload" do
       enable()
-      {series, season} = series_tree()
-      e1 = episode(season, 1)
-      {:ok, grab} = Catalog.create_grab("nzo-transient", :usenet, [e1.id], "Show.S01.Pack-GRP")
-      {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/transient-pack")
-      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 9])
-
-      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
-      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+      {grab, series} = transient_park_grab(:usenet, "nzo-transient", "/dl/transient-pack")
       record_removals(Cinder.Download.SabnzbdClientMock)
       start_supervised!({TvPoller, interval: 60_000})
 
@@ -1111,6 +1190,209 @@ defmodule Cinder.Download.MoveOnImportTest do
 
       refute Repo.get(Grab, grab.id)
       assert Catalog.blocked_release_titles_for_series(series.id) == []
+      assert_received {:removed, "nzo-transient", [delete_files: true]}
+      assert_received {:rm_rf, "/dl/transient-pack"}
+      refute Repo.get_by(Intent, remote_id: "nzo-transient")
+      assert [%BlockedRelease{reason: "park_strike"}] = Repo.all(BlockedRelease)
+    end
+
+    test "a usenet grab parked after a transient import error keeps its payload while move_on_import is off" do
+      {grab, _series} = transient_park_grab(:usenet, "nzo-transient-off", "/dl/transient-off")
+      record_removals(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.all(Intent) == []
+      refute_removals()
+      assert [%BlockedRelease{reason: "park_strike"}] = Repo.all(BlockedRelease)
+    end
+
+    test "a torrent grab parked after a transient import error keeps its payload and keeps seeding" do
+      enable()
+      {grab, _series} = transient_park_grab(:torrent, "hash-transient", "/dl/transient-seed")
+      record_removals(Cinder.Download.ClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.all(Intent) == []
+      refute_removals()
+      assert [%BlockedRelease{reason: "park_strike"}] = Repo.all(BlockedRelease)
+    end
+
+    # `:no_client` comes from the download watch, before the grab has a content path. With the
+    # usenet client gone, a removal attempt shows only as the cleanup intent the park would fence,
+    # so the intent check is the one that fails when the park tries a removal.
+    test "a usenet grab with no content path parked :no_client makes no removal and leaves no cleanup intent" do
+      enable()
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      {:ok, grab} = Catalog.create_grab("nzo-no-client", :usenet, [e1.id], "Show.S01E01-GRP")
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 9])
+      clients = Application.fetch_env!(:cinder, :download_clients)
+      ConfigCase.put_env(:download_clients, Map.delete(clients, :usenet))
+      echo_rm_rf()
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.reload!(e1).grab_id == nil
+      assert Repo.all(Intent) == []
+      refute_received {:rm_rf, _path}
+      # It still counts as a park that blocked nothing.
+      assert [%BlockedRelease{reason: "park_strike"}] = Repo.all(BlockedRelease)
+    end
+
+    # The commit's writer refuses (`:stale_import_stage`), so `StagedImport.commit/2` rolls the
+    # staged file back before the park. The payload goes only after that rollback: when it runs,
+    # no import stage is left in the journal.
+    test "a usenet grab parked on a failed commit deletes its payload only once its staged file is rolled back" do
+      enable()
+      {grab, e1} = failing_commit_grab("nzo-commit", "/dl/commit-pack")
+      parent = self()
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+        send(parent, {:rm_rf, path, Repo.aggregate(ImportStage, :count)})
+        {:ok, [path]}
+      end)
+
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: {:commit_grab_imports, :stale_import_stage}"
+      refute Repo.get(Grab, grab.id)
+      assert Repo.reload!(e1).file_path == nil
+      assert_received {:rm_rf, "/dl/commit-pack", 0}
+      assert_received {:removed, "nzo-commit", [delete_files: true]}
+    end
+
+    test "an anime usenet grab parked on a failed finish deletes its payload only once its staged file is rolled back" do
+      enable()
+      {grab, e1} = failing_commit_grab("nzo-finish", "/dl/finish-pack", :anime)
+      parent = self()
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+        send(parent, {:rm_rf, path, Repo.aggregate(ImportStage, :count)})
+        {:ok, [path]}
+      end)
+
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: {:finish_grab, :stale_import_stage}"
+      refute Repo.get(Grab, grab.id)
+      assert Repo.reload!(e1).file_path == nil
+      assert_received {:rm_rf, "/dl/finish-pack", 0}
+      assert_received {:removed, "nzo-finish", [delete_files: true]}
+    end
+
+    test "an anime usenet grab parked on a failed finish keeps its payload while its staged file's rollback is pending" do
+      enable()
+      {grab, _e1} = failing_commit_grab("nzo-finish-stuck", "/dl/finish-stuck", :anime)
+      record_removals(Cinder.Download.SabnzbdClientMock)
+
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path ->
+        if Repo.exists?(from(s in ImportStage, where: s.state == :rolling_back)),
+          do: {:error, :eio},
+          else: :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: {:finish_grab, :stale_import_stage}"
+      refute Repo.get(Grab, grab.id)
+      assert [%ImportStage{state: :rolling_back, last_error: "eio"}] = Repo.all(ImportStage)
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    # The same failed commit, but the staged file's rollback fails too: the file stays in the
+    # library until `StagedImport.reconcile/0` finishes it, so the park keeps the payload and
+    # the client job (whose removal would delete the payload as well).
+    test "a usenet grab parked on a failed commit keeps its payload while its staged file's rollback is pending" do
+      enable()
+      {grab, _e1} = failing_commit_grab("nzo-commit-stuck", "/dl/commit-stuck")
+      record_removals(Cinder.Download.SabnzbdClientMock)
+
+      # Only the rollback, which claims the stage as `:rolling_back` first, gets the error.
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path ->
+        if Repo.exists?(from(s in ImportStage, where: s.state == :rolling_back)),
+          do: {:error, :eio},
+          else: :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: {:commit_grab_imports, :stale_import_stage}"
+      refute Repo.get(Grab, grab.id)
+      assert [%ImportStage{state: :rolling_back, last_error: "eio"}] = Repo.all(ImportStage)
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    # The rollback an earlier attempt left pending blocks the next attempt's staging
+    # (`:import_stage_busy` on the same destination), which then parks having placed nothing. The
+    # earlier stage's file is still in the library, so that park keeps the payload too.
+    test "a usenet grab parked one attempt after its rollback failed keeps its payload while that rollback is pending" do
+      enable()
+      {grab, _e1} = failing_commit_grab("nzo-earlier-stuck", "/dl/earlier-stuck")
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_attempts: 8])
+      record_removals(Cinder.Download.SabnzbdClientMock)
+
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path ->
+        if Repo.exists?(from(s in ImportStage, where: s.state == :rolling_back)),
+          do: {:error, :eio},
+          else: :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      capture_log(fn -> assert :ok = TvPoller.poll() end)
+      assert %Grab{download_attempts: 9} = Repo.get(Grab, grab.id)
+      assert [%ImportStage{state: :rolling_back}] = Repo.all(ImportStage)
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: :import_stage_busy"
+      refute Repo.get(Grab, grab.id)
+      assert [%ImportStage{state: :rolling_back, last_error: "eio"}] = Repo.all(ImportStage)
+      assert Repo.all(Intent) == []
+      refute_removals()
+    end
+
+    # A staging error the stager rolls back itself (`Library.stage_episodes/3`), whose cleanup of
+    # the half-placed file fails: no stager hands that stage back, and the park keeps the payload.
+    test "a usenet grab parked on a staging error keeps its payload while the half-staged file's cleanup is pending" do
+      enable()
+      {grab, _e1} = failing_commit_grab("nzo-stage-stuck", "/dl/stage-stuck")
+      record_removals(Cinder.Download.SabnzbdClientMock)
+
+      stub(Cinder.Library.FilesystemMock, :rm, fn path ->
+        if String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+          do: {:error, :eio},
+          else: :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+
+      log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+      assert log =~ "exhausted after 10: :eio"
+      refute Repo.get(Grab, grab.id)
+      assert [%ImportStage{state: :preparing, last_error: "eio"}] = Repo.all(ImportStage)
+      assert Repo.all(Intent) == []
       refute_removals()
     end
 

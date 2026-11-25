@@ -243,7 +243,9 @@ defmodule Cinder.Catalog do
   defdelegate finish_grab(grab, imported), to: Grabs
   defdelegate finish_grab(grab, imported, stage_ids), to: Grabs
   defdelegate park_grab(grab), to: Grabs
+  defdelegate park_grab(grab, opts), to: Grabs
   defdelegate park_grab_and_remove(grab), to: Grabs
+  defdelegate park_grab_and_remove(grab, opts), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
   defdelegate grab_cleanup_spec(grab, episode_ids), to: Grabs
   defdelegate list_grabs_downloading(), to: Grabs

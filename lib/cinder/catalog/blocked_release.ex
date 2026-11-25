@@ -2,8 +2,10 @@ defmodule Cinder.Catalog.BlockedRelease do
   @moduledoc """
   A release that failed for a deterministic or download-exhausted reason, recorded
   per-item (`movie_id` for movies, `series_id` for TV) so release selection can skip
-  it and stop the re-grab/re-download loop. Identity is the `release_title` string — the stable
-  per-indexer release name — stored **verbatim**; it is `Cinder.Acquisition.Scorer` that downcases
+  it and stop the re-grab/re-download loop. A series row under the `"park_strike"` reason records
+  instead one TV park that blocked nothing, and blocks its title only once the series holds three
+  of them for it (`Cinder.Catalog.BlockedReleases`, #1588). Identity is the `release_title`
+  string — the stable per-indexer release name — stored **verbatim**; it is `Cinder.Acquisition.Scorer` that downcases
   both sides when matching, so this table keeps the original case. `indexer_id` is not part of
   that identity: it narrows which search results a row matches (#1515). Only a series row written
   for a refused TV submission (`Cinder.Download`) holds one, taken from the download intent, and

@@ -86,6 +86,17 @@ defmodule Cinder.Library.StagedImport do
     end
   end
 
+  @doc """
+  Whether no journal row is uncommitted: none is `:preparing`, `:prepared` or `:rolling_back`, and
+  none is `:quarantined` without a `:cleanup` recovery. A `:preparing` row counts even before its
+  file is placed. A stage whose rollback failed stays in the journal, with its file in the
+  library, until `reconcile/0` finishes it, or, once quarantined, until an operator retries it.
+  The journal does not record which download a stage came from, so one such row makes the answer
+  `false` for every download.
+  """
+  @spec settled?() :: boolean()
+  def settled?, do: not ImportStage.any_uncommitted?()
+
   @doc "Converges every journal row a crash or an earlier filesystem error left, under the lock."
   @spec reconcile() :: :ok
   def reconcile do

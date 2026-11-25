@@ -93,7 +93,9 @@ _Avoid_: fallback delay (the setting, not the rule), group timing
 
 **Blocked release**:
 A release Cinder will not grab again for one movie or series, recorded with its reason: a failed or
-stalled download, a release that broke its policy, a cancelled verification hold. One reason,
+stalled download, a release that broke its policy, a cancelled verification hold. A TV release
+whose grab parked three times in one series with no block is blocked there too, and a manual
+Search that puts an episode of the series back in the search lifts that block. One reason,
 `no_upgrade`, blocks it for the upgrade sweep only: the pack placed nothing better than what the
 library holds. For a TV release Cinder's own search picked and Cinder or the download client then
 refused at submission, Cinder tries to record the block with the indexer of that search result,

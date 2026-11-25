@@ -230,8 +230,10 @@ defmodule Cinder.Catalog.EpisodeSearch do
             episode,
             MediaProfiles.media_profile_summary(episode.season.series)
           ) ->
-            # Manual re-search: give any :stalled-reaped release for this series a fresh chance.
+            # Manual re-search: give any :stalled-reaped release, and any release blocked by its
+            # park strikes, a fresh chance for this series.
             BlockedReleases.clear_stalled_blocklist(series: episode.season.series.id)
+            BlockedReleases.clear_park_strikes(episode.season.series.id)
             Episodes.transition(episode, %{search_attempts: 0})
 
           true ->
@@ -247,10 +249,12 @@ defmodule Cinder.Catalog.EpisodeSearch do
   def search_season_now(%Season{id: season_id}) do
     episodes = wanted_episodes() |> Enum.filter(&(&1.season_id == season_id))
 
-    # Manual re-search: give any :stalled-reaped release for this series a fresh chance.
+    # Manual re-search: give any :stalled-reaped release, and any release blocked by its park
+    # strikes, a fresh chance for this series.
     case episodes do
       [%{season: %{series: %{id: series_id}}} | _] ->
         BlockedReleases.clear_stalled_blocklist(series: series_id)
+        BlockedReleases.clear_park_strikes(series_id)
 
       _ ->
         :ok

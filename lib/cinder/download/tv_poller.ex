@@ -84,7 +84,7 @@ defmodule Cinder.Download.TvPoller do
       # attempt budget and parks on the first sighting. #413: the client removal used to be a bare
       # best-effort call fired BEFORE the park deleted the grab (the grab's only durable record of
       # `download_id`/`download_protocol`) — a transient removal failure leaked the remote job
-      # forever. `park/2` now routes `:blocked_content` through `Catalog.park_grab_and_remove/1`,
+      # forever. `park/2` now routes `:blocked_content` through `Catalog.park_grab_and_remove/2`,
       # which fences a `:cleanup_pending` intent and deletes the grab in the SAME transaction (no
       # crash window between them), then makes the immediate best-effort removal attempt after
       # commit; a crash or failure there just leaves the fenced row for the next tick's
@@ -910,24 +910,25 @@ defmodule Cinder.Download.TvPoller do
     # failing, notifying here would fire {:grab_failed} every 5s tick forever. Warn instead;
     # the grab stays visible in /activity and the warning names why it won't finalize.
     #
-    # A blocklisted release is never re-picked, so its download is dead weight: the grab's client
-    # job is fenced in the same transaction as the grab delete and removed after its commit
-    # (`Grabs.park_grab_and_remove/1`), and its payload deleted afterwards — under the same
-    # `move_on_import` / usenet-only rule as `SourceRemoval.remove_after_import/4`, so a torrent
-    # keeps seeding (#684). `:blocked_content` is the exception that already removed its job (and
-    # files) from any client. The other, non-blocklisted reasons only ever delete the grab.
-    remove_payload? = blocked? and SourceRemoval.move_on_import_removal?(grab.download_protocol)
+    # A park that blocks nothing records a park strike in the same transaction instead (#1588): a
+    # usenet re-pick downloads into a new `<title>.cinder-<key>` folder, so a release that parks on
+    # every grab would otherwise be grabbed again after each Rehunter pass. The third strike for
+    # the title in the series blocks it (`BlockedReleases.blocked_release_titles_for_series/2`).
+    #
+    # `:blocked_content` is the exception that already removed its job (and files) from any
+    # client, so it fences whatever the payload rule says.
+    remove_payload? = remove_payload_on_park?(grab, blocked?)
+    opts = [strike: not blocked?]
 
     park_result =
       if code == :blocked_content or remove_payload?,
-        do: Catalog.park_grab_and_remove(grab),
-        else: Catalog.park_grab(grab)
+        do: Catalog.park_grab_and_remove(grab, opts),
+        else: Catalog.park_grab(grab, opts)
 
     case park_result do
       {:ok, _} ->
         # The client job is already fenced and removed above; only the payload is left, and
-        # `SourceRemoval.remove_after_import/4` with no download id deletes exactly that. A
-        # non-blocklisted park may be re-picked, so its payload stays.
+        # `SourceRemoval.remove_after_import/4` with no download id deletes exactly that.
         if remove_payload?,
           do: SourceRemoval.remove_after_import(grab.download_protocol, nil, grab.content_path)
 
@@ -939,5 +940,22 @@ defmodule Cinder.Download.TvPoller do
           "tv grab #{grab.id} could not be parked (#{HTTPPolicy.sanitize_log(park_error)}); will retry next tick"
         )
     end
+  end
+
+  # The payload goes under the same `move_on_import` / usenet-only rule as
+  # `SourceRemoval.remove_after_import/4`, so a torrent keeps seeding (#684): the grab's client job
+  # is fenced in the same transaction as the grab delete, its removal tried after that commit
+  # (`Grabs.park_grab_and_remove/2`, whose intent keeps a failed removal for a retry), and its
+  # payload delete tried afterwards. A blocklisted release is
+  # never re-picked, and a re-pick of any other downloads it again into a new folder, so the kept
+  # copy would never be imported (#1588). A park that blocks nothing removes only a download that
+  # completed (a content path), and only while no file any import placed is still uncommitted in
+  # the library (`StagedImport.settled?/0`): a failed rollback, of this attempt or an earlier one,
+  # may still hold a file staged from this payload. Such a park leaves the completed download to
+  # `Cinder.Download.Cleaner`, which tries to remove a job nothing owns, without reading the
+  # journal, at its first hourly sweep an hour or more after completion.
+  defp remove_payload_on_park?(grab, blocked?) do
+    SourceRemoval.move_on_import_removal?(grab.download_protocol) and
+      (blocked? or (grab.content_path not in [nil, ""] and StagedImport.settled?()))
   end
 end

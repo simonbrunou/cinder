@@ -63,6 +63,36 @@ defmodule Cinder.Accounts.JanitorTest do
     assert Repo.get(BlockedRelease, recent.id)
   end
 
+  # #1588: each park strike ages out on its own, so a title three strikes blocked is grabbable
+  # again once one of them passes the 180-day window.
+  test "sweeps park strikes older than the retention window, which unblocks their title" do
+    series = Cinder.CatalogFixtures.series_fixture()
+    title = "Show.S01E01.1080p-GRP"
+
+    insert_strike = fn ->
+      Repo.insert!(%BlockedRelease{
+        series_id: series.id,
+        release_title: title,
+        reason: "park_strike"
+      })
+    end
+
+    stale = insert_strike.()
+    backdate(stale, -181)
+    insert_strike.()
+    kept = insert_strike.()
+    backdate(kept, -179)
+
+    assert Cinder.Catalog.blocked_release_titles_for_series(series.id) == [title]
+
+    {:ok, pid} = start_supervised({Janitor, name: :janitor_strikes})
+    assert :ok = Janitor.poll(pid)
+
+    refute Repo.get(BlockedRelease, stale.id)
+    assert Repo.get(BlockedRelease, kept.id)
+    assert Cinder.Catalog.blocked_release_titles_for_series(series.id) == []
+  end
+
   test "is supervised only when :start_poller is enabled" do
     original = Application.get_env(:cinder, :start_poller, true)
     on_exit(fn -> Application.put_env(:cinder, :start_poller, original) end)

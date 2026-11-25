@@ -531,7 +531,7 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Tries to record `grab`'s `release_title` as blocked for its series. Resolves the series from the
-  grab's still-linked episodes, so call it **before** `park_grab/1` releases them and deletes the
+  grab's still-linked episodes, so call it **before** `park_grab/2` releases them and deletes the
   grab. A nil `release_title` is a no-op. **Non-raising**
   (`Cinder.Catalog.BlockedReleases.block_series_release/4`): the series lookup runs inside its
   guard, so the TV park path's series resolution can't raise out and abort `park_grab`.
@@ -1067,8 +1067,12 @@ defmodule Cinder.Catalog.Grabs do
 
   `opts[:fence_client]` additionally fences a durable cleanup intent for the grab's
   `download_id`/`download_protocol` in the same transaction as the delete, removed from the
-  client after commit — `park_grab_and_remove/1`'s use (the `:blocked_content` park, whose grab
-  is still an active remote job, and a blocklisted park whose download `move_on_import` removes).
+  client after commit — `park_grab_and_remove/2`'s use (the `:blocked_content` park, whose grab
+  is still an active remote job, and a park whose download `move_on_import` removes).
+
+  `opts[:strike]` additionally records a park strike for the grab's `release_title` in its series
+  (`BlockedReleases.record_park_strike!/2`) in the same transaction, so a park that rolls back
+  records none.
   """
   def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
 
@@ -1103,6 +1107,7 @@ defmodule Cinder.Catalog.Grabs do
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
         ImportStage.mark_committed!(stage_ids)
+        if opts[:strike], do: BlockedReleases.record_park_strike!(series_id, grab.release_title)
         Repo.delete!(grab)
         {imported_episodes ++ bumped, Enum.map(bumped, & &1.id), completed_seasons, intent_ids}
       end)
@@ -1119,7 +1124,7 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   # The grab's episodes that did not import, read before this frame releases them. Only
-  # `park_grab_and_remove/1` fences, and it imports nothing, so these are every episode the grab
+  # `park_grab_and_remove/2` fences, and it imports nothing, so these are every episode the grab
   # still links. A grab a concurrent Discard or cancel deleted already missed the claim above; the
   # empty case rolls back as :stale_grab so `Download.fence_episode_cleanup/2` never gets `[]`.
   defp fence_client_intent_ids(grab, imported_ids) do
@@ -1135,15 +1140,19 @@ defmodule Cinder.Catalog.Grabs do
   @doc """
   Parks a grab: deletes it and releases every linked episode with a `search_attempts` bump (so
   they re-search, bounded, then search-park). The terminal-failure case of `finish_grab/2`
-  (nothing imported).
+  (nothing imported). `opts[:strike]` records a park strike in the same transaction
+  (`finish_grab/4`).
   """
-  def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
+  def park_grab(%Grab{} = grab, opts \\ []),
+    do: finish_grab(grab, [], [], Keyword.take(opts, [:strike]))
 
   @doc """
-  Parks a grab like `park_grab/1`, but also fences+removes its active client download
-  (`finish_grab/4`'s `:fence_client`) — `:blocked_content` and blocklisted `move_on_import` parks.
+  Parks a grab like `park_grab/2`, but also fences+removes its active client download
+  (`finish_grab/4`'s `:fence_client`): the `:blocked_content` park, and a park whose download
+  `move_on_import` removes.
   """
-  def park_grab_and_remove(%Grab{} = grab), do: finish_grab(grab, [], [], fence_client: true)
+  def park_grab_and_remove(%Grab{} = grab, opts \\ []),
+    do: finish_grab(grab, [], [], [fence_client: true] ++ Keyword.take(opts, [:strike]))
 
   @doc """
   Reaps a stalled downloading grab (the stall reaper): one transaction blocklists its release

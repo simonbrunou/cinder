@@ -82,6 +82,20 @@ defmodule Cinder.Library.ImportStage do
   def get(id), do: Repo.get(__MODULE__, id)
   def delete(stage), do: Repo.delete(stage)
 
+  # Whether the journal holds a row that no catalog write committed: its file is still in the
+  # library, waiting for a rollback. A `:cleaning` row, and a `:quarantined` one whose recovery is
+  # a cleanup, were committed; any other `:quarantined` row waits for an operator to roll it back.
+  def any_uncommitted? do
+    Repo.exists?(
+      from(s in __MODULE__,
+        where:
+          s.state not in [:committed, :cleaning] and
+            (s.state != :quarantined or is_nil(s.recovery_action) or
+               s.recovery_action != :cleanup)
+      )
+    )
+  end
+
   def mark_committed!(ids) do
     ids = Enum.uniq(ids)
 

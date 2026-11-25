@@ -55,4 +55,36 @@ defmodule Cinder.Library.ImportStageTest do
     assert retried.state == :cleaning
     assert retried.recovery_action == :cleanup
   end
+
+  # The TV park reads it to decide whether a payload may go while files a failed import staged
+  # from it could still roll back (#1588).
+  test "any_uncommitted?/0 counts each row no catalog write committed" do
+    refute ImportStage.any_uncommitted?()
+
+    cases = [
+      {:preparing, nil, true},
+      {:prepared, nil, true},
+      {:rolling_back, :rollback, true},
+      {:quarantined, :rollback, true},
+      {:quarantined, nil, true},
+      {:committed, nil, false},
+      {:cleaning, :cleanup, false},
+      {:quarantined, :cleanup, false}
+    ]
+
+    for {{state, action, uncommitted?}, n} <- Enum.with_index(cases) do
+      stage =
+        journal(state, %{recovery_action: action, dest: "/tmp/cinder-test-library/M/M#{n}.mkv"})
+
+      assert ImportStage.any_uncommitted?() == uncommitted?,
+             "#{state} with recovery_action #{inspect(action)}"
+
+      Repo.delete!(stage)
+    end
+
+    journal(:committed, %{dest: "/tmp/cinder-test-library/M/C.mkv"})
+    refute ImportStage.any_uncommitted?()
+    journal(:preparing, %{dest: "/tmp/cinder-test-library/M/P.mkv"})
+    assert ImportStage.any_uncommitted?()
+  end
 end

@@ -3956,6 +3956,137 @@ defmodule Cinder.Download.TvPollerTest do
     assert %Episode{grab_id: nil, search_attempts: 6} = Repo.get!(Episode, e1.id)
   end
 
+  # #1588: a lone symlinked `.mkv` is a file Cinder may not read, so the import retries it 10
+  # times and parks without a block. The park now asks SABnzbd to remove the job with its files
+  # anyway: a re-pick downloads into a new `<title>.cinder-<key>` folder, so this one is never
+  # imported. Cinder's own delete of the content path refuses a symlink
+  # (`Library.delete_download_source/1`), so it leaves the folder to SABnzbd's `del_files`, and the
+  # link's target outside the download folders is never touched.
+  @tag :tmp_dir
+  test "a usenet grab whose content is a lone symlinked video parks on its last attempt and asks SABnzbd to delete it",
+       %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    put_env(:explicit_import_roots, [downloads])
+    put_env(:move_on_import, true)
+    {series, season} = series_tree()
+    e1 = episode(season, 1)
+    release_title = "Show.S01E01.MULTI.1080p.WEB-DL-GRP"
+    job = Path.join(downloads, "#{release_title}.cinder-0b6a3c55-1d7e-4f43-9a6e-2d7f0c1b9e10")
+    target = Path.join(tmp, "elsewhere.mkv")
+    link = Path.join(job, "#{release_title}.mkv")
+    File.mkdir_p!(job)
+    File.write!(target, "video")
+    File.ln_s!(target, link)
+
+    # SABnzbd reports a lone file as the content path, as the `.7z` test above does.
+    {:ok, grab} = Catalog.create_grab("nzo-link", :usenet, [e1.id], release_title)
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, link)
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    parent = self()
+
+    stub(Cinder.Download.SabnzbdClientMock, :remove, fn id, opts ->
+      send(parent, {:removed, id, opts})
+      :ok
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert log =~ "tv grab #{grab.id} exhausted after 10: :unsafe_source"
+    refute Repo.get(Grab, grab.id)
+    assert_receive {:removed, "nzo-link", [delete_files: true]}
+
+    assert log =~
+             ~r/download source delete failed for .*#{Regex.escape(release_title)}\.mkv.*:unsafe_delete/
+
+    assert File.read!(target) == "video"
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+  end
+
+  # #1588: a release that parks without a block on every grab (here an import that cannot list
+  # its folder, on the grab's last attempt) is grabbed again after its first two parks, and the
+  # third blocks it for the series. `poll/0` rescues a raise, so each client add reports itself.
+  test "a release that parks without a block three times is not grabbed again until a manual Search" do
+    {series, season} = series_tree()
+    e1 = episode(season, 1)
+    release_title = "Show.S01E01.1080p.WEB-DL-GRP"
+    parent = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [%{title: release_title, size: 2_000_000_000, download_url: "loop", seeders: 5}]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts -> {:ok, []} end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      send(parent, {:added, release.title})
+      {:ok, "hash-loop-#{System.unique_integer([:positive])}"}
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn _hash ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:error, :eacces} end)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    # Downloads the current grab and puts it on its last import attempt.
+    finish_download = fn ->
+      grab = Repo.one!(Grab)
+      grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/loop-#{grab.id}")
+      grab
+    end
+
+    assert :ok = TvPoller.poll()
+    assert_received {:added, ^release_title}
+
+    for park <- 1..2 do
+      grab = finish_download.()
+      assert :ok = TvPoller.poll()
+      refute Repo.get(Grab, grab.id)
+      assert_received {:added, ^release_title}, "park #{park} left the release grabbable"
+      assert Catalog.blocked_release_titles_for_series(series.id) == []
+    end
+
+    grab = finish_download.()
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+    refute_received {:added, _title}
+    assert Repo.all(Grab) == []
+    assert Catalog.blocked_release_titles_for_series(series.id) == [release_title]
+
+    assert :ok = TvPoller.poll()
+    refute_received {:added, _title}
+
+    Catalog.search_episode_now(Repo.get!(Episode, e1.id))
+    assert :ok = TvPoller.poll()
+    assert_received {:added, ^release_title}
+  end
+
+  # A park that blocks its release records no park strike beside the block.
+  test "a blocklisted park records no park strike" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-nfm", :torrent, [e1.id], "Show.S01.Wrong.Pack")
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/nfm")
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/nfm/Show.S01E99.mkv", 3_000_000_000}]}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    assert [%BlockedRelease{reason: "no_files_matched"}] = Repo.all(BlockedRelease)
+  end
+
   test "a parked grab emits [:cinder, :park] with kind: :episode and the park reason" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
