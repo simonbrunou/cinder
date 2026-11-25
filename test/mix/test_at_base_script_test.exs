@@ -1,9 +1,10 @@
 defmodule Cinder.TestAtBaseScriptTest do
   # Runs `scripts/test-at-base` in a throwaway git repo against a stub `mix` on PATH, so its exit
   # codes, its swaps and its restores, a failed restore included, stay covered without a nested
-  # `mix test` run. The stub writes what it saw of a.ex, b.ex and c.ex, and its arguments, to
-  # $TAB_SEEN, then exits with $TAB_EXIT, sleeps when $TAB_SLEEP is set, or first puts a folder
-  # where a.ex was when $TAB_SWAPDIR is set. PATH holds only the stub and links to the tools the
+  # `mix test` run. The stub writes what it saw of a.ex, b.ex, c.ex and each path in $TAB_EXTRA,
+  # and its arguments, to $TAB_SEEN. It writes a file at $TAB_LITTER when that is set, then exits
+  # with $TAB_EXIT, sleeps when $TAB_SLEEP is set, or first puts a folder where a.ex was when
+  # $TAB_SWAPDIR is set. PATH holds only the stub and links to the tools the
   # script, the stub and the signal tests' shell call, so the real `mix` is never found. The one
   # path left out is a write that fails during the swap: CI runs the suite as root, so no file
   # mode makes it fail.
@@ -17,10 +18,11 @@ defmodule Cinder.TestAtBaseScriptTest do
 
   @stub """
   #!/usr/bin/env bash
-  for f in a.ex b.ex c.ex; do
+  for f in a.ex b.ex c.ex $TAB_EXTRA; do
     if [ -e "$f" ]; then echo "$f=$(cat "$f")"; else echo "$f absent"; fi
   done > "$TAB_SEEN"
   echo "args: $*" >> "$TAB_SEEN"
+  [ -n "$TAB_LITTER" ] && echo x > "$TAB_LITTER"
   [ -n "$TAB_SLEEP" ] && exec sleep 30
   [ -n "$TAB_SWAPDIR" ] && rm a.ex && mkdir a.ex
   printf '\\nResult: stub\\n'
@@ -87,6 +89,71 @@ defmodule Cinder.TestAtBaseScriptTest do
     assert out =~ "Result: stub"
     assert out =~ "restored: a.ex b.ex c.ex"
     assert working_copy(ctx) == @restored
+  end
+
+  # A working copy can lack the folder of a file the base holds, such as a checkout of a commit
+  # that deleted or renamed the folder's last file. The script makes the folders the base's file
+  # needs, then removes them.
+  for {label, from, to} <- [
+        {"a deleted file", "w/v.ex", nil},
+        {"a file renamed out of a nested folder", "x/deep/y.ex", "z/y.ex"}
+      ] do
+    test "#{label} whose folder is gone: makes the folder for the run, then removes it", ctx do
+      names = move_out(ctx, unquote(from), unquote(to))
+
+      {out, code} =
+        run(ctx, ["HEAD" | names] ++ ["--", "t.exs"], [{"TAB_EXTRA", Enum.join(names, " ")}])
+
+      assert code == 0, out
+      assert File.read!(ctx.seen) =~ "#{unquote(from)}=BASE #{unquote(from)}\n"
+      refute File.exists?(Path.join(ctx.repo, top(unquote(from)))), out
+
+      assert_moved_to_kept(ctx, unquote(to))
+      assert working_copy(ctx) == @restored
+    end
+  end
+
+  test "exits 3 and names a folder it made that the run left a file in", ctx do
+    names = move_out(ctx, "w/v.ex", nil)
+    {out, code} = run(ctx, ["HEAD" | names] ++ ["--", "t.exs"], [{"TAB_LITTER", "w/litter"}])
+
+    assert code == 3, out
+    assert out =~ ~r/test-at-base: cannot remove \S*\/w: /
+    refute out =~ "restored:"
+    refute File.exists?(Path.join(ctx.repo, "w/v.ex"))
+    assert working_copy(ctx) == @restored
+  end
+
+  # Commits `from` on top of the base, then moves it to `to` (or deletes it when `to` is nil) and
+  # removes its top folder, so the working copy lacks the folder the base's file needs. Returns
+  # the paths to name.
+  defp move_out(ctx, from, to) do
+    git = fn args -> {_, 0} = System.cmd("git", args, cd: ctx.repo, stderr_to_stdout: true) end
+    File.mkdir_p!(Path.join(ctx.repo, Path.dirname(from)))
+    File.write!(Path.join(ctx.repo, from), "BASE #{from}")
+    git.(["add", from])
+
+    git.(
+      ~w(-c user.name=t -c user.email=t@t -c commit.gpgsign=false commit -q -m more --no-verify)
+    )
+
+    if to do
+      File.mkdir_p!(Path.join(ctx.repo, Path.dirname(to)))
+      File.write!(Path.join(ctx.repo, to), "WORK #{to}")
+    end
+
+    File.rm_rf!(Path.join(ctx.repo, top(from)))
+    [from | List.wrap(to)]
+  end
+
+  defp top(path), do: path |> Path.split() |> hd()
+
+  # A rename's new path is absent during the run and holds its working bytes after it.
+  defp assert_moved_to_kept(_ctx, nil), do: :ok
+
+  defp assert_moved_to_kept(ctx, to) do
+    assert File.read!(ctx.seen) =~ "#{to} absent\n"
+    assert File.read!(Path.join(ctx.repo, to)) == "WORK #{to}"
   end
 
   for exit <- ["0", "1"] do

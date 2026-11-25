@@ -226,11 +226,11 @@
   row dropped out, the mutant survived `scripts/mutation-check`, and it took a test rewrite and
   a second mutation run.
 - Run the branch's new tests, or a throwaway test, against the merge base's code with
-  `scripts/test-at-base <merge base> <changed lib file>... -- <mix test.unchecked argument>...`:
-  the red run before a fix, and the runs that prove a changelog sentence about what Cinder did
-  before it. It puts each named file back as the merge base holds it and restores it afterwards,
-  also on a signal. Its header gives the exit codes. On #788 and #1322 the swap and the restore
-  were done by hand: about 6 minutes on #788, and three hand swaps on #1322.
+  `scripts/test-at-base <merge base> <lib file>... -- <mix test.unchecked argument>...`: the red
+  run before a fix, and the runs that prove a changelog sentence about what Cinder did before it.
+  It puts each named file back as the merge base holds it and restores it afterwards, also on a
+  signal. Its header gives the lib files to name and the exit codes. On #788 and #1322 the swap
+  and the restore were done by hand: about 6 minutes on #788, and three hand swaps on #1322.
 - A throwaway test, one that only reports what the code does, runs with `mix test.unchecked`.
   Before you edit an existing test file, copy it outside `test/` and restore it after the run;
   delete a new file. Report from the test body with

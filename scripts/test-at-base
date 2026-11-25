@@ -5,16 +5,24 @@
 
 Use it for a fix's "before" evidence (docs/agents/testing.md): the branch's new tests, or a
 throwaway test, against the merge base's code. For each <file>, the script writes its content at
-<base> (`git show <base>:<file>`) over the working copy, or removes the working copy when <base>
-has no such file. It then runs `mix test.unchecked` with the arguments after `--`, prints the
-run's output, and restores every <file> to its bytes from before the run, also when a SIGINT or
-SIGTERM stops it. Name only the files the fix changed, never a test file you still need: the
-tests run as the working copy holds them.
+<base> (`git show <base>:<file>`) over the working copy, making any folder it needs, or removes
+the working copy when <base> has no such file. It then runs `mix test.unchecked` with the
+arguments after `--`, prints the run's output, and restores every <file> to its bytes from before
+the run and removes each folder it made, also when a SIGINT or SIGTERM stops it.
+
+Name every lib file the fix changed, added, renamed or deleted, and no test file you still need:
+the tests run as the working copy holds them. A partial set mixes the base's code and the working
+copy's: on #1648, leaving out the module the branch added kept its import of a function the base
+lacks, and the compile stopped (exit 1). From the repo root, this lists the set, uncommitted and
+untracked files included:
+
+    $(git diff --no-renames --name-only <base> -- lib; git ls-files --others --exclude-standard lib)
 
 Exit codes: otherwise the `mix test.unchecked` exit code: 0 when every test passed, 2 when a
 test failed, 1 when the code did not compile. Read its `Result:` line. 3: wrong arguments, a
 <file> outside the repo or not a regular file, a <base> git cannot read, no `mix` on PATH (run it
-through `nix develop`), or a <file> it cannot write or restore. 130: a signal stopped the run.
+through `nix develop`), a <file> it cannot write or restore, or a folder it made and cannot
+remove. 130: a signal stopped the run.
 """
 import signal
 import subprocess
@@ -65,6 +73,10 @@ def main(argv):
         relative = str(path.relative_to(root))
         saved[path] = (path.read_bytes() if path.exists() else None, base_content(base, relative))
 
+    # Folders the swap made for a base file whose folder the working copy lacks (git keeps no
+    # empty folder, so a delete or a rename can take it away), outermost first.
+    made = []
+
     def restore():
         ok = True
         for path, (original, _base) in saved.items():
@@ -75,6 +87,12 @@ def main(argv):
                     path.write_bytes(original)
             except OSError as error:
                 print(f"test-at-base: cannot restore {path}: {error}", file=sys.stderr)
+                ok = False
+        for folder in reversed(made):
+            try:
+                folder.rmdir()
+            except OSError as error:
+                print(f"test-at-base: cannot remove {folder}: {error}", file=sys.stderr)
                 ok = False
         return ok
 
@@ -98,6 +116,10 @@ def main(argv):
             if content is None:
                 path.unlink(missing_ok=True)
             else:
+                missing = [p for p in path.parents if root in p.parents and not p.exists()]
+                for folder in reversed(missing):
+                    folder.mkdir()
+                    made.append(folder)
                 path.write_bytes(content)
             print(f"at {base}: {path.relative_to(root)}", flush=True)
         try:
