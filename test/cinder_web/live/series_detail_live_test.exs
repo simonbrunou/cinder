@@ -10,6 +10,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   alias Cinder.{Acquisition, Catalog, Repo}
   alias Cinder.Acquisition.HouseholdPolicy
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Catalog.{BlockedRelease, Episode, Events, Grab, Identity, TitleAlias}
   alias Cinder.Download.TvPoller
 
@@ -2121,6 +2122,101 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert [_, first_row | _] = String.split(html, ~s(<li class="flex))
     assert first_row =~ "[Group] Test Show S01E01 [1080p]"
+  end
+
+  describe "the manual-search panel reads the search's report (#1648)" do
+    test "a standard season search shows each row's indexer and the indexers that did not answer",
+         %{conn: conn} do
+      series = series_with_wanted_episode(search_attempts: 0)
+      season = first_season(series.id)
+      report = Report.put(Report.new(), {"native", 2}, "One", {:failed, {:http_status, 503}})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+        {:ok,
+         [
+           %{
+             title: "Test Show S01E01 1080p WEB-DL GRP",
+             size: 2_000_000_000,
+             download_url: "u",
+             indexer_name: "NZBgeek"
+           }
+         ], report}
+      end)
+
+      {:ok, lv, _html} = live_series(conn, series)
+      lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-season-#{season.id}"
+      assert has_element?(lv, "#{panel} li [data-indexer]", "NZBgeek")
+
+      assert has_element?(
+               lv,
+               "#{panel}-unanswered",
+               "Not every indexer answered: One (HTTP 503)."
+             )
+    end
+
+    test "an anime season search with a failed query shows each row's indexer and the incomplete line",
+         %{conn: conn} do
+      series =
+        series_with_wanted_episode(search_attempts: 0)
+        |> Ecto.Changeset.change(media_profile: :anime)
+        |> Repo.update!()
+
+      season = first_season(series.id)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+        {:ok,
+         [
+           %{
+             title: "[Group] Test Show S01E01 [1080p]",
+             size: 2_000_000_000,
+             download_url: "u1",
+             indexer_name: "NZBgeek"
+           }
+         ]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+        {:error, :timeout}
+      end)
+
+      {:ok, lv, _html} = live_series(conn, series)
+      lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-season-#{season.id}"
+      assert has_element?(lv, "#{panel} li [data-indexer]", "NZBgeek")
+
+      assert has_element?(
+               lv,
+               "#{panel}-incomplete",
+               "Some indexers could not be reached; results may be incomplete."
+             )
+    end
+
+    test "an anime season whose preferences cannot resolve says the search failed", %{
+      conn: conn
+    } do
+      # "dual" needs the series' original language, and this series has none.
+      series =
+        series_with_wanted_episode(search_attempts: 0)
+        |> Ecto.Changeset.change(
+          media_profile: :anime,
+          preferred_language: "dual",
+          original_language: nil
+        )
+        |> Repo.update!()
+
+      season = first_season(series.id)
+
+      {:ok, lv, _html} = live_series(conn, series)
+      lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+      render_async(lv)
+
+      assert has_element?(lv, "#ms-season-#{season.id}-error", "The search failed. Try again.")
+    end
   end
 
   test "grabbing a better match keeps an available episode live under an upgrade grab", %{

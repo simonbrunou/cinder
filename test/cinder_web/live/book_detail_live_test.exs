@@ -6,6 +6,7 @@ defmodule CinderWeb.BookDetailLiveTest do
 
   alias Cinder.AccountsFixtures
   alias Cinder.Acquisition.IndexerMock
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget, PrimaryMetadataMock}
   alias Cinder.Catalog
@@ -500,6 +501,74 @@ defmodule CinderWeb.BookDetailLiveTest do
 
       refute has_element?(lv, panel, "Stale English")
       assert has_element?(lv, panel, "French")
+    end
+  end
+
+  describe "the manual-search panel reads the search's report (#1648)" do
+    test "an e-book search shows each row's indexer and the indexers that did not answer",
+         %{conn: conn} do
+      {target, _work} = ebook_target(title: "The Dispossessed")
+      report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :challenge})
+
+      stub(IndexerMock, :search_ebook, fn _author, _title, _opts ->
+        {:ok,
+         [
+           indexer_result("Ursula K. Le Guin - The Dispossessed (EPUB)", %{
+             indexer_name: "NZBgeek"
+           }),
+           indexer_result("Ursula K. Le Guin - The Dispossessed (PDF)", %{
+             indexer_name: "NZBgeek"
+           })
+         ], report}
+      end)
+
+      stub(IndexerMock, :search_ebook_query, fn _query, _opts -> {:ok, []} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      # The EPUB row is accepted and the PDF row rejected: both name their indexer.
+      assert has_element?(lv, "#{panel} li [data-indexer]", "NZBgeek")
+      assert has_element?(lv, "#{panel} li", "format not accepted")
+
+      assert lv |> element("#{panel} li", "format not accepted") |> render() =~ "NZBgeek"
+
+      assert has_element?(
+               lv,
+               "#{panel}-unanswered",
+               "Not every indexer answered: One (blocked by a challenge page)."
+             )
+    end
+
+    test "an audiobook search with a failed query shows the incomplete line", %{conn: conn} do
+      {target, _work} = audiobook_target(title: "The Dispossessed")
+
+      stub(IndexerMock, :search_audiobook, fn _author, _title, _opts -> {:error, :timeout} end)
+
+      stub(IndexerMock, :search_audiobook_query, fn _query, _opts ->
+        {:ok,
+         [
+           indexer_result("Ursula K. Le Guin - The Dispossessed (M4B)", %{
+             size: 40_000_000,
+             indexer_name: "MyAnonamouse"
+           })
+         ]}
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+      lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-book-#{target.id}"
+      assert has_element?(lv, "#{panel} li [data-indexer]", "MyAnonamouse")
+
+      assert has_element?(
+               lv,
+               "#{panel}-incomplete",
+               "Some indexers could not be reached; results may be incomplete."
+             )
     end
   end
 

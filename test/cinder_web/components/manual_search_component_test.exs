@@ -62,6 +62,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
 
   import Phoenix.LiveViewTest
 
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Acquisition.Release
   alias Cinder.Catalog.{Movie, Series}
   alias CinderWeb.ManualSearchComponent
@@ -494,5 +495,198 @@ defmodule CinderWeb.ManualSearchComponentTest do
     # And the first (index 0) resolves to its own distinct release.
     lv |> element("button[phx-value-index='0']", "Grab") |> render_click()
     assert_receive {:grabbed, %Release{download_url: "url-a"}}
+  end
+
+  describe "what the search's report and error say (#1648)" do
+    setup do
+      # Asia/Tokyo is UTC+9 all year, so a household time differs from UTC's by a fixed amount.
+      Cinder.ConfigCase.put_env(:household_timezone, "Asia/Tokyo")
+      :ok
+    end
+
+    @movie %Movie{id: 1, status: :requested, imdb_id: "tt1", title: "M"}
+
+    # The text of every element `selector` matches in `html`, whitespace collapsed.
+    defp texts(html, selector) do
+      html
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query(selector)
+      |> Enum.map(&(&1 |> LazyHTML.text() |> String.split() |> Enum.join(" ")))
+    end
+
+    # 14:35 on the household's today, and on the day after tomorrow, in Asia/Tokyo.
+    defp tokyo_1435(days_from_today) do
+      Cinder.Settings.household_date()
+      |> Date.add(days_from_today)
+      |> DateTime.new!(~T[14:35:00], "Asia/Tokyo")
+    end
+
+    defp report(entries, failed_calls \\ 0) do
+      report =
+        Enum.reduce(entries, Report.new(), fn {id, name, outcome}, acc ->
+          Report.put(acc, {"native", id}, name, outcome)
+        end)
+
+      %{report | failed_calls: failed_calls}
+    end
+
+    test "each row shows its release's indexer name; a row with none shows nothing" do
+      html =
+        render_panel(%{
+          mode: :movie,
+          target: @movie,
+          results: [
+            row(%Release{title: "Named", protocol: :torrent, indexer_name: "NZBgeek"}),
+            row(%Release{title: "Unnamed", protocol: :torrent, indexer_name: nil}),
+            row(%Release{title: "Blank", protocol: :torrent, indexer_name: ""})
+          ]
+        })
+
+      # Neither a nil nor a blank name renders an element.
+      assert texts(html, "#ms li [data-indexer]") == ["NZBgeek"]
+      assert [named, unnamed, _blank] = texts(html, "#ms li")
+      assert named =~ "Named NZBgeek"
+      refute unnamed =~ "NZBgeek"
+    end
+
+    test "a loaded panel names each failed or skipped indexer with its reason, in household time" do
+      today = tokyo_1435(0)
+      later = tokyo_1435(2)
+
+      html =
+        render_panel(%{
+          mode: :movie,
+          target: @movie,
+          results: [row(%Release{title: "Found", protocol: :torrent})],
+          report:
+            report([
+              {1, "One", {:failed, :timeout}},
+              {2, "Two", {:skipped, {:backoff, DateTime.shift_zone!(today, "Etc/UTC")}}},
+              {3, "Three", {:skipped, {:backoff, later}}},
+              {4, "Answered", :asked}
+            ])
+        })
+
+      later_text = CinderWeb.LiveHelpers.format_date(DateTime.to_date(later)) <> ", 14:35"
+
+      assert texts(html, "#ms-unanswered") == [
+               "Not every indexer answered: One (timed out), " <>
+                 "Three (waiting until #{later_text}), Two (waiting until 14:35)."
+             ]
+
+      # A named failure alone is not the generic incomplete line.
+      assert texts(html, "#ms-incomplete") == []
+    end
+
+    test "a report that counts a failed seam call shows the incomplete line" do
+      html =
+        render_panel(%{
+          mode: :movie,
+          target: @movie,
+          results: [row(%Release{title: "Found", protocol: :torrent})],
+          report: report([], 1)
+        })
+
+      assert texts(html, "#ms-incomplete") == [
+               "Some indexers could not be reached; results may be incomplete."
+             ]
+
+      assert texts(html, "#ms-unanswered") == []
+    end
+
+    test "with the default empty report, neither line shows" do
+      html =
+        render_panel(%{
+          mode: :movie,
+          target: @movie,
+          results: [row(%Release{title: "Found", protocol: :torrent})]
+        })
+
+      assert texts(html, "#ms li") != []
+      assert texts(html, "#ms-incomplete") == []
+      assert texts(html, "#ms-unanswered") == []
+    end
+
+    test "each search error renders its own text" do
+      no_answer = report([{1, "One", {:failed, {:http_status, 503}}}])
+
+      table = [
+        {{:no_indexer_answered, no_answer}, "No indexer answered. Try again."},
+        {:no_indexers, "No indexer is enabled. Add one in Settings."},
+        {{:indexers_backing_off, tokyo_1435(0)}, "Every indexer is waiting until 14:35."},
+        {{:prowlarr_status, 500}, "Couldn't reach Prowlarr. Try again."},
+        {{:anime_policy, :original_language_required}, "The search failed. Try again."},
+        {{:exit, :killed}, "The search failed. Try again."}
+      ]
+
+      for {reason, text} <- table do
+        html = render_panel(%{mode: :movie, target: @movie, state: :error, error: reason})
+
+        assert texts(html, "#ms-error") == [text], "reason #{inspect(reason)}"
+      end
+    end
+
+    test "a no-answer error shows the line from the report it carries" do
+      reason = {:no_indexer_answered, report([{1, "One", {:failed, {:http_status, 503}}}])}
+      html = render_panel(%{mode: :movie, target: @movie, state: :error, error: reason})
+
+      assert texts(html, "#ms-unanswered") == ["Not every indexer answered: One (HTTP 503)."]
+
+      other = render_panel(%{mode: :movie, target: @movie, state: :error, error: :no_indexers})
+      assert texts(other, "#ms-error") != []
+      assert texts(other, "#ms-unanswered") == []
+    end
+
+    test "handle_async keeps the rows, the report and the error reason" do
+      socket = %Socket{assigns: %{__changed__: %{}, state: :loading, results: []}}
+      rows = [row(%Release{title: "Found", protocol: :torrent})]
+      answered = report([{1, "One", {:failed, :timeout}}])
+
+      assert {:noreply, loaded} =
+               ManualSearchComponent.handle_async(
+                 :search,
+                 {:ok, {:ok, rows, answered}},
+                 socket
+               )
+
+      assert %{state: :loaded, results: ^rows, report: ^answered, error: nil} = loaded.assigns
+
+      assert {:noreply, failed} =
+               ManualSearchComponent.handle_async(:search, {:ok, {:error, :no_indexers}}, loaded)
+
+      assert %{state: :error, error: :no_indexers} = failed.assigns
+      assert failed.assigns.report == Report.new()
+
+      assert {:noreply, exited} =
+               ManualSearchComponent.handle_async(:search, {:exit, :killed}, loaded)
+
+      assert %{state: :error, error: {:exit, :killed}} = exited.assigns
+      assert exited.assigns.report == Report.new()
+    end
+
+    test "a new search context drops the old report and error" do
+      stale = %Socket{
+        assigns: %{
+          __changed__: %{},
+          id: "ms",
+          mode: :movie,
+          target: @movie,
+          state: :loaded,
+          results: [row(%Release{title: "Old", protocol: :torrent})],
+          report: report([{1, "One", {:failed, :timeout}}], 1),
+          error: :no_indexers,
+          confirming: nil
+        }
+      }
+
+      moved = %Movie{@movie | id: 2}
+
+      assert {:ok, updated} =
+               ManualSearchComponent.update(%{id: "ms", mode: :movie, target: moved}, stale)
+
+      assert updated.assigns.state == :loading
+      assert updated.assigns.report == Report.new()
+      assert updated.assigns.error == nil
+    end
   end
 end

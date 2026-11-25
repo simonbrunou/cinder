@@ -47,6 +47,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
   import Phoenix.LiveViewTest
 
   alias Cinder.Acquisition.{AudiobookRelease, BookScorer, EbookRelease}
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Books.BookTarget
   alias CinderWeb.BookManualSearchComponent
   alias Phoenix.LiveView.Socket
@@ -310,7 +311,7 @@ defmodule CinderWeb.BookManualSearchComponentTest do
     end
   end
 
-  test ":loading renders a spinner, and :error renders the retry copy — not just :loaded" do
+  test ":loading renders a spinner, and :error renders its reason's text — not just :loaded" do
     loading_html =
       render_component(BookManualSearchComponent, %{
         id: "ms",
@@ -327,10 +328,12 @@ defmodule CinderWeb.BookManualSearchComponentTest do
         id: "ms",
         target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
         work: %{title: "Title", authors: ["Author"]},
-        state: :error
+        state: :error,
+        error: :no_indexers
       })
 
-    assert error_html =~ "reach the indexer"
+    assert texts(error_html, "#ms-error") == ["No indexer is enabled. Add one in Settings."]
+    refute error_html =~ "No releases found."
   end
 
   test "handle_async transitions :loading to :loaded on success and :error on failure/exit" do
@@ -447,5 +450,202 @@ defmodule CinderWeb.BookManualSearchComponentTest do
              )
 
     assert updated.assigns.search_context == {1, "fr"}
+  end
+
+  # The text of every element `selector` matches in `html`, whitespace collapsed.
+  defp texts(html, selector) do
+    html
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query(selector)
+    |> Enum.map(&(&1 |> LazyHTML.text() |> String.split() |> Enum.join(" ")))
+  end
+
+  defp report(entries, failed_calls \\ 0) do
+    report =
+      Enum.reduce(entries, Report.new(), fn {id, name, outcome}, acc ->
+        Report.put(acc, {"native", id}, name, outcome)
+      end)
+
+    %{report | failed_calls: failed_calls}
+  end
+
+  describe "what the search's report and error say (#1648)" do
+    setup do
+      # Asia/Tokyo is UTC+9 all year, so a household time differs from UTC's by a fixed amount.
+      Cinder.ConfigCase.put_env(:household_timezone, "Asia/Tokyo")
+      :ok
+    end
+
+    test "accepted and rejected rows show their release's indexer name; a row with none shows nothing" do
+      html =
+        render_panel(%{
+          accepted: [
+            {release("Author - Title (EPUB)", %{indexer_name: "NZBgeek"}), evidence()},
+            {release("Author - Title (AZW3)"), evidence()}
+          ],
+          rejected: [
+            {release("Author - Title (PDF)", %{indexer_name: "NZBgeek"}), :format_rejected},
+            {release("Author - Title (MOBI)"), :format_rejected}
+          ],
+          complete?: true
+        })
+
+      assert texts(html, "#ms li [data-indexer]") == ["NZBgeek", "NZBgeek"]
+      assert [accepted, accepted_unnamed, rejected, rejected_unnamed] = texts(html, "#ms li")
+      assert accepted =~ "Author - Title (EPUB) NZBgeek"
+      assert rejected =~ "Author - Title (PDF) NZBgeek"
+      refute accepted_unnamed =~ "NZBgeek"
+      refute rejected_unnamed =~ "NZBgeek"
+    end
+
+    test "an audiobook row shows its release's indexer name" do
+      html =
+        render_audiobook_panel(%{
+          accepted: [
+            {AudiobookRelease.new(%{
+               title: "Author - Title (M4B)",
+               download_url: "u",
+               indexer_name: "MyAnonamouse"
+             }), audiobook_evidence(%{})}
+          ],
+          rejected: [],
+          complete?: true
+        })
+
+      assert texts(html, "#ms li [data-indexer]") == ["MyAnonamouse"]
+    end
+
+    test "a loaded panel names each failed or skipped indexer from the results' report" do
+      today =
+        Cinder.Settings.household_date() |> DateTime.new!(~T[14:35:00], "Asia/Tokyo")
+
+      html =
+        render_panel(%{
+          accepted: [{release("Author - Title (EPUB)"), evidence()}],
+          rejected: [],
+          complete?: false,
+          report:
+            report([
+              {1, "One", {:failed, :timeout}},
+              {2, "Two", {:skipped, {:backoff, today}}},
+              {3, "Answered", :asked}
+            ])
+        })
+
+      assert texts(html, "#ms-unanswered") == [
+               "Not every indexer answered: One (timed out), Two (waiting until 14:35)."
+             ]
+
+      # complete?: false still shows the incomplete line, beside the named failures.
+      assert texts(html, "#ms-incomplete") == [
+               "Some indexers could not be reached; results may be incomplete."
+             ]
+    end
+
+    test "a report that counts a failed seam call shows the incomplete line" do
+      # `complete?: true` here, so the report's count alone is what shows the line.
+      html =
+        render_panel(%{
+          accepted: [],
+          rejected: [],
+          complete?: true,
+          report: report([], 1)
+        })
+
+      assert texts(html, "#ms-incomplete") == [
+               "Some indexers could not be reached; results may be incomplete."
+             ]
+
+      assert texts(html, "#ms-unanswered") == []
+    end
+
+    test "each search error renders its own text, and a no-answer error its report's line" do
+      no_answer = report([{1, "One", {:failed, :rejected_credentials}}])
+
+      table = [
+        {{:no_indexer_answered, no_answer}, "No indexer answered. Try again."},
+        {:no_indexers, "No indexer is enabled. Add one in Settings."},
+        {{:indexers_backing_off,
+          DateTime.new!(Cinder.Settings.household_date(), ~T[14:35:00], "Asia/Tokyo")},
+         "Every indexer is waiting until 14:35."},
+        {{:prowlarr_status, 500}, "Couldn't reach Prowlarr. Try again."},
+        {{:exit, :killed}, "The search failed. Try again."}
+      ]
+
+      for {reason, text} <- table do
+        html =
+          render_component(BookManualSearchComponent, %{
+            id: "ms",
+            target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+            work: %{title: "Title", authors: ["Author"]},
+            state: :error,
+            error: reason
+          })
+
+        assert texts(html, "#ms-error") == [text], "reason #{inspect(reason)}"
+
+        expected_line =
+          if match?({:no_indexer_answered, _}, reason),
+            do: ["Not every indexer answered: One (credentials rejected)."],
+            else: []
+
+        assert texts(html, "#ms-unanswered") == expected_line, "reason #{inspect(reason)}"
+      end
+    end
+
+    test "handle_async keeps the error reason, a task exit included" do
+      socket = %Socket{assigns: %{__changed__: %{}, state: :loading, results: %{}}}
+
+      assert {:noreply, failed} =
+               BookManualSearchComponent.handle_async(
+                 :search,
+                 {:ok, {:error, {:prowlarr_status, 502}}},
+                 socket
+               )
+
+      assert %{state: :error, error: {:prowlarr_status, 502}} = failed.assigns
+
+      assert {:noreply, exited} =
+               BookManualSearchComponent.handle_async(:search, {:exit, :killed}, socket)
+
+      assert %{state: :error, error: {:exit, :killed}} = exited.assigns
+
+      result = %{accepted: [], rejected: [], complete?: true, report: Report.new()}
+
+      assert {:noreply, loaded} =
+               BookManualSearchComponent.handle_async(:search, {:ok, {:ok, result}}, failed)
+
+      assert %{state: :loaded, results: ^result, error: nil} = loaded.assigns
+    end
+
+    test "a language change drops the old error" do
+      target = fn language ->
+        %BookTarget{id: 1, media_kind: :ebook, status: :monitored, preferred_language: language}
+      end
+
+      work = %{title: "Title", authors: ["Author"]}
+
+      failed = %Socket{
+        assigns: %{
+          __changed__: %{},
+          id: "ms",
+          target: target.("en"),
+          work: work,
+          state: :error,
+          error: :no_indexers,
+          results: %{accepted: [], rejected: [], complete?: true},
+          search_context: {1, "en"}
+        }
+      }
+
+      assert {:ok, updated} =
+               BookManualSearchComponent.update(
+                 %{id: "ms", target: target.("fr"), work: work},
+                 failed
+               )
+
+      assert updated.assigns.state == :loading
+      assert updated.assigns.error == nil
+    end
   end
 end

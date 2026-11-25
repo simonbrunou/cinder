@@ -5,6 +5,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, Movie, MovieLifecycle, TitleAlias}
   alias Cinder.Repo
@@ -711,6 +712,140 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "[Group] Perfect Blue (1997) [1080p]"
     assert has_element?(lv, "#ms-movie-#{movie.id} button", "Grab")
     refute html =~ "audio pick"
+  end
+
+  describe "the manual-search panel reads the search's report (#1648)" do
+    test "a standard movie search shows each row's indexer and the indexers that did not answer",
+         %{conn: conn} do
+      movie =
+        movie_fixture(%{
+          title: "Metropolis",
+          status: :available,
+          imdb_id: "tt1",
+          file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+        })
+
+      report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :timeout})
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+        {:ok,
+         [
+           %{
+             title: "Metropolis 1927 1080p BluRay x264-GRP",
+             size: 5_000_000_000,
+             protocol: :torrent,
+             download_url: "u",
+             indexer_name: "NZBgeek"
+           }
+         ], report}
+      end)
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+      lv |> element("button", "Find a better match") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-movie-#{movie.id}"
+      assert has_element?(lv, "#{panel} li [data-indexer]", "NZBgeek")
+
+      assert has_element?(
+               lv,
+               "#{panel}-unanswered",
+               "Not every indexer answered: One (timed out)."
+             )
+    end
+
+    test "an anime movie search with a failed query shows each row's indexer and the incomplete line",
+         %{conn: conn} do
+      movie =
+        movie_fixture(%{
+          title: "Perfect Blue",
+          year: 1997,
+          status: :available,
+          imdb_id: "tt3",
+          media_profile: :anime,
+          file_path: "/lib/Perfect Blue (1997)/Perfect Blue (1997).mkv"
+        })
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt3" ->
+        {:ok,
+         [
+           %{
+             title: "[Group] Perfect Blue (1997) [1080p]",
+             size: 5_000_000_000,
+             protocol: :torrent,
+             download_url: "u",
+             indexer_name: "NZBgeek"
+           }
+         ]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
+        {:error, :timeout}
+      end)
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+      lv |> element("button", "Find a better match") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-movie-#{movie.id}"
+      assert has_element?(lv, "#{panel} li [data-indexer]", "NZBgeek")
+
+      assert has_element?(
+               lv,
+               "#{panel}-incomplete",
+               "Some indexers could not be reached; results may be incomplete."
+             )
+    end
+
+    test "an anime movie whose preferences cannot resolve says the search failed", %{conn: conn} do
+      # "dual" needs the title's original language, and this movie has none.
+      movie =
+        movie_fixture(%{
+          title: "Perfect Blue",
+          year: 1997,
+          status: :available,
+          imdb_id: "tt3",
+          media_profile: :anime,
+          preferred_language: "dual",
+          original_language: nil,
+          file_path: "/lib/Perfect Blue (1997)/Perfect Blue (1997).mkv"
+        })
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+      lv |> element("button", "Find a better match") |> render_click()
+      render_async(lv)
+
+      assert has_element?(lv, "#ms-movie-#{movie.id}-error", "The search failed. Try again.")
+    end
+
+    test "a search no indexer answered says so, with the indexers' reasons", %{conn: conn} do
+      movie =
+        movie_fixture(%{
+          title: "Metropolis",
+          status: :available,
+          imdb_id: "tt1",
+          file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+        })
+
+      report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :rejected_credentials})
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+        {:error, {:no_indexer_answered, report}}
+      end)
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+      lv |> element("button", "Find a better match") |> render_click()
+      render_async(lv)
+
+      panel = "#ms-movie-#{movie.id}"
+      assert has_element?(lv, "#{panel}-error", "No indexer answered. Try again.")
+
+      assert has_element?(
+               lv,
+               "#{panel}-unanswered",
+               "Not every indexer answered: One (credentials rejected)."
+             )
+    end
   end
 
   test "Cancel upgrade reverts an :upgrading movie to :available", %{conn: conn} do

@@ -8,7 +8,7 @@ defmodule CinderWeb.LiveHelpers do
 
   import CinderWeb.CoreComponents, only: [language_label: 1]
 
-  alias Cinder.Catalog
+  alias Cinder.{Catalog, Settings}
   alias Cinder.Download.ContentPolicy
 
   @doc """
@@ -154,7 +154,7 @@ defmodule CinderWeb.LiveHelpers do
     do: gettext("No release matched your size/quality rules yet. Open it to retry or adjust.")
 
   def pipeline_hint(%{status: :search_failed}),
-    do: gettext("The indexer couldn't be reached after repeated tries. Open it to retry.")
+    do: gettext("Indexers couldn't be searched after repeated tries. Open it to retry.")
 
   def pipeline_hint(%{status: :import_failed}),
     do: gettext("The download finished but couldn't be imported. Open it to retry.")
@@ -480,6 +480,39 @@ defmodule CinderWeb.LiveHelpers do
         days = div(seconds, 86_400)
         ngettext("%{count} day ago", "%{count} days ago", days)
     end
+  end
+
+  @doc """
+  An instant as the household's clock shows it: `datetime` (a `DateTime` in any zone) shifted to
+  `Cinder.Settings.household_timezone/0` and written as hours and minutes ("14:35"). When that
+  instant falls on another day than `now` in the same zone, the date comes first, from
+  `format_date/1` ("Jun 5, 14:35" / fr "5 juin à 14:35"); the date carries no year. `now`
+  defaults to the current time and is injectable for tests, like `relative_time/2`'s. The zone is
+  UTC when the setting names none that `DateTime.shift_zone/2` can use: `household_timezone/0`
+  returns only such a zone.
+  """
+  @spec format_household_time(DateTime.t(), DateTime.t()) :: String.t()
+  def format_household_time(%DateTime{} = datetime, now \\ DateTime.utc_now()) do
+    case household_time_parts(datetime, now) do
+      {nil, time} -> time
+      {date, time} -> gettext("%{date}, %{time}", date: date, time: time)
+    end
+  end
+
+  @doc """
+  The two parts `format_household_time/2` joins, for a sentence that needs its own words around
+  a date: `{nil, "14:35"}` when the instant falls on `now`'s household day, else
+  `{"Jun 5", "14:35"}`, the date from `format_date/1`.
+  """
+  @spec household_time_parts(DateTime.t(), DateTime.t()) :: {String.t() | nil, String.t()}
+  def household_time_parts(%DateTime{} = datetime, now \\ DateTime.utc_now()) do
+    zone = Settings.household_timezone()
+    local = DateTime.shift_zone!(datetime, zone)
+    time = Calendar.strftime(local, "%H:%M")
+
+    if DateTime.to_date(local) == DateTime.to_date(DateTime.shift_zone!(now, zone)),
+      do: {nil, time},
+      else: {format_date(DateTime.to_date(local)), time}
   end
 
   @doc ~S|A one-decimal rating string ("8.4") for a TMDB vote average (an Ecto :float). Non-floats fall through to to_string/1 as a defensive fallback.|

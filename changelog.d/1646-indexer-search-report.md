@@ -19,6 +19,5 @@
   `IndexerSource.configured/0` once, and the movie and TV sweeps read it once per movie search and
   per series visit, so a standard search and its anime fallback use one source. A book search in
   which no query answered now returns the error that rule picks, in place of `:indexer_unavailable`:
-  under Prowlarr the first query's own error, such as `{:prowlarr_status, 500}`. The book panel
-  shows its search error as before. Prowlarr returns no report and none of the new errors, so under
-  it every search picks what it picked before.
+  under Prowlarr the first query's own error, such as `{:prowlarr_status, 500}`. Prowlarr returns
+  no report and none of the new errors, so under it every search picks what it picked before.

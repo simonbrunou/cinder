@@ -21,6 +21,13 @@ defmodule CinderWeb.BookManualSearchComponent do
   directly and skips the async fetch — useful for tests, mirroring
   `CinderWeb.ManualSearchComponent`'s own `results:` escape hatch.
 
+  Each accepted and rejected row shows its release's `indexer_name` when it has one. The panel
+  reads the search's report from the `:report` key of `results`, when the map has one, through
+  `CinderWeb.SearchReportComponents`: one line naming each failed or skipped indexer and why.
+  "Some indexers could not be reached; results may be incomplete." shows when that report counts
+  a failed seam call or when `complete?` is false, as before. A failed search
+  keeps its reason in the `error` assign and shows that module's text for it.
+
   `/books/:id` has one fixed target per media kind and no season selector, so the target itself
   never changes underneath one panel instance — but its `preferred_language` can, from the same
   page's language picker while the panel stays open (#495). A language change invalidates and
@@ -31,6 +38,14 @@ defmodule CinderWeb.BookManualSearchComponent do
   use CinderWeb, :live_component
 
   import CinderWeb.LiveHelpers, only: [humanize_bytes: 1]
+
+  import CinderWeb.SearchReportComponents,
+    only: [
+      indexer_name: 1,
+      unanswered_indexers: 1,
+      search_error: 1,
+      show_incomplete_line?: 2
+    ]
 
   require Logger
 
@@ -52,6 +67,7 @@ defmodule CinderWeb.BookManualSearchComponent do
       |> assign_new(:results, fn -> %{accepted: [], rejected: [], complete?: true} end)
       # Whether a grab replaces the current file: the host passes the target's offered `:replace`.
       |> assign_new(:replace, fn -> false end)
+      |> assign_new(:error, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
     socket =
@@ -105,7 +121,11 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   defp restart_search(socket) do
     socket =
-      assign(socket, state: :loading, results: %{accepted: [], rejected: [], complete?: true})
+      assign(socket,
+        state: :loading,
+        results: %{accepted: [], rejected: [], complete?: true},
+        error: nil
+      )
 
     if connected?(socket), do: start_search(socket), else: socket
   end
@@ -129,13 +149,13 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   @impl true
   def handle_async(:search, {:ok, {:ok, result}}, socket),
-    do: {:noreply, assign(socket, state: :loaded, results: result)}
+    do: {:noreply, assign(socket, state: :loaded, results: result, error: nil)}
 
-  def handle_async(:search, {:ok, {:error, _reason}}, socket),
-    do: {:noreply, assign(socket, :state, :error)}
+  def handle_async(:search, {:ok, {:error, reason}}, socket),
+    do: {:noreply, assign(socket, state: :error, error: reason)}
 
-  def handle_async(:search, {:exit, _reason}, socket),
-    do: {:noreply, assign(socket, :state, :error)}
+  def handle_async(:search, {:exit, reason}, socket),
+    do: {:noreply, assign(socket, state: :error, error: {:exit, reason})}
 
   @impl true
   def handle_event("grab", %{"index" => index}, socket) do
@@ -172,14 +192,17 @@ defmodule CinderWeb.BookManualSearchComponent do
         <span class="loading loading-spinner loading-sm" />{gettext("Searching releases…")}
       </div>
 
-      <p :if={@state == :error} class="text-sm text-error">
-        {gettext("Couldn't reach the indexer. Try again.")}
-      </p>
+      <.search_error :if={@state == :error} id={@id} error={@error} />
 
       <div :if={@state == :loaded}>
-        <p :if={not @results.complete?} class="mb-2 text-xs text-warning">
+        <p
+          :if={show_incomplete_line?(Map.get(@results, :report), @results.complete?)}
+          id={"#{@id}-incomplete"}
+          class="mb-2 text-xs text-warning"
+        >
           {gettext("Some indexers could not be reached; results may be incomplete.")}
         </p>
+        <.unanswered_indexers id={"#{@id}-unanswered"} report={Map.get(@results, :report)} />
 
         <p :if={@results.accepted == [] and @results.rejected == []} class="text-sm">
           {gettext("No releases found.")}
@@ -191,6 +214,7 @@ defmodule CinderWeb.BookManualSearchComponent do
             class="flex flex-wrap items-center gap-2 text-sm"
           >
             <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
+            <.indexer_name release={release} />
             <span class="badge badge-xs">{format_label(evidence.format)}</span>
             <span class="badge badge-xs badge-ghost">{release_language_label(evidence.language)}</span>
             <span :if={evidence.retail?} class="badge badge-xs badge-success">
@@ -223,6 +247,7 @@ defmodule CinderWeb.BookManualSearchComponent do
             class="flex flex-wrap items-center gap-2 text-sm text-base-content/60"
           >
             <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
+            <.indexer_name release={release} />
             <span class="text-xs text-warning">{reject_reason_text(reason)}</span>
           </li>
         </ul>

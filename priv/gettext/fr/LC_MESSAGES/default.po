@@ -1548,6 +1548,7 @@ msgstr ""
 "services requis connectés."
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/components/search_report_components.ex
 #, elixir-autogen
 msgid "HTTP %{status}"
 msgstr "HTTP %{status}"
@@ -1804,12 +1805,6 @@ msgstr "Mise à niveau"
 #, elixir-autogen
 msgid "?"
 msgstr "?"
-
-#: lib/cinder_web/components/book_manual_search_component.ex
-#: lib/cinder_web/components/manual_search_component.ex
-#, elixir-autogen
-msgid "Couldn't reach the indexer. Try again."
-msgstr "Impossible de joindre l'indexeur. Réessayez."
 
 #: lib/cinder_web/components/book_manual_search_component.ex
 #: lib/cinder_web/components/manual_search_component.ex
@@ -3060,13 +3055,6 @@ msgstr "Rafraîchissement des métadonnées de séries"
 msgid "The download finished but couldn't be imported. Open it to retry."
 msgstr ""
 "Le téléchargement s'est terminé mais n'a pas pu être importé. Ouvrez sa page "
-"pour réessayer."
-
-#: lib/cinder_web/live_helpers.ex
-#, elixir-autogen
-msgid "The indexer couldn't be reached after repeated tries. Open it to retry."
-msgstr ""
-"L'indexeur est resté injoignable après plusieurs tentatives. Ouvrez sa page "
 "pour réessayer."
 
 #: lib/cinder_web/live/activity_live.ex
@@ -6670,6 +6658,7 @@ msgid "Search for a release"
 msgstr "Rechercher une version"
 
 #: lib/cinder_web/components/book_manual_search_component.ex
+#: lib/cinder_web/components/manual_search_component.ex
 #, elixir-autogen, elixir-format
 msgid "Some indexers could not be reached; results may be incomplete."
 msgstr "Certains indexeurs n'ont pas pu être contactés ; les résultats peuvent être incomplets."
@@ -8054,3 +8043,120 @@ msgstr "Renommer la clé d’accès %{name}"
 #, elixir-autogen, elixir-format
 msgid "Paused by download client"
 msgstr "Mis en pause par le client de téléchargement"
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "%{date}, %{time}"
+msgstr "%{date} à %{time}"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} (%{reason})"
+msgstr "%{name} (%{reason})"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "Couldn't reach Prowlarr. Try again."
+msgstr "Impossible de joindre Prowlarr. Réessayez."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "Every indexer is waiting until %{time}."
+msgstr "Tous les indexeurs sont en attente jusqu'à %{time}."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Indexers couldn't be searched after repeated tries. Open it to retry."
+msgstr ""
+"La recherche sur les indexeurs a échoué après plusieurs tentatives. Ouvrez sa "
+"page pour réessayer."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer answered. Try again."
+msgstr "Aucun indexeur n'a répondu. Réessayez."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer is enabled. Add one in Settings."
+msgstr "Aucun indexeur n'est activé. Ajoutez-en un dans les Paramètres."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "Not every indexer answered: %{list}."
+msgstr "Certains indexeurs n'ont pas répondu : %{list}."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "The search failed. Try again."
+msgstr "La recherche a échoué. Réessayez."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "answer too large"
+msgstr "réponse trop volumineuse"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "blocked by a challenge page"
+msgstr "bloqué par une page de vérification"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "couldn't connect"
+msgstr "connexion impossible"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "credentials rejected"
+msgstr "identifiants refusés"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "cut off by the search deadline"
+msgstr "interrompu par le délai de recherche"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "error code %{code}"
+msgstr "code d'erreur %{code}"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "limit reached, searching again at %{time}"
+msgstr "limite atteinte, nouvelle recherche à %{time}"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "search crashed"
+msgstr "la recherche a planté"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "timed out"
+msgstr "délai dépassé"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "unreadable answer"
+msgstr "réponse illisible"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "waiting until %{time}"
+msgstr "en attente jusqu'à %{time}"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "Every indexer is waiting until %{date}, %{time}."
+msgstr "Tous les indexeurs sont en attente jusqu'au %{date} à %{time}."
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "limit reached, searching again on %{date} at %{time}"
+msgstr "limite atteinte, nouvelle recherche le %{date} à %{time}"
+
+#: lib/cinder_web/components/search_report_components.ex
+#, elixir-autogen, elixir-format
+msgid "waiting until %{date}, %{time}"
+msgstr "en attente jusqu'au %{date} à %{time}"

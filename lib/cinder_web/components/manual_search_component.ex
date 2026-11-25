@@ -24,7 +24,14 @@ defmodule CinderWeb.ManualSearchComponent do
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of rows, each a map with `release`,
   `verdict` and `audio`, and optionally `covers_wanted`, as `ReleaseJudge` builds them) is
-  consumed directly and skips the async fetch — useful for tests.
+  consumed directly and skips the async fetch — useful for tests. A `report:` assign (a
+  `Cinder.Acquisition.IndexerSource.Report`, empty by default) may be supplied beside it.
+
+  Each row shows its release's `indexer_name` when it has one. Under the rows' list, the panel
+  shows what `CinderWeb.SearchReportComponents` reads from the search's report: one line naming
+  each failed or skipped indexer and why, and "Some indexers could not be reached; results may be
+  incomplete." when the report counts a failed seam call. A failed search keeps its reason in the
+  `error` assign and shows that module's text for it.
 
   A standard season row whose release covers no still-wanted episode (`covers_wanted: false`)
   says "covers no wanted episode" in neutral text, beside any rejection reason. The note changes neither the
@@ -32,8 +39,17 @@ defmodule CinderWeb.ManualSearchComponent do
   """
   use CinderWeb, :live_component
 
+  import CinderWeb.SearchReportComponents,
+    only: [
+      indexer_name: 1,
+      unanswered_indexers: 1,
+      search_error: 1,
+      show_incomplete_line?: 2
+    ]
+
   alias Cinder.{Acquisition, Catalog, Settings}
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
+  alias Cinder.Acquisition.IndexerSource.Report
 
   @impl true
   def update(assigns, socket) do
@@ -45,6 +61,8 @@ defmodule CinderWeb.ManualSearchComponent do
       |> assign(assigns)
       |> assign(:search_context, search_context)
       |> assign_new(:confirming, fn -> nil end)
+      |> assign_new(:report, fn -> Report.new() end)
+      |> assign_new(:error, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
     socket =
@@ -121,7 +139,7 @@ defmodule CinderWeb.ManualSearchComponent do
   defp maybe_cancel_stale_search(socket, false), do: socket
 
   defp restart_search(socket) do
-    socket = assign(socket, state: :loading, results: [])
+    socket = assign(socket, state: :loading, results: [], report: Report.new(), error: nil)
     if connected?(socket), do: start_search(socket), else: socket
   end
 
@@ -138,25 +156,25 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   defp search(%{effective: :anime}, :movie, target, _season, opts) do
-    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
+    with {:ok, policy} <- anime_policy(target),
          {:ok, judged, _incomplete?} <-
            Acquisition.judge_anime_movie(
              target.imdb_id,
              Catalog.movie_acquisition_context(target),
              opts ++ [anime_policy: policy]
            ),
-         do: {:ok, judged.rows}
+         do: {:ok, judged.rows, judged.report}
   end
 
   defp search(%{effective: :anime}, :tv, target, season, opts) do
-    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()),
+    with {:ok, policy} <- anime_policy(target),
          {:ok, judged, _incomplete?} <-
            Acquisition.judge_anime_episodes(
              Catalog.anime_series_acquisition_context(target),
              manual_episode_ids(target, season),
              opts ++ [anime_policy: policy]
            ),
-         do: {:ok, judged.rows}
+         do: {:ok, judged.rows, judged.report}
   end
 
   defp search(%{effective: :standard}, :movie, target, _season, opts) do
@@ -166,7 +184,7 @@ defmodule CinderWeb.ManualSearchComponent do
              Catalog.movie_acquisition_context(target),
              opts
            ),
-         do: {:ok, judged.rows}
+         do: {:ok, judged.rows, judged.report}
   end
 
   # The sweep's own season list (`Acquisition.judge_season/3`), so each row's verdict is the
@@ -177,7 +195,16 @@ defmodule CinderWeb.ManualSearchComponent do
 
     with {:ok, judged} <-
            Acquisition.judge_season(context, Acquisition.searchable_numbers(context), opts),
-         do: {:ok, judged.rows}
+         do: {:ok, judged.rows, judged.report}
+  end
+
+  # The anime preferences error comes back tagged, so the panel tells it apart from an indexer
+  # source's error (`CinderWeb.SearchReportComponents.search_error_text/2`).
+  defp anime_policy(target) do
+    case AnimePreferences.resolve(target, Settings.anime_defaults()) do
+      {:ok, policy} -> {:ok, policy}
+      {:error, reason} -> {:error, {:anime_policy, reason}}
+    end
   end
 
   defp manual_episode_ids(series, season_number) do
@@ -189,14 +216,14 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   @impl true
-  def handle_async(:search, {:ok, {:ok, results}}, socket),
-    do: {:noreply, assign(socket, state: :loaded, results: results)}
+  def handle_async(:search, {:ok, {:ok, results, report}}, socket),
+    do: {:noreply, assign(socket, state: :loaded, results: results, report: report, error: nil)}
 
-  def handle_async(:search, {:ok, {:error, _reason}}, socket),
-    do: {:noreply, assign(socket, :state, :error)}
+  def handle_async(:search, {:ok, {:error, reason}}, socket),
+    do: {:noreply, assign(socket, state: :error, error: reason, report: Report.new())}
 
-  def handle_async(:search, {:exit, _reason}, socket),
-    do: {:noreply, assign(socket, :state, :error)}
+  def handle_async(:search, {:exit, reason}, socket),
+    do: {:noreply, assign(socket, state: :error, error: {:exit, reason}, report: Report.new())}
 
   @impl true
   def handle_event("ask_replace", %{"index" => index}, socket),
@@ -240,9 +267,17 @@ defmodule CinderWeb.ManualSearchComponent do
       <div :if={@state == :loading} class="flex items-center gap-2 text-sm">
         <span class="loading loading-spinner loading-sm" />{gettext("Searching releases…")}
       </div>
-      <p :if={@state == :error} class="text-sm text-error">
-        {gettext("Couldn't reach the indexer. Try again.")}
-      </p>
+      <.search_error :if={@state == :error} id={@id} error={@error} />
+      <div :if={@state == :loaded}>
+        <p
+          :if={show_incomplete_line?(@report, true)}
+          id={"#{@id}-incomplete"}
+          class="mb-2 text-xs text-warning"
+        >
+          {gettext("Some indexers could not be reached; results may be incomplete.")}
+        </p>
+        <.unanswered_indexers id={"#{@id}-unanswered"} report={@report} />
+      </div>
       <p :if={@state == :loaded and @results == []} class="text-sm">
         {gettext("No releases found.")}
       </p>
@@ -253,6 +288,7 @@ defmodule CinderWeb.ManualSearchComponent do
           class="flex flex-wrap items-center gap-2 text-sm"
         >
           <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
+          <.indexer_name release={release} />
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
           <.language_badge language={release.language} state={row.audio} />
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>

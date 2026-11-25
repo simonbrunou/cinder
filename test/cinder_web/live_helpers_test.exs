@@ -225,4 +225,9 @@ defmodule CinderWeb.LiveHelpersTest do
       assert book_hold_reason(nil) == ""
     end
   end
+
+  test "pipeline_hint/1 says the indexers couldn't be searched for a :search_failed movie" do
+    assert pipeline_hint(%{status: :search_failed}) ==
+             "Indexers couldn't be searched after repeated tries. Open it to retry."
+  end
 end
