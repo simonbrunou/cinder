@@ -318,6 +318,14 @@
   run of "a reset names no Test that still runs" in that module passed while its `refute` was
   the first call after the send. On that page a probe's first call found the reset's notice in
   0 of 20 runs, and its second call in 20 of 20.
+- `render_change` and `render_submit`, given a view and an event or given an element, send their
+  value through `Plug.Conn.Query.encode/1`, which leaves out an empty map or an empty list
+  (`deps/phoenix_live_view/lib/phoenix_live_view/test/client_proxy.ex`):
+  `%{"indexer" => %{}, "secrets" => %{"api_key" => "x"}}` encodes as `secrets[api_key]=x`, so
+  the handler gets no `"indexer"` key. A test of a payload holding an empty map gives that map a
+  key the handler ignores, such as `%{"indexer" => %{"other" => "x"}}`. On #1661 (PR #1814) a
+  forged-payload test's save never reached the handler that matched both maps, and a debug round
+  found why.
 - When the code computes a value that a message or a return reports, such as an elapsed time or
   a count, the mutant list holds mutants that report a wrong value, such as a constant and `0`,
   besides one that drops the value. The test pins the value, or bounds it on both sides where it
