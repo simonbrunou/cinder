@@ -251,8 +251,17 @@ defmodule CinderWeb.LiveHelpersTest do
     end
   end
 
-  test "pipeline_hint/1 says the indexers couldn't be searched for a :search_failed movie" do
+  test "pipeline_hint/1 names the indexers and the download client for a :search_failed movie, in en and fr" do
     assert pipeline_hint(%{status: :search_failed}) ==
-             "Indexers couldn't be searched after repeated tries. Open it to retry."
+             "Cinder couldn't search the indexers or hand a release to the download client. " <>
+               "Open it to retry."
+
+    Gettext.put_locale(CinderWeb.Gettext, "fr")
+
+    assert pipeline_hint(%{status: :search_failed}) ==
+             "Cinder n’a pas pu interroger les indexeurs ni transmettre une version au client " <>
+               "de téléchargement. Ouvrez sa page pour réessayer."
+  after
+    Gettext.put_locale(CinderWeb.Gettext, "en")
   end
 end

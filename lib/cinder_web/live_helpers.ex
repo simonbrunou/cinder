@@ -153,8 +153,14 @@ defmodule CinderWeb.LiveHelpers do
   def pipeline_hint(%{status: :no_match}),
     do: gettext("No release matched your size/quality rules yet. Open it to retry or adjust.")
 
+  # Several causes park a movie at `:search_failed`, among them failed indexer searches and
+  # download-client submission failures. The movie row keeps no record of the cause (#1721), so
+  # the hint names both the indexers and the download client.
   def pipeline_hint(%{status: :search_failed}),
-    do: gettext("Indexers couldn't be searched after repeated tries. Open it to retry.")
+    do:
+      gettext(
+        "Cinder couldn't search the indexers or hand a release to the download client. Open it to retry."
+      )
 
   def pipeline_hint(%{status: :import_failed}),
     do: gettext("The download finished but couldn't be imported. Open it to retry.")

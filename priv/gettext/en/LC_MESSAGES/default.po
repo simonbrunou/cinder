@@ -7710,11 +7710,6 @@ msgstr ""
 msgid "Every indexer is waiting until %{time}."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex
-#, elixir-autogen, elixir-format, fuzzy
-msgid "Indexers couldn't be searched after repeated tries. Open it to retry."
-msgstr ""
-
 #: lib/cinder_web/components/search_report_components.ex
 #, elixir-autogen, elixir-format
 msgid "No indexer answered. Try again."
@@ -7835,4 +7830,9 @@ msgstr ""
 #: lib/cinder_web/live/series_detail_live.ex
 #, elixir-autogen, elixir-format
 msgid "This release's indexer changed after the search. Search again."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder couldn't search the indexers or hand a release to the download client. Open it to retry."
 msgstr ""

@@ -13,6 +13,4 @@
   for every error: it says that no indexer answered, that no indexer is enabled, until when
   every indexer is waiting when the search skipped them all, that the search failed (an anime
   preference that cannot resolve, or a search that crashed), or, for any other error such as
-  one from Prowlarr, "Couldn't reach Prowlarr. Try again." The activity and My requests hint
-  for a movie at Search failed now reads "Indexers couldn't be searched after repeated tries.
-  Open it to retry."
+  one from Prowlarr, "Couldn't reach Prowlarr. Try again."

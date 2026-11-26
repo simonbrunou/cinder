@@ -8064,13 +8064,6 @@ msgstr "Impossible de joindre Prowlarr. Réessayez."
 msgid "Every indexer is waiting until %{time}."
 msgstr "Tous les indexeurs sont en attente jusqu'à %{time}."
 
-#: lib/cinder_web/live_helpers.ex
-#, elixir-autogen, elixir-format
-msgid "Indexers couldn't be searched after repeated tries. Open it to retry."
-msgstr ""
-"La recherche sur les indexeurs a échoué après plusieurs tentatives. Ouvrez sa "
-"page pour réessayer."
-
 #: lib/cinder_web/components/search_report_components.ex
 #, elixir-autogen, elixir-format
 msgid "No indexer answered. Try again."
@@ -8192,3 +8185,8 @@ msgstr "L'indexeur d'où vient cette version a été modifié ou supprimé aprè
 #, elixir-autogen, elixir-format
 msgid "This release's indexer changed after the search. Search again."
 msgstr "L'indexeur de cette version a changé après la recherche. Relancez une recherche."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder couldn't search the indexers or hand a release to the download client. Open it to retry."
+msgstr "Cinder n’a pas pu interroger les indexeurs ni transmettre une version au client de téléchargement. Ouvrez sa page pour réessayer."

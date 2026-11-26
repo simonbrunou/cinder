@@ -184,6 +184,34 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert html =~ "No release matched"
   end
 
+  # `record_failure/2` parks a searching movie at Search failed at once on `:add_rejected`, a
+  # permanent submission error (#1721).
+  test "a movie the download client refused shows the Search failed hint", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    tmdb_id = System.unique_integer([:positive])
+
+    {:ok, request} =
+      Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: tmdb_id,
+        title: "Stalker",
+        year: 1979
+      })
+
+    {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Stalker", year: 1979})
+    {:ok, movie} = seed_movie_state(movie, %{status: :searching})
+    {:ok, _parked} = MovieLifecycle.record_failure(movie, :add_rejected)
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    assert has_element?(
+             lv,
+             "#request-#{request.id}-hint",
+             "Cinder couldn't search the indexers or hand a release to the download client."
+           )
+  end
+
   test "a requester can cancel their own pending request", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
 

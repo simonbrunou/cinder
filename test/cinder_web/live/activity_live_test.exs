@@ -148,6 +148,22 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(lv, "#movie-#{movie.id}-hint", "No release matched")
   end
 
+  # `record_failure/2` parks a searching movie at Search failed at once on `:add_rejected`, a
+  # permanent submission error, and the park leaves failure_reason nil (#1721).
+  test "a movie the download client refused shows the Search failed hint", %{conn: conn} do
+    movie = movie_fixture(%{title: "Stalker", status: :searching})
+    {:ok, _parked} = MovieLifecycle.record_failure(movie, :add_rejected)
+    assert %{status: :search_failed, failure_reason: nil} = Repo.reload!(movie)
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(
+             lv,
+             "#movie-#{movie.id}-hint",
+             "Cinder couldn't search the indexers or hand a release to the download client."
+           )
+  end
+
   test "a parked movie surfaces the download client's preserved failure reason", %{conn: conn} do
     # The poller persists the client's reason (SABnzbd's paused state / fail_message) as
     # failure_reason; /activity shows it verbatim instead of the generic import-failed hint.
