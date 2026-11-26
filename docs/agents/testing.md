@@ -352,6 +352,14 @@
   so on a slow runner a release before the capture prints the warning to the console and the
   capture reads `""` (#969). `code_health_test.exs` fails on a release followed by a capture in
   the same block.
+- A test that asserts an `:info` or `:debug` line first lets that level through the Logger, in an
+  `async: false` module, with an `on_exit` that restores it: `Logger.put_module_level/2` on the
+  module that logs, as `Cinder.Books.BibliographyRefresherTest` does, or `Logger.configure/1`
+  with `:level`, as `Cinder.Notifier.LogTest` does. The suite's Logger level is `:warning`
+  (`config/test.exs`), and the `:level` option of `capture_log/2` and `with_log/2` filters
+  only its own capture, so while neither the module level nor the Logger level admits the line,
+  the capture reads `""` whatever its own `:level`. On #1658 the author found this only after
+  a red run and a search of other tests.
 - A new repo-wide fence, a test that scans the sources for a pattern, goes in its own file under
   `test/code_health/`, not in `test/code_health_test.exs`, whose test count
   `Cinder.CodeHealth.FenceFilesTest` caps. Its header says why.
