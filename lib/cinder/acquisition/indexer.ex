@@ -121,7 +121,8 @@ defmodule Cinder.Acquisition.Indexer do
   - `{:skipped, {:backoff, until}}` or `{:failed, :rejected_credentials}`: the gate's answer.
 
   `gate: false` skips that read, for a Test's caps refetch (#1657), which asks an indexer
-  whatever its state.
+  whatever its state. `delay_ms:` is the indexer's own spacing, which wins over the lease's
+  when longer (a Cardigann definition's `requestDelay`, #1671).
   """
   @spec leased(ConfiguredIndexer.t(), context(), (-> value), keyword()) ::
           {:ran, value} | {:not_run, Report.outcome()}
@@ -137,13 +138,14 @@ defmodule Cinder.Acquisition.Indexer do
       [
         deadline_at: context.deadline_at,
         priority: Map.get(context, :priority, :background),
+        delay_ms: Keyword.get(opts, :delay_ms, 0),
         gate: gate
       ],
       fun
     )
   end
 
-  @doc "The largest response body in bytes `request/3` reads, 4 MiB."
+  @doc "The largest response body in bytes `request/3` reads unless `:max_bytes` sets one, 4 MiB."
   @spec max_response_bytes() :: pos_integer()
   def max_response_bytes, do: @max_response_bytes
 
@@ -151,7 +153,8 @@ defmodule Cinder.Acquisition.Indexer do
   Sends one adapter request through `Cinder.HTTPPolicy.bounded_request/3` with Req's retry and
   redirects off. The request gets the smaller of its own timeout (`opts[:timeout_ms]`, 30 s by
   default) and the time left before `context.deadline_at`, as its `receive_timeout` and its total
-  deadline. With no time left it sends nothing.
+  deadline. With no time left it sends nothing. Its body is read up to `opts[:max_bytes]`,
+  `max_response_bytes/0` by default.
 
   An HTTP 502, 503, 504 or 408 answer gets one retry, sent `retry_delay_ms` after it (2 s unless
   `config :cinder, #{inspect(__MODULE__)}` sets it), and the retry's answer is the answer. When
@@ -173,6 +176,9 @@ defmodule Cinder.Acquisition.Indexer do
   `Cinder.HTTPPolicy.bounded_request/3` reads it, so a body labelled JSON comes back as its bytes,
   whatever its status, and never reads `:bad_response` here. The Newznab and Torznab adapters
   read every body themselves (`Cinder.Acquisition.Indexer.NewznabAnswer`).
+
+  With `redact_path: true` the request's URL path stays out of `Cinder.HTTPPolicy`'s request
+  telemetry (`Cinder.HTTPPolicy.redact_path/1`): a Cardigann path can hold a setting's value.
   """
   @spec request(context(), keyword(), keyword()) ::
           {:ok, Req.Response.t()} | {:error, atom()}
@@ -213,7 +219,11 @@ defmodule Cinder.Acquisition.Indexer do
       |> Keyword.merge(receive_timeout: min(own_ms, left_ms), retry: false, redirect: false)
       |> Req.new()
       |> raw_body(Keyword.get(opts, :raw_body, false))
-      |> HTTPPolicy.bounded_request(@max_response_bytes, min(own_ms, left_ms))
+      |> redact_path(Keyword.get(opts, :redact_path, false))
+      |> HTTPPolicy.bounded_request(
+        Keyword.get(opts, :max_bytes, @max_response_bytes),
+        min(own_ms, left_ms)
+      )
       |> classify(own_ms > left_ms, deadline_at)
     end
   end
@@ -222,6 +232,9 @@ defmodule Cinder.Acquisition.Indexer do
     do: Req.Request.append_response_steps(request, raw_body: &drop_content_type/1)
 
   defp raw_body(request, false), do: request
+
+  defp redact_path(request, true), do: HTTPPolicy.redact_path(request)
+  defp redact_path(request, false), do: request
 
   defp drop_content_type({request, response}),
     do: {request, Req.Response.delete_header(response, "content-type")}

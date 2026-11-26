@@ -4,7 +4,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
   # required fields, the 1,000-row cap, the per-answer dedupe, the answer classes, caps that cannot
   # take the query, and the key-echo case. The class cases run through the real
   # `Cinder.Acquisition.IndexerSource.Native`, so each asserts the reason the report carries, and
-  # call the parser directly beside it. #1671 adds Cardigann to `@adapters`.
+  # call the parser directly beside it. The Cardigann adapter (#1671) has its own file,
+  # `cardigann_search_test.exs`, since its answers are HTML pages.
   #
   # Not async: Native's clock and the caps table's clock are Native's global config.
   use Cinder.DataCase, async: false
@@ -36,10 +37,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
   defp outcomes(%Report{indexers: indexers}),
     do: Map.new(indexers, fn {{"native", id}, %{outcome: outcome}} -> {id, outcome} end)
 
-  test "Native's adapter map names both adapters, as config/config.exs sets it" do
+  # The Cardigann adapter's contract cases are in `cardigann_search_test.exs`: its pages are HTML.
+  test "Native's adapter map names the three adapters, as config/config.exs sets it" do
     assert Application.fetch_env!(:cinder, :indexer_adapters) == %{
              newznab: Newznab,
-             torznab: Torznab
+             torznab: Torznab,
+             cardigann: Cinder.Acquisition.Indexer.Cardigann
            }
   end
 

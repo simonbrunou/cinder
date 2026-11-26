@@ -29,7 +29,14 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
       report the end `Cinder.Acquisition.Indexer.NewznabAnswer.limit_until/2` gives, never nil.
     - `:rejected_credentials`: a failure, not a skip.
     - `:challenge`: a Cloudflare challenge or a FlareSolverr failure.
-    - `:crashed`: the search process or parser worker died, or a regex limit hit.
+    - `:crashed`: the indexer's search raised, threw or exited, or its process died.
+    - Cardigann's (#1671): `:parser_failed`, a parser worker that crashed, ran out of memory or
+      time, or refused a selector on the page; `:regex_limit` and `:filter_output_cap`, a regex
+      limit or the filter-chain cap that failed one query (partial: no backoff);
+      `:forbidden_address`, a URL whose host resolves to a forbidden address; `:secret_host`, a
+      request that would carry a secret to a host outside the copy's credential hosts;
+      `:too_many_redirects`; `:definition_error`, a template or URL of the definition that
+      cannot be built.
 
   This set is closed: `put/4` raises `ArgumentError` on any other outcome, so a new reason needs
   a change here first. Every reason is an atom or a tuple of atoms, integers and `DateTime`s, and
@@ -66,6 +73,13 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
           | :rejected_credentials
           | :challenge
           | :crashed
+          | :parser_failed
+          | :regex_limit
+          | :filter_output_cap
+          | :forbidden_address
+          | :secret_host
+          | :too_many_redirects
+          | :definition_error
   @type outcome ::
           :asked
           | {:not_asked, not_asked_reason()}
@@ -83,7 +97,14 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
     :too_large,
     :rejected_credentials,
     :challenge,
-    :crashed
+    :crashed,
+    :parser_failed,
+    :regex_limit,
+    :filter_output_cap,
+    :forbidden_address,
+    :secret_host,
+    :too_many_redirects,
+    :definition_error
   ]
 
   @rank %{not_asked: 0, asked: 1, skipped: 2, failed: 3}

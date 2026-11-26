@@ -243,6 +243,14 @@ defmodule Cinder.HTTPPolicy do
   end
 
   @doc """
+  Marks `request` so the `[:cinder, :http, :request_task]` telemetry of `bounded_request/2,3`
+  carries `path: nil` for it: a Cardigann search path can hold a setting's value (#1671).
+  """
+  @spec redact_path(Req.Request.t()) :: Req.Request.t()
+  def redact_path(%Req.Request{} = request),
+    do: Req.Request.put_private(request, :cinder_redact_path, true)
+
+  @doc """
   Runs a Req request with total-time and retained-response-body limits.
 
   The request runs in a task under `Cinder.HTTPPolicy.TaskSupervisor`, which is killed once the
@@ -360,8 +368,8 @@ defmodule Cinder.HTTPPolicy do
   # has not started, so a slow handler cannot eat into the deadline. The metadata carries the
   # task's pid and the caller's: a test finds its own call's task through it, even when the
   # deadline kills that task before the request reaches its stub (#1092). It also carries the URL's
-  # path and the total deadline the task and its await run under, so a test reads the deadline a
-  # client's request got (#1414).
+  # path, nil for a request `redact_path/1` marks, and the total deadline the task and its await
+  # run under, so a test reads the deadline a client's request got (#1414).
   defp emit_request_task_telemetry(request, task, deadline_ms) do
     :telemetry.execute(
       [:cinder, :http, :request_task],
@@ -397,6 +405,7 @@ defmodule Cinder.HTTPPolicy do
   defp request_host(%Req.Request{url: %URI{host: host}}), do: host
   defp request_host(_request), do: nil
 
+  defp request_path(%Req.Request{private: %{cinder_redact_path: true}}), do: nil
   defp request_path(%Req.Request{url: %URI{path: path}}), do: path
   defp request_path(_request), do: nil
 

@@ -150,8 +150,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     after `Cinder.Download.GrabFailure.check/1` passed, so the link holds the old key and an
     answer to it would be recorded against the new one.
   - `{:error, :not_supported}`, with no request, when the `:indexer_adapters` map names no
-    adapter for the indexer's type (Cardigann until #1671), or its adapter has no
-    `fetch_download/3`.
+    adapter for the indexer's type, or its adapter has no `fetch_download/3`, as the Cardigann
+    adapter has none until #1672.
   - Otherwise the adapter's `fetch_download/3` answer: Newznab and Torznab fetch through
     `Cinder.Acquisition.Indexer.Newznab.Grab`, outside the spacing lease and the backoff gate.
   """
@@ -187,8 +187,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   that #1660 runs in a supervised task. It reads the indexer by id, enabled or not
   (`Cinder.Indexers.fetch_with_secrets/1`), and refuses with no request `{:error, :not_found}`,
   `{:error, :undecryptable_secrets}` or `{:error, {:not_supported, feature}}`
-  (`not_supported/2`). Otherwise its adapter's `test/3` asks the indexer whatever its backoff
-  state holds, in the interactive class, under a 90 s budget, and
+  (`not_supported/2`, or the adapter's own not-asked answer, as the Cardigann adapter gives for a
+  running copy it does not run). Otherwise its adapter's `test/3` asks the indexer whatever its
+  backoff state holds, in the interactive class, under a 90 s budget, and
   `IndexerStatus.record_test/3` stores the answer. Answers:
 
   - `{:ok, last_test}`: the outcome and time it stored;
@@ -217,6 +218,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
       case Map.fetch!(adapters, indexer.type).test(indexer, context, record) do
         {:ran, {:written, last_test}} -> {:ok, last_test}
         {:ran, refused} when refused in [:dropped, :not_written] -> {:error, refused}
+        {:not_run, {:not_asked, {:not_supported, feature}}} -> {:error, {:not_supported, feature}}
         {:not_run, _outcome} -> {:error, :deadline}
       end
     end

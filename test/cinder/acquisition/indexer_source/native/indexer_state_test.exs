@@ -276,14 +276,13 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStateTest do
     end
   end
 
-  # Cardigann rows' definition codes (#1668). Their type has no adapter until #1671, so each
-  # test names one; Torznab's module stands in, since only the map's key is read here.
+  # Cardigann rows' definition codes (#1668). Only the adapter map's key is read here.
   describe "list/1: Cardigann definition codes" do
     setup do
       ConfigCase.put_env(:indexer_adapters, %{
         newznab: Cinder.Acquisition.Indexer.Newznab,
         torznab: Cinder.Acquisition.Indexer.Torznab,
-        cardigann: Cinder.Acquisition.Indexer.Torznab
+        cardigann: Cinder.Acquisition.Indexer.Cardigann
       })
 
       DefinitionFixtures.mirror!(DefinitionFixtures.definition())

@@ -190,13 +190,12 @@ defmodule CinderWeb.SettingsIndexersTest do
       refute has_element?(lv, "#indexer-#{second.id}-detail")
     end
 
-    # #1668's definition states, built as `Cinder.HealthTest` builds them: Cardigann rows have no
-    # adapter until #1671, so Torznab's module stands in for the map's key.
+    # #1668's definition states, built as `Cinder.HealthTest` builds them.
     test "a Cardigann definition that no longer loads reads red, a held update yellow, neither with a detail",
          %{conn: conn} do
       ConfigCase.put_env(:indexer_adapters, %{
         newznab: IndexerAdapterMock,
-        cardigann: Cinder.Acquisition.Indexer.Torznab
+        cardigann: Cinder.Acquisition.Indexer.Cardigann
       })
 
       base = DefinitionFixtures.definition()

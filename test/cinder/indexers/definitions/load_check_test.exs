@@ -2,6 +2,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
   # check/2 starts the real parser worker; selectors/1 reads the loaded copy only.
   use ExUnit.Case, async: true
 
+  import Cinder.CardigannFixtures,
+    only: [bytes: 1, nyaa_like: 0, torrent9_like: 0, torrent9_like: 1, without_download: 1]
+
   alias Cinder.Indexers.Definitions.LoadCheck
   alias Cinder.Indexers.Definitions.Loader
 
@@ -197,15 +200,15 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
     end
 
     test "only the balancing-group copy among the v11 shapes stays not supported" do
-      # Each list in full: the loader's own codes, then the one the check adds. The loader still
-      # reports `regexp`, `re_replace` and `keywordsfilters`, whose features are off.
+      # Each list in full: the loader turns on `regexp`, `re_replace` and `keywordsfilters`
+      # (#1671), so only the check's own code is left.
       expected = %{
-        "rutor and 25 more" => [filter: "re_replace"],
-        "thepiratebay" => [:keywords_filters, {:filter, "re_replace"}],
-        "keepfriends" => [filter: "regexp"],
-        "mikan" => [filter: "regexp"],
-        "puntotorrent" => [filter: "re_replace"],
-        "hawke-uno" => [filter: "re_replace", regex: :dotnet_only]
+        "rutor and 25 more" => [],
+        "thepiratebay" => [],
+        "keepfriends" => [],
+        "mikan" => [],
+        "puntotorrent" => [],
+        "hawke-uno" => [regex: :dotnet_only]
       }
 
       for {name, copy} <- v11_shapes() do
@@ -235,7 +238,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
         assert {:ok, definition} = LoadCheck.check(yaml(copy))
 
         assert {pattern, definition.unsupported} ==
-                 {pattern, [filter: "regexp", regex: :invalid]}
+                 {pattern, [regex: :invalid]}
       end
     end
 
@@ -272,10 +275,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       copy = put_in(@base, ["search", "fields"], fields)
       assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
 
-      # The loader's codes for the two slice (a) filters come first.
       assert unsupported == [
-               {:filter, "regexp"},
-               {:filter, "re_replace"},
                {:selector, :comment},
                {:regex, :dotnet_only},
                {:regex, :invalid}
@@ -287,7 +287,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
     test "lists every code it adds, in its order" do
       assert LoadCheck.codes() ==
                Enum.map(
-                 ~w(comment escape structure template refused crash timeout memory
+                 ~w(comment escape structure template result_template refused crash timeout memory
                     output_too_large)a,
                  &{:selector, &1}
                ) ++ [{:regex, :dotnet_only}, {:regex, :invalid}]
@@ -323,12 +323,15 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
         "g" => %{"selector" => "td:has(b[border=1])"}
       }
 
-      copy = @base |> put_in(["search", "fields"], fields) |> put_in(["requestDelay"], 2)
+      copy =
+        @base
+        |> put_in(["search", "fields"], fields)
+        |> put_in(["certificates"], ["0000000000000000000000000000000000000000"])
 
       assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
 
       assert unsupported == [
-               :request_delay,
+               :certificates,
                {:selector, :comment},
                {:selector, :escape},
                {:selector, :structure},
@@ -374,6 +377,112 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
 
       assert {:ok, %{unsupported: [{:selector, :memory}]}} =
                LoadCheck.check(yaml(copy), max_memory_bytes: 1)
+    end
+  end
+
+  # #1671: the features Nyaa.si and Torrent9 use, on definitions written for Cinder.
+  describe "Cardigann slice (a)" do
+    test "a Nyaa-shaped copy loads" do
+      assert {:ok, %{unsupported: []}} =
+               LoadCheck.check(bytes(nyaa_like()))
+    end
+
+    test "a Torrent9-shaped copy reads not supported for its download block only" do
+      assert {:ok, %{unsupported: [:download]}} =
+               LoadCheck.check(bytes(torrent9_like()))
+    end
+
+    test "the Torrent9-shaped copy without its download block loads" do
+      copy = torrent9_like(&without_download/1)
+      assert {:ok, %{unsupported: []}} = LoadCheck.check(bytes(copy))
+    end
+
+    test "a selector template is checked as each rendering, a refused one read as refused" do
+      copy =
+        put_in(@base, ["search", "fields"], %{
+          "a" => %{"selector" => "{{ if .Keywords }}td:has(){{ else }}td{{ end }}"}
+        })
+
+      assert {:ok, %{unsupported: [{:selector, :structure}]}} = LoadCheck.check(yaml(copy))
+    end
+
+    test "a selector template that reads .Result reads its own code" do
+      copy =
+        put_in(@base, ["search", "fields"], %{
+          "a" => %{"selector" => "td"},
+          "b" => %{"selector" => "{{ if .Result.a }}td{{ else }}th{{ end }}"}
+        })
+
+      assert {:ok, %{unsupported: [{:selector, :result_template}]}} =
+               LoadCheck.check(yaml(copy))
+    end
+
+    test "a selector template that does not render reads as a template" do
+      copy =
+        put_in(@base, ["search", "fields"], %{"a" => %{"selector" => "{{ if .Keywords }}td"}})
+
+      assert {:ok, %{unsupported: [{:selector, :template}]}} = LoadCheck.check(yaml(copy))
+    end
+
+    test "a static date layout the engine does not read reads not supported" do
+      fields = %{
+        "date" => %{
+          "selector" => "td",
+          "filters" => [%{"name" => "dateparse", "args" => "dd/MM/yyyy gg"}]
+        }
+      }
+
+      assert {:ok, %{unsupported: [:dateparse_layout]}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], fields)))
+
+      timeparse = put_in(fields, ["date", "filters"], [%{"name" => "timeparse", "args" => "gg"}])
+
+      assert {:ok, %{unsupported: [:dateparse_layout]}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], timeparse)))
+
+      ok = put_in(fields, ["date", "filters"], [%{"name" => "dateparse", "args" => "dd/MM/yyyy"}])
+
+      assert {:ok, %{unsupported: []}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], ok)))
+    end
+
+    test "a regex that does not compile or holds a named group reads not supported, in a field or a keyword filter" do
+      bad = %{"name" => "re_replace", "args" => ["(unclosed", "x"]}
+      good = %{"name" => "re_replace", "args" => ["(closed)", "x"]}
+
+      field = fn filter -> %{"title" => %{"selector" => "a", "filters" => [filter]}} end
+
+      assert {:ok, %{unsupported: [{:regex, :invalid}]}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], field.(bad))))
+
+      assert {:ok, %{unsupported: []}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], field.(good))))
+
+      keywords =
+        put_in(@base, ["search", "keywordsfilters"], [%{"name" => "regexp", "args" => "["}])
+
+      assert {:ok, %{unsupported: [{:regex, :invalid}]}} = LoadCheck.check(yaml(keywords))
+
+      named = %{"name" => "regexp", "args" => "(?<year>\\d{4})"}
+
+      assert {:ok, %{unsupported: [{:regex, :invalid}]}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], field.(named))))
+    end
+
+    test "a regex or a date layout that holds {{ is checked as written, as the filters read it" do
+      fields = %{
+        "title" => %{
+          "selector" => "a",
+          "filters" => [%{"name" => "re_replace", "args" => ["{{ .Config.x }}(", "y"]}]
+        },
+        "date" => %{
+          "selector" => "td",
+          "filters" => [%{"name" => "dateparse", "args" => "{{ if .Config.x }}gg{{ end }}"}]
+        }
+      }
+
+      assert {:ok, %{unsupported: [:dateparse_layout, {:regex, :invalid}]}} =
+               LoadCheck.check(yaml(put_in(@base, ["search", "fields"], fields)))
     end
   end
 end

@@ -28,8 +28,9 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
     host. One whose host holds a template is in the set as `{:unknown, "{{ .Config.<key> }}"}`.
     A URL whose scheme comes from a filled value is not read.
 
-  #1671's request path and #1672's grab call `hosts/2` at run time; the hold rules compare a
-  candidate copy's set with the running copy's (`Cinder.Indexers.Definitions.Hold`).
+  The Cardigann adapter's request path (`Cinder.Acquisition.Indexer.Cardigann.Fetch`, #1671)
+  calls `hosts/2` at run time, as #1672's grab is to; the hold rules compare a candidate copy's
+  set with the running copy's (`Cinder.Indexers.Definitions.Hold`).
   """
 
   @type host :: String.t() | {:unknown, String.t()}

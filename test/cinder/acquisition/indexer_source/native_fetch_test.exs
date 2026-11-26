@@ -304,7 +304,7 @@ defmodule Cinder.Acquisition.IndexerSource.NativeFetchTest do
       refute_received {:grab_request, _path}
     end
 
-    # The adapter map has no Cardigann adapter until #1671, and its download block is #1672's.
+    # The Cardigann adapter has no `fetch_download/3`: its grab is #1672's.
     test "a Cardigann configured indexer reads not supported with no request" do
       cardigann =
         Repo.insert!(%Cinder.Indexers.ConfiguredIndexer{

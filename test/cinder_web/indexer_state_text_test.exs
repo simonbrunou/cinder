@@ -10,13 +10,23 @@ defmodule CinderWeb.IndexerStateTextTest do
 
   @now ~U[2026-11-26 12:00:00Z]
 
+  @cardigann_reasons [
+    :parser_failed,
+    :regex_limit,
+    :filter_output_cap,
+    :forbidden_address,
+    :secret_host,
+    :too_many_redirects,
+    :definition_error
+  ]
+
   defp at(seconds), do: DateTime.add(@now, seconds, :second)
 
   describe "cause/1" do
     test "words every failure reason the status table records, none with the fallback" do
       causes =
         Map.new(
-          Report.failure_atoms() ++
+          (Report.failure_atoms() -- @cardigann_reasons) ++
             [:limit, {:http_status, 503}, {:indexer_error, 900}, {:query_error, 201}],
           &{&1, IndexerStateText.cause(&1)}
         )
@@ -39,6 +49,11 @@ defmodule CinderWeb.IndexerStateTextTest do
 
       # The positive control: a reason outside the table reads the fallback.
       assert IndexerStateText.cause(:something_new) == "Failed"
+    end
+
+    # #1671 adds these codes and #1676 their texts: until then each reads the fallback.
+    test "the Cardigann failure reasons read the fallback until #1676 words them" do
+      for reason <- @cardigann_reasons, do: assert(IndexerStateText.cause(reason) == "Failed")
     end
 
     test "HTTP 410 and 404 name their Prowlarr cause" do

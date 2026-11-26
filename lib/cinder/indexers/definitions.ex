@@ -797,6 +797,23 @@ defmodule Cinder.Indexers.Definitions do
     end
   end
 
+  @doc """
+  The copy the configured indexer `id` runs, as a search reads it (#1671): `{:ok, %{definition:,
+  result:}}`, `definition` the loaded copy and `result` its load result under the current
+  fingerprint (`:unchecked` when none is stored yet, `:loads`, `{:not_supported, codes}` or
+  `{:fails, reason}`). `{:error, :no_pin}` for an indexer with no pin, `{:error, :fails}` for a
+  copy that no longer parses.
+  """
+  @spec running_copy(pos_integer()) ::
+          {:ok, %{definition: map(), result: term()}} | {:error, :no_pin | :fails}
+  def running_copy(id) do
+    with %Pin{} = pin <- Repo.get(Pin, id) || {:error, :no_pin},
+         copy = Repo.get!(Copy, pin.running_copy_id),
+         {:ok, definition} <- loaded(copy) do
+      {:ok, %{definition: definition, result: result_of(copy.blob_sha)}}
+    end
+  end
+
   defp mirror_copy(name) do
     from(c in Copy,
       join: e in Entry,

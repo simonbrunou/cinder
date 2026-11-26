@@ -85,9 +85,28 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Items do
 
     items
     |> Enum.flat_map(&row(&1, protocol, indexer.base_url))
-    |> Enum.uniq_by(& &1.download_url)
-    |> Enum.take(@max_rows)
+    |> kept()
   end
+
+  @doc """
+  The row rules every native adapter shares on one answer's rows (#1653; the Cardigann adapter
+  reads them too, #1671): a link already given by an earlier row is dropped, then the first
+  1,000 rows are kept.
+  """
+  @spec kept([%{download_url: String.t()}]) :: [map()]
+  def kept(rows), do: rows |> Enum.uniq_by(& &1.download_url) |> Enum.take(@max_rows)
+
+  @doc "The most rows one answer keeps: 1,000."
+  @spec max_rows() :: pos_integer()
+  def max_rows, do: @max_rows
+
+  @doc """
+  A row's title by the shared rule: `text` trimmed, when it is not blank and at most 1,024 bytes;
+  else nil.
+  """
+  @spec row_title(String.t() | nil) :: String.t() | nil
+  def row_title(text) when is_binary(text), do: text |> String.trim() |> titled()
+  def row_title(_text), do: nil
 
   defp protocol(:newznab), do: :usenet
   defp protocol(:torznab), do: :torrent
@@ -117,10 +136,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Items do
   # --- fields ---
 
   defp title(item) do
-    case text(item, "title") do
-      nil -> nil
-      text -> text |> String.trim() |> titled()
-    end
+    item |> text("title") |> row_title()
   end
 
   defp titled(""), do: nil

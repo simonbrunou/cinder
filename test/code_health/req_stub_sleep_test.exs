@@ -9,8 +9,8 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
   # a stub call. `Process.sleep(:infinity)` and `:timer.sleep(:infinity)` pass, written so and not
   # piped: that stub never answers. A stub call is one of these, written out or piped:
   # - `Req.Test.stub/2` or `Req.Test.expect/2,3`, whose argument is its last one;
-  # - `Cinder.NewznabFixtures.route/1`, qualified, or bare in a file that imports that module, whose
-  #   stub calls each `fn` of the map it gets;
+  # - `Cinder.NewznabFixtures.route/1` or `Cinder.CardigannFixtures.route/1`, qualified, or bare
+  #   in a file that imports that module, whose stub calls each `fn` of the map it gets;
   # - a call of a local wrapper, a `def` or `defp` whose body passes one of its parameters to a
   #   stub call, or names it inside that argument (`defp stub(fun), do: Req.Test.stub(S, fun)`).
   #   It matches each local call of its name and arity anywhere in the file, and its argument is
@@ -30,20 +30,22 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
   # `fn`; an answer timed by `receive ... after`; a function that passes on a parameter with a
   # default, and a call that leaves out a wrapper's default argument; a wrapper that is a
   # macro or calls another wrapper; a stub call on a quoted module atom
-  # (`:"Elixir.Req.Test".stub/2`); an import of `Cinder.NewznabFixtures` inside a `quote`, such as
+  # (`:"Elixir.Req.Test".stub/2`); an import of either fixtures module inside a `quote`, such as
   # a case template's `using`, which leaves the files that use it unread.
   #
   # A file that aliases or imports `Req` or a module under it, requires one with `as:`, or names
-  # `Cinder.NewznabFixtures` in such a form or in an import other than
-  # `import Cinder.NewznabFixtures`, fails the test "no test file renames Req.Test or the Newznab
-  # fixtures". A `test/support` function or macro other than `route/1` that installs a stub fails
-  # "each test/support function that installs a Req.Test stub is one the walk follows".
+  # either fixtures module in such a form or in an import other than its plain `import`, fails the
+  # test "no test file renames Req.Test or the fixtures". A `test/support` function or macro
+  # other than the two `route/1` that installs a stub fails "each test/support function that
+  # installs a Req.Test stub is one the walk follows".
   use ExUnit.Case, async: true
 
   @req_test [[:Req, :Test], [:"Elixir", :Req, :Test]]
   @stub_calls [:stub, :expect]
   @process [[:Process], [:"Elixir", :Process]]
-  @fixtures [[:Cinder, :NewznabFixtures], [:"Elixir", :Cinder, :NewznabFixtures]]
+  @fixtures for name <- [:NewznabFixtures, :CardigannFixtures],
+                parts <- [[:Cinder, name], [:"Elixir", :Cinder, name]],
+                do: parts
 
   test "no Req.Test stub sleeps before it answers" do
     scans =
@@ -150,6 +152,19 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
     assert scan(source) == %{stubs: 6, sleeps: [4, 5, 6]}
   end
 
+  test "the walk follows each fn in the map given to the imported Cardigann fixtures' route/1" do
+    source = ~S'''
+    defmodule M do
+      import Cinder.CardigannFixtures
+
+      def a, do: route(%{"a" => fn _conn, _query -> Process.sleep(10) && :default end})
+      def b, do: route(%{"b" => fn _conn, _query -> :default end})
+    end
+    '''
+
+    assert scan(source) == %{stubs: 2, sleeps: [4]}
+  end
+
   test "the walk follows a qualified route/1 and leaves a route/1 in a file without the import" do
     source = ~S'''
     defmodule M do
@@ -160,10 +175,11 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
       def c, do: Elixir.Cinder.NewznabFixtures.route(%{"c" => fn _c, _q -> Process.sleep(10) end})
       alias Cinder.NewznabFixtures
       def d, do: NewznabFixtures.route(%{"d" => fn _conn, _query -> Process.sleep(10) end})
+      def e, do: Cinder.CardigannFixtures.route(%{"e" => fn _c, _q -> Process.sleep(10) end})
     end
     '''
 
-    assert scan(source) == %{stubs: 2, sleeps: [5, 6]}
+    assert scan(source) == %{stubs: 3, sleeps: [5, 6, 9]}
   end
 
   test "the walk follows a route/1 map value or a stub argument held by a variable or a function" do
@@ -243,8 +259,11 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
           helper <- path |> File.read!() |> stub_helpers(),
           do: {path, helper}
 
-    assert helpers == [{"test/support/newznab_fixtures.ex", {:route, 1}}],
-           "The walk follows Cinder.NewznabFixtures.route/1 alone among test/support's " <>
+    assert helpers == [
+             {"test/support/cardigann_fixtures.ex", {:route, 1}},
+             {"test/support/newznab_fixtures.ex", {:route, 1}}
+           ],
+           "The walk follows the two fixtures' route/1 alone among test/support's " <>
              "functions that install a Req.Test stub. A caller's fn given to any other one " <>
              "can sleep unseen. Teach scan/1 the new one, as it reads route/1, or list it " <>
              "here once its stub calls no fn its caller gives:\n" <>
@@ -295,15 +314,15 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
     assert stub_helpers(other) == []
   end
 
-  test "no test file renames Req.Test or the Newznab fixtures" do
+  test "no test file renames Req.Test or the fixtures" do
     renames =
       for path <- Path.wildcard("test/**/*.{ex,exs}"),
           line <- path |> File.read!() |> renames(),
           do: "#{path}:#{line}"
 
     assert renames == [],
-           "The walk knows Req.Test and Cinder.NewznabFixtures by their full names and " <>
-             "`import Cinder.NewznabFixtures` alone, so a stub call under another name can " <>
+           "The walk knows Req.Test and the two fixtures modules by their full names and " <>
+             "their plain `import` alone, so a stub call under another name can " <>
              "sleep unseen. Write the full name, with no alias or `as:`, instead of these:\n" <>
              Enum.join(renames, "\n")
   end
@@ -327,10 +346,12 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
       alias :"Elixir.Req.Test", as: Q
       require :"Elixir.Cinder.NewznabFixtures", as: F
       alias :"Elixir.Plug.Conn", as: C
+      import Cinder.CardigannFixtures
+      alias Cinder.CardigannFixtures
     end
     """
 
-    assert renames(source) == [3, 4, 5, 6, 7, 11, 12, 15, 16]
+    assert renames(source) == [3, 4, 5, 6, 7, 11, 12, 15, 16, 19]
   end
 
   # The number of stub calls in the parsed source, direct or through a local wrapper, and the
@@ -440,7 +461,7 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
     for {name, index} <- Enum.with_index(names), name != nil, name in found, do: index
   end
 
-  # `route/1` as a wrapper of its one argument, in a file that imports `Cinder.NewznabFixtures`.
+  # `route/1` as a wrapper of its one argument, in a file that imports a fixtures module.
   defp imported_wrappers(ast) do
     {_ast, imported?} =
       Macro.prewalk(ast, false, fn
@@ -540,7 +561,7 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
     Enum.reverse(helpers)
   end
 
-  # `route/1` as a wrapper of its one argument, in a file that defines `Cinder.NewznabFixtures`,
+  # `route/1` as a wrapper of its one argument, in a file that defines a fixtures module,
   # where it is a local call.
   defp fixtures_module_wrappers(ast) do
     {_ast, own?} =
@@ -569,9 +590,9 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
 
   defp helper(_head, _blocks, _imported), do: []
 
-  # The line of each `alias`, `import` or `require ..., as:` whose module names `Req` or
-  # `NewznabFixtures`, but `import Cinder.NewznabFixtures`: under such a name, a stub call reads
-  # as a call the walk does not know.
+  # The line of each `alias`, `import` or `require ..., as:` whose module names `Req`,
+  # `NewznabFixtures` or `CardigannFixtures`, but a plain `import` of either fixtures module:
+  # under such a name, a stub call reads as a call the walk does not know.
   defp renames(source) do
     {:ok, ast} = Code.string_to_quoted(source)
 
@@ -604,7 +625,9 @@ defmodule Cinder.CodeHealth.ReqStubSleepTest do
         # Each part of an alias, or a module written as its quoted atom (`:"Elixir.Req.Test"`).
         atom, found? when is_atom(atom) ->
           parts = atom |> Atom.to_string() |> String.split(".")
-          {atom, found? or "Req" in parts or "NewznabFixtures" in parts}
+
+          {atom,
+           found? or Enum.any?(["Req", "NewznabFixtures", "CardigannFixtures"], &(&1 in parts))}
 
         node, found? ->
           {node, found?}

@@ -110,19 +110,11 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
   defp filter(name), do: %{"name" => name, "args" => "x"}
 
   describe "a definition shaped like Nyaa.si" do
-    test "loads as not supported, HTML search first" do
+    # Every feature it uses is one Cardigann slice (a) builds (#1671).
+    test "loads" do
       assert {:ok, definition} = Loader.load(@nyaa_like)
 
-      assert definition.unsupported == [
-               :html_search,
-               :keywords_filters,
-               :selector_case,
-               {:filter, "dateparse"},
-               {:filter, "re_replace"},
-               {:filter, "replace"},
-               :request_delay,
-               {:setting, "select"}
-             ]
+      assert definition.unsupported == []
 
       assert definition.id == "cindertestnyaa"
       assert definition.request_delay == 2.0
@@ -140,19 +132,39 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert {:ok, %{unsupported: []}} = Loader.load(yaml(@base))
     end
 
-    test "the features on are the filters #1677 built, and the engine runs each" do
+    test "the features on are the filters #1670 and #1677 built and what slice (a) builds" do
       features = Loader.features()
-      assert length(features) == 72
-      assert length(Enum.uniq_by(features, &elem(&1, 0))) == 72
+      assert length(features) == 75
+      assert length(Enum.uniq_by(features, &elem(&1, 0))) == 75
 
-      built =
-        ~w(querystring timeparse prepend tolower toupper base64decode base64encode urldecode
-           urlencode htmldecode htmlencode timeago reltime validfilename diacritics hexdump
-           strdump validate)
+      filters =
+        ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append
+           tolower toupper base64decode base64encode urldecode urlencode htmldecode htmlencode
+           timeago reltime validfilename diacritics hexdump strdump validate)
 
-      on = for {code, true} <- features, do: code
-      assert on == [{:row_filter, "strdump"} | Enum.map(built, &{:filter, &1})]
-      assert built -- Filters.supported() == []
+      assert for({code, true} <- features, do: code) ==
+               [
+                 :html_search,
+                 :raw_search,
+                 :keywords_filters,
+                 :selector_case,
+                 {:row_filter, "andmatch"},
+                 {:row_filter, "strdump"}
+               ] ++
+                 Enum.map(filters, &{:filter, &1}) ++
+                 [
+                   :request_delay,
+                   :follow_redirect,
+                   :category_default,
+                   {:setting, "info"},
+                   {:setting, "text"},
+                   {:setting, "password"},
+                   {:setting, "checkbox"},
+                   {:setting, "select"},
+                   {:setting, "info_flaresolverr"}
+                 ]
+
+      assert filters -- Filters.supported() == []
     end
 
     test "cinder's application list holds yaml_elixir, so the release starts it" do
@@ -160,9 +172,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     end
 
     # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck), revision 3
-    # #1677's filters and static pattern check.
-    test "fingerprint/0 declares schema version 12 and revision 3" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 3}
+    # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671).
+    test "fingerprint/0 declares schema version 12 and revision 4" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 4}
     end
 
     test "unknown values come first, then features in the list's order" do
@@ -170,7 +182,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         @base
         |> put_in(["search", "paths"], [%{"path" => "/", "response" => %{"type" => "csv"}}])
         |> put_in(["type"], "secret")
-        |> put_in(["requestDelay"], 1)
+        |> put_in(["certificates"], ["ab12"])
         |> put_in(["download"], %{})
 
       assert {:ok, %{unsupported: unsupported}} = Loader.load(yaml(definition))
@@ -179,13 +191,13 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                {:unknown_value, :privacy_type},
                {:unknown_value, :response_type},
                :download,
-               :request_delay
+               :certificates
              ]
     end
 
     test "a feature used twice is listed once" do
-      fields = %{"title" => field(%{"filters" => [filter("trim"), filter("trim")]})}
-      assert unsupported(["search", "fields"], fields) == [{:filter, "trim"}]
+      fields = %{"title" => field(%{"filters" => [filter("fuzzytime"), filter("fuzzytime")]})}
+      assert unsupported(["search", "fields"], fields) == [{:filter, "fuzzytime"}]
     end
   end
 
@@ -619,8 +631,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
          [{:unknown_value, :filter}]},
         {["search", "fields"], %{"title" => field(%{"filters" => [%{"args" => "x"}]})},
          [{:unknown_value, :filter}]},
-        {["search", "keywordsfilters"], [filter("rot13")],
-         [{:unknown_value, :filter}, :keywords_filters]},
+        {["search", "keywordsfilters"], [filter("rot13")], [{:unknown_value, :filter}]},
         {["search", "paths"], [%{"path" => "/", "response" => json}], [:json_search]}
       ]
 
@@ -652,7 +663,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                  %{name: "password", label: "Password", type: "password", default: nil}
                ] = definition.settings
 
-        assert definition.unsupported == [{:setting, "text"}, {:setting, "password"}]
+        assert definition.unsupported == []
       end
     end
 
@@ -685,7 +696,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                %{path: "/html", response: nil, inheritinputs: true, method: nil, inputs: []}
              ] = definition.search.paths
 
-      assert definition.unsupported == [:html_search, :json_search]
+      assert definition.unsupported == [:json_search, :search_path]
     end
 
     test "search.path alone is the one search path" do
@@ -694,7 +705,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert [%{path: "/html", inheritinputs: true, queryseparator: "&", categories: []}] =
                definition.search.paths
 
-      assert definition.unsupported == [:html_search]
+      assert definition.unsupported == [:search_path]
     end
   end
 
@@ -875,7 +886,14 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       end
     end
 
-    test "each settings type adds its own code" do
+    # Cardigann slice (a) builds these (#1671), so they read as supported.
+    @built_settings ~w(info text password checkbox select info_flaresolverr)
+    @built_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
+                      append tolower toupper base64decode base64encode urldecode urlencode
+                      htmldecode htmlencode timeago reltime validfilename diacritics hexdump
+                      strdump validate)
+
+    test "each settings type adds its own code, or none once built" do
       for type <-
             ~w(info text password checkbox select info_category_8000 info_cookie info_flaresolverr info_useragent) do
         setting = %{
@@ -887,15 +905,21 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
           "options" => %{"x" => "X"}
         }
 
-        assert {type, unsupported(["settings"], [setting])} == {type, [{:setting, type}]}
+        expected = if type in @built_settings, do: [], else: [{:setting, type}]
+        assert {type, unsupported(["settings"], [setting])} == {type, expected}
       end
     end
 
-    test "every field filter of v11 and v12 the engine does not run adds its own code" do
-      for name <-
-            ~w(dateparse regexp re_replace split replace trim append fuzzytime jsonjoinarray) do
+    test "every field filter of v11 and v12 adds its own code, or none once built" do
+      names =
+        ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append tolower toupper base64decode
+           base64encode urldecode urlencode htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
+           jsonjoinarray hexdump strdump validate)
+
+      for name <- names do
         fields = %{"title" => field(%{"filters" => [filter(name)]})}
-        assert {name, unsupported(["search", "fields"], fields)} == {name, [{:filter, name}]}
+        expected = if name in @built_filters, do: [], else: [{:filter, name}]
+        assert {name, unsupported(["search", "fields"], fields)} == {name, expected}
       end
     end
 
@@ -911,8 +935,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       fields = %{"title" => field(%{"filters" => filters})}
       assert unsupported(["search", "fields"], fields) == []
 
-      assert unsupported(["search", "keywordsfilters"], Enum.take(filters, 5)) ==
-               [:keywords_filters]
+      assert unsupported(["search", "keywordsfilters"], Enum.take(filters, 5)) == []
 
       assert unsupported(["search", "rows", "filters"], [filter("strdump")]) == []
 
@@ -942,8 +965,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     [
       # root
       {["replaces"], ["old"], []},
-      {["requestDelay"], 2, [:request_delay]},
-      {["followredirect"], true, [:follow_redirect]},
+      {["requestDelay"], 2, []},
+      {["followredirect"], true, []},
       {["followredirect"], false, []},
       {["testlinktorrent"], false, []},
       {["legacylinks"], ["https://old.invalid/"], []},
@@ -956,12 +979,11 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["type"], "private", []},
       {["type"], "semi-private", []},
       # caps
-      {["caps", "allowrawsearch"], true, [:raw_search]},
+      {["caps", "allowrawsearch"], true, []},
       {["caps", "allowtvsearchimdb"], true, [:tv_search_imdb]},
       {["caps", "categories"], %{"1" => "Movies", "2" => "TV/Anime"}, []},
       {["caps", "categorymappings"],
-       [%{"id" => "1", "cat" => "Movies", "desc" => "d", "default" => true}],
-       [:category_default]},
+       [%{"id" => "1", "cat" => "Movies", "desc" => "d", "default" => true}], []},
       {["caps", "modes"],
        %{
          "search" => ["q"],
@@ -971,8 +993,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
          "book-search" => ~w(q title author publisher year genre)
        }, []},
       # search
-      {["search", "path"], "/", [:html_search]},
-      {["search", "paths"], [%{"path" => "/"}], [:html_search]},
+      {["search", "path"], "/", [:search_path]},
+      {["search", "paths"], [%{"path" => "/"}], []},
       {["search", "paths"], [@path_json], [:json_search]},
       {["search", "paths"],
        [%{"path" => "/", "response" => %{"type" => "xml", "noResultsMessage" => "none"}}],
@@ -987,7 +1009,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "paths"], [Map.put(@path_json, "inheritinputs", false)],
        [:json_search, :no_inherit_inputs]},
       {["search", "paths"], [Map.put(@path_json, "followredirect", true)],
-       [:json_search, :follow_redirect]},
+       [:json_search, :path_follow_redirect]},
       {["search", "paths"], [Map.put(@path_json, "inputs", %{"$raw" => "x"})],
        [:json_search, :raw_input]},
       {["search", "paths"], [Map.put(@path_json, "inputs", %{"q" => "x"})], [:json_search]},
@@ -995,9 +1017,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "inputs"], %{"q" => "x"}, []},
       {["search", "headers"], %{"Accept" => ["text/html"]}, [:search_headers]},
       {["search", "allowEmptyInputs"], true, [:allow_empty_inputs]},
-      {["search", "keywordsfilters"], [filter("trim")], [:keywords_filters, {:filter, "trim"}]},
-      {["search", "preprocessingfilters"], [filter("trim")],
-       [:preprocessing_filters, {:filter, "trim"}]},
+      {["search", "keywordsfilters"], [filter("trim")], []},
+      {["search", "keywordsfilters"], [filter("fuzzytime")], [{:filter, "fuzzytime"}]},
+      {["search", "preprocessingfilters"], [filter("trim")], [:preprocessing_filters]},
       {["search", "error"],
        [%{"selector" => "div.e", "path" => "/", "message" => %{"selector" => "p"}}],
        [:search_error]},
@@ -1006,7 +1028,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "rows", "after"], 0, []},
       {["search", "rows", "count"], %{"selector" => "span"}, [:rows_count]},
       {["search", "rows", "dateheaders"], %{"selector" => "td"}, [:rows_dateheaders]},
-      {["search", "rows", "filters"], [filter("andmatch")], [{:row_filter, "andmatch"}]},
+      {["search", "rows", "filters"], [filter("andmatch")], []},
       {["search", "rows", "filters"], [filter("strdump")], []},
       {["search", "rows", "multiple"], true, []},
       {["search", "rows", "missingAttributeEqualsNoResults"], true, []},
@@ -1014,7 +1036,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "rows", "optional"], true, []},
       {["search", "rows", "text"], "x", []},
       # fields
-      {["search", "fields"], %{"title" => field(%{"case" => %{"a" => "1"}})}, [:selector_case]},
+      {["search", "fields"], %{"title" => field(%{"case" => %{"a" => "1"}})}, []},
+      {["search", "fields"], %{"title|noappend" => field(%{})}, [:field_modifier]},
       {["search", "fields"], %{"title" => field(%{"remove" => "span"})}, [:selector_remove]},
       {["search", "fields"],
        %{
@@ -1028,7 +1051,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
        [:download, :download_before]},
       {["download"],
        %{"before" => %{"pathselector" => %{"selector" => "a", "filters" => [filter("trim")]}}},
-       [{:filter, "trim"}, :download, :download_before]},
+       [:download, :download_before]},
       {["download"],
        %{"infohash" => %{"hash" => %{"selector" => "h"}, "title" => %{"selector" => "t"}}},
        [:download, :download_infohash]},
@@ -1059,8 +1082,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["login"],
        %{
          "method" => "form",
-         "selectorinputs" => %{"t" => %{"selector" => "i", "filters" => [filter("trim")]}}
-       }, [{:filter, "trim"}, {:login, "form"}]},
+         "selectorinputs" => %{"t" => %{"selector" => "i", "filters" => [filter("fuzzytime")]}}
+       }, [{:filter, "fuzzytime"}, {:login, "form"}]},
       {["login"],
        %{
          "method" => "form",
@@ -1070,9 +1093,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
        %{
          "method" => "form",
          "error" => [
-           %{"selector" => "e", "message" => %{"selector" => "m", "case" => %{"a" => "b"}}}
+           %{"selector" => "e", "message" => %{"selector" => "m", "remove" => "b"}}
          ]
-       }, [:selector_case, {:login, "form"}]}
+       }, [:selector_remove, {:login, "form"}]}
     ]
   end
 

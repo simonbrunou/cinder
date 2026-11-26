@@ -165,6 +165,20 @@ config :cinder, Cinder.Acquisition.IndexerSource.Native.Lease, spacing_ms: 10
 config :cinder, Cinder.Acquisition.Indexer.Newznab,
   req_options: [plug: {Req.Test, Cinder.NewznabStub}]
 
+# The Cardigann adapter's requests go to a Req.Test stub, and its resolver answers by name: a
+# `.loopback.test` host resolves to 127.0.0.1, a `.lan.test` host to 192.168.1.10, an `.nx.test`
+# host to nothing, and every other host to a public address.
+config :cinder, Cinder.Acquisition.Indexer.Cardigann,
+  req_options: [plug: {Req.Test, Cinder.CardigannStub}],
+  resolver: fn host ->
+    cond do
+      String.ends_with?(host, ".loopback.test") -> {:ok, [{127, 0, 0, 1}]}
+      String.ends_with?(host, ".lan.test") -> {:ok, [{192, 168, 1, 10}]}
+      String.ends_with?(host, ".nx.test") -> {:error, :nxdomain}
+      true -> {:ok, [{93, 184, 216, 34}]}
+    end
+  end
+
 # The Prowlarr/Indexers definitions adapter's own test routes Req through a Req.Test stub.
 config :cinder, Cinder.Indexers.Definitions.Source.GitHub,
   req_options: [plug: {Req.Test, Cinder.DefinitionsSourceStub}, retry: false]

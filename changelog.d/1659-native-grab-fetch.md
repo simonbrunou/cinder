@@ -7,8 +7,8 @@
   request when that id is not an integer or the `credentials_version` is missing, the row is gone,
   its secrets no longer decrypt, or its credentials version is newer than the grab's: a key rotated
   after `GrabFailure.check/1` passed would otherwise be rejected for the old key's answer. A type
-  that the `:indexer_adapters` map names no adapter for, such as Cardigann, or whose adapter has no
-  `fetch_download/3`, answers `{:error, :not_supported}` with no request.
+  that the `:indexer_adapters` map names no adapter for, or whose adapter has no
+  `fetch_download/3`, such as Cardigann, answers `{:error, :not_supported}` with no request.
   `Indexer.Newznab.Grab.fetch_download/3`, which the Newznab and Torznab adapters call, fetches the
   link with the configured indexer's base URL origin, read from the row, as the trusted origin. The
   origin stored with the link plays no part, so a link off the row's origin is DNS-pinned and

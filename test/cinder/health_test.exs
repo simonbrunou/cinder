@@ -857,14 +857,13 @@ defmodule Cinder.HealthTest do
                [:error, :error, :warning, :warning, :warning]
     end
 
-    # Cardigann rows have no adapter until #1671; Torznab's module stands in for the map's key.
     test "a definition that no longer loads is red; a held update stays yellow" do
       put_env(:indexer_source, Native)
 
       put_env(:indexer_adapters, %{
         newznab: Cinder.Acquisition.Indexer.Newznab,
         torznab: Cinder.Acquisition.Indexer.Torznab,
-        cardigann: Cinder.Acquisition.Indexer.Torznab
+        cardigann: Cinder.Acquisition.Indexer.Cardigann
       })
 
       base = DefinitionFixtures.definition()

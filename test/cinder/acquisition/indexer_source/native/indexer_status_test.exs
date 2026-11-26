@@ -392,13 +392,55 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatusTest do
     test "stores every failure reason the report can carry as the last failure" do
       tagged = [{:http_status, 500}, {:indexer_error, 900}]
 
-      for reason <- Report.failure_atoms() ++ tagged do
+      # The partial kinds are no failure: the next test.
+      for reason <- (Report.failure_atoms() -- [:regex_limit, :filter_output_cap]) ++ tagged do
         indexer = indexer!()
         assert {reason, IndexerStatus.record(indexer, reason, @now)} == {reason, :written}
         {tag, code} = if is_tuple(reason), do: reason, else: {reason, nil}
         stored = IndexerStatus.read([indexer])[indexer.id]
         assert {reason, stored.last_failure, stored.last_failure_code} == {reason, tag, code}
       end
+    end
+
+    test "a Cardigann partial kind is the last partial, with no backoff and no failure (#1671)" do
+      for kind <- [:regex_limit, :filter_output_cap] do
+        indexer = indexer!()
+        :written = IndexerStatus.record(indexer, :timeout, @now)
+        before = IndexerStatus.read([indexer])[indexer.id]
+
+        assert IndexerStatus.record(indexer, kind, at(5)) == :written
+        stored = IndexerStatus.read([indexer])[indexer.id]
+
+        assert {stored.last_partial, stored.last_partial_at} == {kind, at(5)}
+        # The failure's backoff, level and count stay as they were.
+        assert Map.take(stored, [
+                 :backoff,
+                 :backoff_until,
+                 :level,
+                 :failures_in_row,
+                 :last_failure
+               ]) ==
+                 Map.take(before, [
+                   :backoff,
+                   :backoff_until,
+                   :level,
+                   :failures_in_row,
+                   :last_failure
+                 ])
+      end
+    end
+
+    test "a Cardigann Test with no row is a success for the status, stored as :no_rows (#1671)" do
+      indexer = indexer!()
+      :written = IndexerStatus.record(indexer, :timeout, @now)
+
+      assert {:written, %{outcome: :no_rows}} =
+               IndexerStatus.record_test(indexer, :no_rows, at(5))
+
+      stored = IndexerStatus.read([indexer])[indexer.id]
+
+      assert {stored.backoff, stored.failures_in_row, stored.last_success_at} == {:none, 0, at(5)}
+      assert IndexerStatus.last_test(stored) == %{outcome: :no_rows, at: at(5)}
     end
 
     test "rejected credentials, then a passing Test, clear every rejected field in the row" do

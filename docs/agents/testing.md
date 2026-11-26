@@ -427,9 +427,11 @@
   behaviour at its Mox mock, so a test that needs service behaviour sets an expectation on the
   mock. The behaviour list is in [architecture.md](architecture.md). `Cinder.Acquisition.Indexer`
   is the exception: the test env keeps the `:indexer_adapters` map of `config/config.exs`, the
-  real Newznab and Torznab adapters, and sends their requests to the `Cinder.NewznabStub`
-  `Req.Test` plug, which `Cinder.NewznabFixtures.route/1` stubs. A test that needs another map
-  sets it for its run with `Cinder.ConfigCase.put_env/2`.
+  real Newznab, Torznab and Cardigann adapters. Newznab and Torznab requests go to the
+  `Cinder.NewznabStub` `Req.Test` plug, which `Cinder.NewznabFixtures.route/1` stubs. Cardigann
+  requests go to `Cinder.CardigannStub`, which `Cinder.CardigannFixtures.route/1` stubs, through
+  the resolver `config/test.exs` sets, which answers by the host name's ending. A test that needs
+  another map sets it for its run with `Cinder.ConfigCase.put_env/2`.
 - To show the request an adapter sends outside the suite, for a PR's test path, run a script with
   `MIX_ENV=test mix run --no-start` against a local listener that logs each request line, such as
   Python's `http.server`. `--no-start` starts neither Cinder nor its dependencies, so the script

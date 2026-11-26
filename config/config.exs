@@ -52,11 +52,12 @@ config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer_source: Cinder.Acquisition.IndexerSource.Prowlarr
 # The `Cinder.Acquisition.Indexer` adapter of each configured indexer type. A type left out is not
 # asked by the built-in source (`Cinder.Acquisition.IndexerSource.Native`). The test env keeps this
-# map; its Newznab and Torznab requests go to a `Req.Test` stub (`config/test.exs`).
+# map; its Newznab, Torznab and Cardigann requests go to `Req.Test` stubs (`config/test.exs`).
 config :cinder,
   indexer_adapters: %{
     newznab: Cinder.Acquisition.Indexer.Newznab,
-    torznab: Cinder.Acquisition.Indexer.Torznab
+    torznab: Cinder.Acquisition.Indexer.Torznab,
+    cardigann: Cinder.Acquisition.Indexer.Cardigann
   }
 
 config :cinder, indexer_definitions_source: Cinder.Indexers.Definitions.Source.GitHub

@@ -25,11 +25,13 @@
   backoff after HTTP 410 reads "Disabled in Prowlarr", after 404 "Not found in Prowlarr". The
   stored-credentials row now also counts configured indexers whose secrets do not decrypt,
   disabled ones included. `IndexerState.passes_gate?/1` is true while some enabled indexer is
-  usable or in a limit backoff that has not ended; nothing calls it yet. `Native.test_indexer/1`,
-  which nothing calls yet either, asks one Newznab or Torznab indexer whatever its backoff
-  state, disabled ones included, under a 90 s budget: it refetches its caps, then sends one
-  search with no query terms, with its API key when it has one, in the type's default category
-  (Movies for Newznab, TV for Torznab). Each request gets the one retry a search request gets.
+  usable or in a limit backoff that has not ended. `Native.test_indexer/1` asks one indexer
+  whatever its backoff state, disabled ones included, under a 90 s budget. For a Newznab or
+  Torznab indexer it refetches the caps, then sends one search with no query terms, with its API
+  key when it has one, in the type's default category (Movies for Newznab, TV for Torznab). For
+  a Cardigann indexer (#1671) it sends the first request of the definition's keywordless search,
+  under the mappings the definition marks `default`. Each request gets the one retry a search
+  request gets.
   It records the answer in the backoff state as a search answer would, except that a pass also
   ends rejected credentials and a request the budget cut counts as a timeout, and stores the
   last Test's outcome and time in new `native_indexer_status` columns. A request still waiting

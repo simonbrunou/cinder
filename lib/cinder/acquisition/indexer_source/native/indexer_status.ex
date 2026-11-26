@@ -34,6 +34,13 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     reject them with no code. No backoff starts or ends; the level and the failure count stay;
     it is the last failure.
   - `:crashed`, a search process that died or raised (Native records it): a failure.
+  - Cardigann's failures (#1671), `:parser_failed`, `:forbidden_address`, `:secret_host`,
+    `:too_many_redirects` and `:definition_error`: a failure.
+  - `:regex_limit` and `:filter_output_cap`, a Cardigann query a limit failed (#1671): the
+    partial kind and `now` become the last partial; no backoff starts or ends, and the level and
+    the failure count stay.
+  - `:no_rows`, a Cardigann Test whose page gave no row (#1671): a success, as the page answered;
+    the last Test stores `:no_rows`.
   - `{:query_error, code}` and `:deadline`: no change.
 
   A limit replaces any backoff that runs. A failure replaces a failure backoff. During a limit
@@ -79,8 +86,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   # Every failure reason the report can carry, so each one stores as `last_failure`.
   @failure_tags Report.failure_atoms() ++ [:http_status, :indexer_error, :limit]
 
-  # The last Test's outcome: a pass, a query error, or a failure reason the report can carry.
-  @test_tags [:success, :query_error | @failure_tags]
+  # The last Test's outcome: a pass, a query error, a Cardigann page with no row, or a failure
+  # reason the report can carry.
+  @test_tags [:success, :query_error, :no_rows | @failure_tags]
+  @partial_kinds [:regex_limit, :filter_output_cap]
   @test_fields [:last_test, :last_test_code, :last_test_at]
 
   @fields [
@@ -95,7 +104,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     :credentials_rejected,
     :credentials_rejected_by,
     :credentials_rejected_code,
-    :last_success_at
+    :last_success_at,
+    :last_partial,
+    :last_partial_at
   ]
 
   @primary_key {:configured_indexer_id, :id, autogenerate: false}
@@ -112,6 +123,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     field :credentials_rejected_by, Ecto.Enum, values: [:code, :http_status]
     field :credentials_rejected_code, :integer
     field :last_success_at, :utc_datetime
+    field :last_partial, Ecto.Enum, values: @partial_kinds
+    field :last_partial_at, :utc_datetime
     field :last_test, Ecto.Enum, values: @test_tags
     field :last_test_code, :integer
     field :last_test_at, :utc_datetime
@@ -188,6 +201,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
 
   defp step(status, {:query_error, _code}, _now), do: status
   defp step(status, :deadline, _now), do: status
+
+  defp step(status, kind, now) when kind in @partial_kinds,
+    do: struct!(status, last_partial: kind, last_partial_at: now)
+
+  defp step(status, :no_rows, now), do: step(status, :success, now)
 
   defp step(status, :success, now) do
     # A success ends a failure backoff, and clears a limit backoff only once it has ended.

@@ -10,8 +10,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.Lease do
     Prowlarr or Jackett host do not wait for each other.
   - The spacing is 2 s, from the end of one request to the start of the next, unless the
     `spacing_ms` key of `config :cinder, #{inspect(__MODULE__)}` sets another. A per-indexer delay
-    (`run/4`'s `:delay_ms`) longer than the spacing wins for that indexer (#1671 is to pass a
-    Cardigann definition's `requestDelay`).
+    (`run/4`'s `:delay_ms`) longer than the spacing wins for that indexer: the Cardigann adapter
+    passes its definition's `requestDelay` (#1671). Each used slot emits
+    `[:cinder, :native, :lease, :spaced]` with the gap it applied as `spacing_ms` and the
+    indexer as `key`.
   - An `:interactive` request (a manual search or a Test) is granted before every `:background`
     one waiting for the same indexer, and requests of one class are granted in the order they
     came. A request already running is never cut.
@@ -243,11 +245,14 @@ defmodule Cinder.Acquisition.IndexerSource.Native.Lease do
   end
 
   # A used slot frees the next start the spacing, or the indexer's longer delay, from now. An
-  # unused one leaves the next start as it was.
+  # unused one leaves the next start as it was. `[:cinder, :native, :lease, :spaced]` carries the
+  # gap a used slot applied, so a test reads the spacing with no sleep.
   defp free(state, key, :used, delay_ms) do
-    spacing_ms = Keyword.get(state.config.(), :spacing_ms, @spacing_ms)
-    free_at = state.clock.() + max(spacing_ms, delay_ms)
-    update_entry(state, key, &%{&1 | holder: nil, free_at: free_at})
+    spacing_ms = max(Keyword.get(state.config.(), :spacing_ms, @spacing_ms), delay_ms)
+
+    :telemetry.execute([:cinder, :native, :lease, :spaced], %{spacing_ms: spacing_ms}, %{key: key})
+
+    update_entry(state, key, &%{&1 | holder: nil, free_at: state.clock.() + spacing_ms})
   end
 
   defp free(state, key, :unused, _delay_ms), do: update_entry(state, key, &%{&1 | holder: nil})

@@ -6,5 +6,5 @@
   stays as those characters where the chain returned a `not_supported` error. A `$` written in
   the replacement itself is still .NET syntax. A `$` written right before an inserted value still
   joins with it: before an inserted `0` it gives the match, and before an inserted `$0` it now
-  gives `$` and the match where it gave `$0` (#1786). No code outside
-  `Cinder.Acquisition.Indexer.Cardigann` calls `Filters` yet.
+  gives `$` and the match where it gave `$0` (#1786). Only a Cardigann indexer's search
+  or Test and `mix cinder.definitions.canary` run these filters.

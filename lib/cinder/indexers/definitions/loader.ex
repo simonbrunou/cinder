@@ -76,30 +76,38 @@ defmodule Cinder.Indexers.Definitions.Loader do
   The feature list `features/0` holds every code the engine needs code for, each with an on or
   off flag, and `definition.unsupported` lists the codes the copy uses that are off, in that
   order, after the fixed-value slots that hold a value outside the schema
-  (`{:unknown_value, slot}`, in `@unknown_slots` order). The flags on are the field filters
-  #1677 built, which `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0` lists, and the
-  row filter `strdump`, a no-op. Every other flag is off, so no copy with a search path loads.
-  Switching a feature on is the job of the slice that builds it (#1671 onward), and each such
-  slice, like any change to what `load/1` answers, raises the revision in `fingerprint/0`, under
-  which #1667 stores results.
+  (`{:unknown_value, slot}`, in `@unknown_slots` order). Switching a feature on is the job of the
+  slice that builds it, and each such slice, like any change to what `load/1` answers, raises
+  the revision in `fingerprint/0`, under which #1667 stores results. The flags on are the field
+  filters `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0` names, which #1670 and #1677
+  built, the row filter `strdump`, a no-op, and what Cardigann slice (a) (#1671) needs for
+  Nyaa.si and Torrent9: an HTML search (`html_search`), `caps.allowrawsearch` (`raw_search`;
+  Cinder never sends a raw query, and a `$raw` input stays `raw_input`), `keywordsfilters`,
+  `case`, the `andmatch` row filter, `requestDelay`, the definition's own `followredirect`
+  (`follow_redirect`; one on a search path is `path_follow_redirect`; a `search.path` is
+  `search_path`, #1679's), a `categorymappings` entry marked `default` (`category_default`), and
+  settings of type `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`. A
+  field whose name holds `|`, a modifier Prowlarr reads after the name, is `field_modifier`.
+  Every other flag is off.
   """
 
   @max_bytes 524_288
   @schema_version 12
   # 2: `Cinder.Indexers.Definitions.LoadCheck` adds the selector codes (#1665).
   # 3: the filters of #1677 load, and `LoadCheck` adds the static pattern codes.
-  @revision 3
+  # 4: Cardigann slice (a) switches on what Nyaa.si and Torrent9 use, and `LoadCheck` adds the
+  #    static layout code (#1671).
+  @revision 4
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
                     htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
                     jsonjoinarray hexdump strdump validate)
   @row_filters ~w(andmatch strdump)
-  # The filters #1677 built. #1671 switches on those of #1670.
-  @built_filters ~w(querystring timeparse prepend tolower toupper base64decode base64encode
-                    urldecode urlencode htmldecode htmlencode timeago reltime validfilename
-                    diacritics hexdump strdump validate)
-  @built_row_filters ~w(strdump)
+  # The filters #1670 and #1677 built, and #1671's row filter and setting types.
+  @built_filters Cinder.Acquisition.Indexer.Cardigann.Filters.supported()
+  @built_row_filters ~w(andmatch strdump)
+  @built_setting_types ~w(info text password checkbox select info_flaresolverr)
   @login_methods ~w(form post cookie get oneurl)
   @setting_types ~w(info text password checkbox select info_category_8000 info_cookie
                     info_flaresolverr info_useragent)
@@ -202,25 +210,27 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # Every code the engine needs code for, in the order `unsupported` lists them, each with its
   # flag: true once a slice builds it.
   @features [
-              html_search: false,
+              html_search: true,
               json_search: false,
               xml_search: false,
               search_post: false,
+              search_path: false,
               search_path_categories: false,
               query_separator: false,
               no_inherit_inputs: false,
               search_headers: false,
               raw_input: false,
-              raw_search: false,
+              raw_search: true,
               allow_empty_inputs: false,
-              keywords_filters: false,
+              keywords_filters: true,
               preprocessing_filters: false,
               search_error: false,
               rows_after: false,
               rows_count: false,
               rows_dateheaders: false,
-              selector_case: false,
-              selector_remove: false
+              selector_case: true,
+              selector_remove: false,
+              field_modifier: false
             ] ++
               Enum.map(@row_filters, &{{:row_filter, &1}, &1 in @built_row_filters}) ++
               Enum.map(@field_filters, &{{:filter, &1}, &1 in @built_filters}) ++
@@ -228,16 +238,17 @@ defmodule Cinder.Indexers.Definitions.Loader do
                 download: false,
                 download_before: false,
                 download_infohash: false,
-                request_delay: false,
-                follow_redirect: false,
+                request_delay: true,
+                follow_redirect: true,
+                path_follow_redirect: false,
                 encoding: false,
                 certificates: false,
-                category_default: false,
+                category_default: true,
                 tv_search_imdb: false
               ] ++
               Enum.map(@login_methods, &{{:login, &1}, false}) ++
               [login_captcha: false] ++
-              Enum.map(@setting_types, &{{:setting, &1}, false})
+              Enum.map(@setting_types, &{{:setting, &1}, &1 in @built_setting_types})
 
   # Each record of the schema: its keys as the file writes them, the atom the parsed definition
   # uses, and the slot's kind. `{:bool, default}` and `{:int, default}` carry the model's default.
@@ -781,12 +792,16 @@ defmodule Cinder.Indexers.Definitions.Loader do
 
   defp search_uses(search) do
     [
+      if(search.path, do: :search_path),
       if(search.allow_empty_inputs, do: :allow_empty_inputs),
       if(search.headers != [], do: :search_headers),
       if(search.keywordsfilters != [], do: :keywords_filters),
       if(search.preprocessingfilters != [], do: :preprocessing_filters),
       if(search.error != [], do: :search_error),
-      if(raw_input?(search.inputs), do: :raw_input)
+      if(raw_input?(search.inputs), do: :raw_input),
+      if(Enum.any?(search.fields, fn {name, _field} -> String.contains?(name, "|") end),
+        do: :field_modifier
+      )
     ]
     |> Enum.reject(&is_nil/1)
     |> Kernel.++(Enum.flat_map(search.paths, &path_uses/1))
@@ -798,7 +813,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
       response_use(path.response),
       unless(path.method in [nil, "get"], do: :search_post),
       if(path.categories != [], do: :search_path_categories),
-      if(path.followredirect, do: :follow_redirect),
+      if(path.followredirect, do: :path_follow_redirect),
       unless(path.inheritinputs, do: :no_inherit_inputs),
       unless(path.queryseparator == "&", do: :query_separator),
       if(raw_input?(path.inputs), do: :raw_input)
