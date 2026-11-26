@@ -17,7 +17,11 @@
 # It stops at the first check that fails:
 #   1. the PR is open against main; its head SHA comes from the API, never from a local branch;
 #      a squash's PR title does not already end in another number, such as its issue's `(#n)`,
-#      since the squash appends the PR's own;
+#      since the squash appends the PR's own; after `git fetch origin`, this checkout's
+#      scripts/merge-pr and scripts/merge-fences equal origin/main's. It stops on any difference:
+#      an older copy, from a branch cut before a check reached main, leaves that check out (on
+#      #1746, #1743's migration check), and a copy the PR or a local edit changed is not main's
+#      yet. Checks 3 to 5 compare them again with the origin/main SHA they read;
 #   2. CI is green on that SHA: every job of the head's .forgejo/workflows/ci.yml reports success
 #      as `<workflow> / <job> (pull_request)`, and the combined status is success. The container
 #      job may report skipped instead (#1486), when the head's ci.yml has the image-inputs job and
@@ -140,6 +144,18 @@ fetch_head() {
 }
 fetch_head
 
+# This checkout runs the copy of the merge scripts that the commit $1 holds (origin/main here,
+# and the origin/main SHA each round of checks 3 to 5 reads).
+own_scripts=(scripts/merge-pr scripts/merge-fences)
+check_own_scripts() {
+  local script
+  for script in "${own_scripts[@]}"; do
+    git diff --quiet "$1" -- "$script" ||
+      fail "$script here differs from origin/main's copy ($(git rev-parse --short "$1")): an older copy leaves out the checks main added since, and any other copy is not main's yet. Commit or copy aside any local edit to them first, since these commands overwrite it. Take main's copies with: git checkout origin/main -- ${own_scripts[*]}, run this again, then put the branch's back with: git checkout HEAD -- ${own_scripts[*]}"
+  done
+}
+check_own_scripts origin/main
+
 # 2. CI on that head. The status contexts come from the head's own ci.yml: the workflow name and
 # each job id (a job given a `name:` would report under that name, show as missing, and stop the
 # merge).
@@ -224,6 +240,7 @@ migration_fix() {
 check_against_main() {
   local code=0
   main_sha=$(git rev-parse --verify 'origin/main^{commit}') || fail "no origin/main after the fetch"
+  check_own_scripts "$main_sha"
   tree=$(git merge-tree --write-tree "$main_sha" "$sha" | sed -n 1p) || code=$?
   case $code in
     0) ;;

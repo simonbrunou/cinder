@@ -79,11 +79,13 @@ advisory").
 The pushed SHA is the PR's head on Forgejo, which `git ls-remote origin refs/pull/<n>/head`
 prints. It is the API's `head.sha` that `scripts/merge-pr` reads. A local checkout can hold
 commits that were never pushed, or sit on `main` when you merge another thread's PR. Merge with
-`scripts/merge-pr <n>`. It checks the last two conditions on the pushed SHA, the `CHANGELOG.md`
-rule below, and the `code_health_test` line cap, the migration versions and names, and the fences
-below on the merged tree, then merges pinned to that SHA. It cannot check the review. Its header
-lists each check and flag, and its squash stops (a title ending in another `(#N)`, several
-non-merge commits) print the fix.
+`scripts/merge-pr <n>`, run from a checkout whose `scripts/merge-pr` and `scripts/merge-fences`
+are `origin/main`'s: a branch's older copy leaves out the checks `main` added since. It stops on
+a differing copy and prints the commands that take `main`'s. It checks the last two conditions
+on the pushed SHA, the `CHANGELOG.md` rule below, and the `code_health_test` line cap, the
+migration versions and names, and the fences below on the merged tree, then merges pinned to
+that SHA. It cannot check the review. Its header lists each check and flag, and its squash stops
+(a title ending in another `(#N)`, several non-merge commits) print the fix.
 
 A branch behind `main` with no conflict merges as it is, with no sync and no CI re-run. The
 accepted risk is that two PRs that pass apart can break `main` together. After every merge, the

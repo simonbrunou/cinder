@@ -183,6 +183,28 @@ defmodule Cinder.MergePrScriptTest do
     assert posts(ctx) == 0
   end
 
+  # A branch cut before a check reached main carries an older copy of the scripts: on #1746 the
+  # branch's merge-pr predated #1743's migration check, which that run would have left out.
+  for script <- ["scripts/merge-pr", "scripts/merge-fences"] do
+    @stale script
+
+    test "stops before reading CI when this checkout's #{script} is not origin/main's", ctx do
+      body = File.read!(Path.join(ctx.work, @stale)) <> "# a check main added since\n"
+      main_adds!(ctx, %{@stale => body})
+      git!(ctx.work, ["checkout", "-q", "pr"])
+      File.write!(Path.join(ctx.stub, "posts"), "200\n")
+
+      {out, code} = run(ctx, ["7"])
+
+      assert code == 1, out
+      assert out =~ "FAIL: #{@stale} here differs from origin/main's copy"
+      assert out =~ "git checkout origin/main -- scripts/merge-pr scripts/merge-fences"
+      assert lines(ctx, "fences.log") == []
+      assert posts(ctx) == 0
+      refute Enum.any?(lines(ctx, "curl.log"), &String.ends_with?(&1, "/status"))
+    end
+  end
+
   test "a failing check 7 stops the merge before the POST", ctx do
     File.write!(Path.join(ctx.stub, "posts"), "200\n")
 
@@ -265,6 +287,58 @@ defmodule Cinder.MergePrScriptTest do
            ]
 
     assert posts(ctx) == 2
+  end
+
+  test "stops on an uncommitted edit to scripts/merge-pr, though HEAD holds main's copy", ctx do
+    path = Path.join(ctx.work, "scripts/merge-pr")
+    File.write!(path, File.read!(path) <> "# a local edit\n")
+
+    {out, code} = run(ctx, ["--dry-run", "7"])
+
+    assert code == 1, out
+    assert out =~ "FAIL: scripts/merge-pr here differs from origin/main's copy"
+    assert out =~ "Commit or copy aside any local edit to them first"
+  end
+
+  test "the printed fix lets a stale checkout's run pass, then puts the branch's copies back",
+       ctx do
+    body = File.read!(Path.join(ctx.work, "scripts/merge-fences")) <> "# newer\n"
+    main_adds!(ctx, %{"scripts/merge-fences" => body})
+    git!(ctx.work, ["checkout", "-q", "pr"])
+    assert {_out, 1} = run(ctx, ["--dry-run", "7"])
+
+    scripts = ["scripts/merge-pr", "scripts/merge-fences"]
+    git!(ctx.work, ["checkout", "origin/main", "--" | scripts])
+    {out, code} = run(ctx, ["--dry-run", "7"])
+
+    assert code == 0, out
+    assert out =~ "DRY RUN: every check passed"
+
+    git!(ctx.work, ["checkout", "HEAD", "--" | scripts])
+    assert git!(ctx.work, ["status", "--porcelain"]) == ""
+  end
+
+  test "a 405 retry stops when origin/main's scripts/merge-pr moved past this checkout's", ctx do
+    File.write!(Path.join(ctx.stub, "posts"), "405\n200\n")
+    other = Path.join(ctx.dir, "other")
+    first = main_sha(ctx)
+
+    # Another clone pushes a newer merge-pr to main, so this checkout's copy stays the older one.
+    File.write!(Path.join(ctx.stub, "move"), """
+    git clone -q "#{Path.join(ctx.dir, "origin.git")}" "#{other}"
+    cd "#{other}"
+    echo '# a check main added since' >> scripts/merge-pr
+    git add -A
+    git commit -q -m 'merge-pr gains a check'
+    git push -q origin main
+    """)
+
+    {out, code} = run(ctx, ["7"])
+
+    assert code == 1, out
+    assert out =~ "FAIL: scripts/merge-pr here differs from origin/main's copy"
+    assert lines(ctx, "fences.log") == ["fences #{ctx.head} #{first}"]
+    assert posts(ctx) == 1
   end
 
   describe "migrations on the merged tree" do
