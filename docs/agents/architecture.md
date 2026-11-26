@@ -17,7 +17,8 @@ Audiobookshelf, Booklore, the Prowlarr/Indexers definitions on GitHub) is reache
 behaviour, never directly from a context: `Cinder.Catalog.TMDB`,
 `Cinder.Acquisition.IndexerSource`, `Cinder.Acquisition.Indexer` (one native adapter per indexer
 type), `Cinder.Download.Client`, `Cinder.Library.MediaServer`, `Cinder.Books.Metadata`,
-`Cinder.Library.AudiobookServer`, `Cinder.Indexers.Definitions.Source`.
+`Cinder.Library.AudiobookServer`, `Cinder.Indexers.Definitions.Source`,
+`Cinder.Indexers.ProwlarrApi` (Prowlarr's own API, which the Prowlarr import reads).
 
 - Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
   The Mox mock is defined at runtime, so compile-time resolution breaks

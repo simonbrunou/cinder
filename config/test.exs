@@ -88,6 +88,7 @@ config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer_source: Cinder.Acquisition.IndexerMock,
   indexer_definitions_source: Cinder.Indexers.Definitions.SourceMock,
+  prowlarr_api: Cinder.Indexers.ProwlarrApiMock,
   plex_auth: Cinder.Accounts.PlexAuthMock,
   jellyfin_auth: Cinder.Accounts.JellyfinAuthMock,
   oidc_auth: Cinder.Accounts.OIDCMock,
@@ -164,6 +165,10 @@ config :cinder, Cinder.Acquisition.IndexerSource.Native.Lease, spacing_ms: 10
 # The Newznab and Torznab adapters' requests (Torznab reads Newznab's key) go to a Req.Test stub.
 config :cinder, Cinder.Acquisition.Indexer.Newznab,
   req_options: [plug: {Req.Test, Cinder.NewznabStub}]
+
+# The Prowlarr API read adapter's own test routes Req through a Req.Test stub.
+config :cinder, Cinder.Indexers.ProwlarrApi.HTTP,
+  req_options: [plug: {Req.Test, Cinder.ProwlarrApiStub}]
 
 # The Cardigann adapter's requests go to a Req.Test stub, and its resolver answers by name: a
 # `.loopback.test` host resolves to 127.0.0.1, a `.lan.test` host to 192.168.1.10, an `.nx.test`

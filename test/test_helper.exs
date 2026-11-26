@@ -35,6 +35,10 @@ Mox.defmock(Cinder.Indexers.Definitions.SourceMock, for: Cinder.Indexers.Definit
 # The source `Cinder.Indexers.Definitions.SourceTest` points `:indexer_definitions_source` at, to
 # show `Source.fetch/1` reads that key rather than naming `SourceMock`.
 Mox.defmock(Cinder.Indexers.Definitions.OtherSourceMock, for: Cinder.Indexers.Definitions.Source)
+Mox.defmock(Cinder.Indexers.ProwlarrApiMock, for: Cinder.Indexers.ProwlarrApi)
+# The adapter `Cinder.Indexers.ProwlarrApiTest` points `:prowlarr_api` at, to show
+# `ProwlarrApi.get/3` reads that key rather than naming `ProwlarrApiMock`.
+Mox.defmock(Cinder.Indexers.OtherProwlarrApiMock, for: Cinder.Indexers.ProwlarrApi)
 Mox.defmock(Cinder.Download.ClientMock, for: Cinder.Download.Client)
 # Second client mock so routing tests can prove a usenet release reaches the
 # usenet-mapped client (and a torrent release does not). Wired as the :usenet

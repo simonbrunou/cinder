@@ -90,6 +90,18 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
     |> validate()
   end
 
+  @doc """
+  Links a new row's changeset to the Prowlarr indexer `prowlarr_indexer_id`, the id Prowlarr's
+  `/api/v1/indexer` and its search results give it. Only the Prowlarr import sets it
+  (`Cinder.Indexers.create_imported/4`), and two rows never hold one id.
+  """
+  @spec link_changeset(Ecto.Changeset.t(), pos_integer()) :: Ecto.Changeset.t()
+  def link_changeset(changeset, prowlarr_indexer_id) when is_integer(prowlarr_indexer_id) do
+    changeset
+    |> put_change(:prowlarr_indexer_id, prowlarr_indexer_id)
+    |> unique_constraint(:prowlarr_indexer_id)
+  end
+
   # Secret inputs travel apart from the plain attrs. A `secrets` key left among them would stay in
   # the changeset's params, which a form renders from.
   defp plain(attrs), do: Map.drop(attrs, ["secrets", :secrets])
@@ -157,24 +169,32 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
 
   defp validate_settings(changeset, type) do
     settings = get_field(changeset, :settings) || %{}
-    allowed = Map.fetch!(@settings_keys, type)
+
+    case settings_refusal(settings, Map.fetch!(@settings_keys, type)) do
+      nil -> changeset
+      validation -> add_error(changeset, :settings, "is invalid", validation: validation)
+    end
+  end
+
+  @doc """
+  The `:settings` validation that a Newznab row's additional parameters `value` fails, or nil
+  when it passes: `:settings_values`, `:parameter_format` or `:credential_parameter`. The
+  Prowlarr import (#1673) runs it on a Torznab indexer's additional parameters, which Prowlarr
+  adds to each search of that indexer.
+  """
+  @spec parameters_refusal(term()) :: atom() | nil
+  def parameters_refusal(value),
+    do: settings_refusal(%{"additional_parameters" => value}, ["additional_parameters"])
+
+  defp settings_refusal(settings, allowed) do
     names = parameter_names(settings["additional_parameters"])
 
     cond do
-      Enum.any?(Map.keys(settings), &(&1 not in allowed)) ->
-        add_error(changeset, :settings, "is invalid", validation: :settings_keys)
-
-      not Enum.all?(Map.values(settings), &text?/1) ->
-        add_error(changeset, :settings, "is invalid", validation: :settings_values)
-
-      :undecodable in names ->
-        add_error(changeset, :settings, "is invalid", validation: :parameter_format)
-
-      Enum.any?(names, &(&1 in @credential_parameters)) ->
-        add_error(changeset, :settings, "is invalid", validation: :credential_parameter)
-
-      true ->
-        changeset
+      Enum.any?(Map.keys(settings), &(&1 not in allowed)) -> :settings_keys
+      not Enum.all?(Map.values(settings), &text?/1) -> :settings_values
+      :undecodable in names -> :parameter_format
+      Enum.any?(names, &(&1 in @credential_parameters)) -> :credential_parameter
+      true -> nil
     end
   end
 

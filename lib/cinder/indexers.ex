@@ -29,6 +29,10 @@ defmodule Cinder.Indexers do
   their transaction, naming the changed fields and never a value. A create, a toggle and any
   other edit write none.
 
+  The Prowlarr import (`Cinder.Indexers.ProwlarrImport`) creates its rows through
+  `import_batch/2`, one transaction with one audit row, each row linked to its Prowlarr indexer
+  by `prowlarr_indexer_id` (`create_imported/4`, the only write of that column).
+
   ## Reads
 
     * `searchable/0`: every enabled configured indexer whose secrets decrypt, with them.
@@ -37,6 +41,8 @@ defmodule Cinder.Indexers do
       secret fields it holds.
     * `list/0`: every configured indexer, without secret values, each marked by
       `secrets_readable`.
+    * `prowlarr_links/0`: each linked configured indexer's id with its Prowlarr indexer id,
+      which the import's already-imported check and the linked-pair block read use.
 
   ## The source switch
 
@@ -74,11 +80,106 @@ defmodule Cinder.Indexers do
 
   @doc "Creates a configured indexer from plain `attrs` and secret `secrets` inputs."
   @spec create(actor(), map(), map()) :: write_result()
-  def create(_actor, attrs, secrets \\ %{}) do
-    changeset = ConfiguredIndexer.create_changeset(attrs)
+  def create(_actor, attrs, secrets \\ %{}),
+    do: attrs |> ConfiguredIndexer.create_changeset() |> create_typed(attrs, secrets)
 
-    create_typed(changeset, Ecto.Changeset.get_field(changeset, :type), attrs, secrets)
+  @doc """
+  Creates a configured indexer for the Prowlarr import (`Cinder.Indexers.ProwlarrImport`), as
+  `create/3` does, linked to the Prowlarr indexer `prowlarr_indexer_id`: the only write of
+  `prowlarr_indexer_id`. A link another row holds is refused on `prowlarr_indexer_id`, tagged
+  `validation: :unique_link`. It runs inside the import's transaction.
+  """
+  @spec create_imported(actor(), map(), map(), pos_integer()) :: write_result()
+  def create_imported(_actor, attrs, secrets, prowlarr_indexer_id)
+      when is_integer(prowlarr_indexer_id) do
+    attrs
+    |> ConfiguredIndexer.create_changeset()
+    |> ConfiguredIndexer.link_changeset(prowlarr_indexer_id)
+    |> create_typed(attrs, secrets)
   end
+
+  @doc """
+  Creates the Prowlarr import's configured indexers (`Cinder.Indexers.ProwlarrImport`) in one
+  transaction with one `Cinder.Audit` row, `"import_prowlarr_indexers"`, naming their count and
+  Prowlarr ids. Each entry is `%{prowlarr_id, attrs, secrets}`, created with
+  `create_imported/4` in the order given.
+
+  Inside the transaction it first checks the links and names again: an entry whose Prowlarr id
+  a configured indexer is already linked to gives `:already_imported`, and one whose trimmed
+  name another configured indexer holds gives `:name_taken`. Any such entry refuses the whole
+  batch with `{:error, {:rows, codes_by_prowlarr_id}}` before any insert. An insert that is
+  refused rolls the batch back with `{:error, {:rows, %{prowlarr_id => codes}}}`:
+  `:name_conflict` and `:link_conflict` for the unique indexes, `{field, validation}` for any
+  other check. A refused audit row rolls it back with `{:error, changeset}`.
+  """
+  @spec import_batch(actor(), [%{prowlarr_id: pos_integer(), attrs: map(), secrets: map()}]) ::
+          {:ok, [ConfiguredIndexer.t()]}
+          | {:error, {:rows, %{pos_integer() => [term()]}} | Ecto.Changeset.t()}
+  def import_batch(actor, entries) when is_list(entries) do
+    Repo.transact(fn ->
+      linked = MapSet.new(prowlarr_links(), &elem(&1, 1))
+      names = MapSet.new(Repo.all(from(c in ConfiguredIndexer, select: c.name)))
+
+      held =
+        for entry <- entries,
+            codes = held_codes(entry, linked, names),
+            codes != [],
+            into: %{},
+            do: {entry.prowlarr_id, codes}
+
+      if held == %{}, do: insert_batch(actor, entries), else: {:error, {:rows, held}}
+    end)
+  end
+
+  defp held_codes(entry, linked, names) do
+    name = entry.attrs |> Map.get("name", Map.get(entry.attrs, :name)) |> trimmed()
+
+    if(entry.prowlarr_id in linked, do: [:already_imported], else: []) ++
+      if name in names, do: [:name_taken], else: []
+  end
+
+  defp trimmed(name) when is_binary(name), do: String.trim(name)
+  defp trimmed(name), do: name
+
+  defp insert_batch(actor, entries) do
+    created =
+      Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, rows} ->
+        case create_imported(actor, entry.attrs, entry.secrets, entry.prowlarr_id) do
+          {:ok, row} -> {:cont, {:ok, [row | rows]}}
+          {:error, changeset} -> {:halt, {:error, entry.prowlarr_id, changeset}}
+        end
+      end)
+
+    case created do
+      {:ok, rows} ->
+        rows = Enum.reverse(rows)
+
+        Audit.log_or_rollback(actor, "import_prowlarr_indexers", {"ConfiguredIndexer", nil}, %{
+          count: length(rows),
+          prowlarr_indexer_ids: Enum.map(rows, & &1.prowlarr_indexer_id)
+        })
+
+        {:ok, rows}
+
+      {:error, prowlarr_id, changeset} ->
+        Repo.rollback({:rows, %{prowlarr_id => insert_codes(changeset)}})
+    end
+  end
+
+  defp insert_codes(changeset) do
+    changeset.errors
+    |> Enum.map(fn {field, {_message, opts}} ->
+      case Keyword.get(opts, :validation) do
+        :unique_name -> :name_conflict
+        :unique_link -> :link_conflict
+        validation -> {field, validation}
+      end
+    end)
+    |> Enum.uniq()
+  end
+
+  defp create_typed(changeset, attrs, secrets),
+    do: create_typed(changeset, Ecto.Changeset.get_field(changeset, :type), attrs, secrets)
 
   defp create_typed(changeset, :cardigann, attrs, secrets),
     do: Repo.transact(fn -> create_cardigann(changeset, blob_sha(attrs), secrets) end)
@@ -371,6 +472,7 @@ defmodule Cinder.Indexers do
     case {field, opts[:constraint]} do
       {:name, :unique} -> {field, {message, opts ++ [validation: :unique_name]}}
       {:priority, :check} -> {field, {message, opts ++ [validation: :priority_range]}}
+      {:prowlarr_indexer_id, :unique} -> {field, {message, opts ++ [validation: :unique_link]}}
       _other -> error
     end
   end
@@ -466,6 +568,20 @@ defmodule Cinder.Indexers do
         :unreadable -> {row, :undecryptable}
       end
     end)
+  end
+
+  @doc """
+  The links the Prowlarr import wrote: `{configured indexer id, Prowlarr indexer id}` for each
+  configured indexer that has one, ordered by configured indexer id.
+  """
+  @spec prowlarr_links() :: [{pos_integer(), pos_integer()}]
+  def prowlarr_links do
+    Repo.all(
+      from c in ConfiguredIndexer,
+        where: not is_nil(c.prowlarr_indexer_id),
+        order_by: [asc: c.id],
+        select: {c.id, c.prowlarr_indexer_id}
+    )
   end
 
   @doc """

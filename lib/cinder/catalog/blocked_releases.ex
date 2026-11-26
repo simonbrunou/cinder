@@ -31,6 +31,7 @@ defmodule Cinder.Catalog.BlockedReleases do
   require Logger
 
   alias Cinder.Catalog.{BlockedRelease, Movie}
+  alias Cinder.Indexers
   alias Cinder.Repo
 
   # #274. A blocklist reason that bounds the UPGRADE sweep alone. Every other reason means "this
@@ -45,6 +46,14 @@ defmodule Cinder.Catalog.BlockedReleases do
   # leaves it grabbable.
   @park_strike_reason "park_strike"
   @park_strikes_to_block 3
+
+  # #1673, #1622 point 3. The refusals about a release's content, which hold whichever source
+  # served it, so a scoped row of one of them also blocks its title under the linked indexer of
+  # the other source. `unsupported_download_url` is about the link one source serves, so it stays
+  # in its own. `bad_download_file` is #1658's reason; a reason no row holds matches nothing.
+  @crossing_reasons ["add_rejected", "bad_torrent", "bad_download_file"]
+  @prowlarr_source "prowlarr"
+  @native_source "native"
 
   @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
@@ -210,7 +219,11 @@ defmodule Cinder.Catalog.BlockedReleases do
   `Cinder.Acquisition.Scorer` reads. A row with no indexer id gives its title as a string, which
   blocks that title from every indexer. A row with one gives `{title, {source, indexer_id}}`,
   which blocks that title only in a result from that source whose indexer id is the row's or nil
-  (#1515, #1645).
+  (#1515, #1645). A scoped row of a content refusal (`#{inspect(@crossing_reasons)}`) also gives
+  `{title, {source, id}}` for its indexer's linked pair in the other source, read through
+  `Cinder.Indexers.prowlarr_links/0` (#1673): Prowlarr indexer P pairs with the configured
+  indexer whose `prowlarr_indexer_id` is P, and that `"native"` indexer pairs with P. A row whose
+  indexer has no link, or of another reason, gives only its own entry.
 
   Upgrade-only reasons (`#{inspect(@upgrade_only_reasons)}`) are **excluded** unless the caller
   names one in `:include_reasons`. Such a row is not "this release is bad": it is the season's
@@ -227,20 +240,56 @@ defmodule Cinder.Catalog.BlockedReleases do
     included = opts |> Keyword.get(:include_reasons, []) |> Enum.map(&to_string/1)
     hidden = [@park_strike_reason | @upgrade_only_reasons -- included]
 
-    blocked =
+    rows =
       Repo.all(
         from b in BlockedRelease,
           where: b.series_id == ^series_id,
           where: is_nil(b.reason) or b.reason not in ^hidden,
-          select: {b.release_title, b.indexer_source, b.indexer_id}
+          select: {b.release_title, b.indexer_source, b.indexer_id, b.reason}
       )
-      |> Enum.map(fn
-        {title, _source, nil} -> title
-        {title, source, id} -> {title, {source, id}}
+
+    blocked =
+      Enum.map(rows, fn
+        {title, _source, nil, _reason} -> title
+        {title, source, id, _reason} -> {title, {source, id}}
       end)
+
+    pairs = rows |> linked_pair_entries() |> Enum.reject(&(&1 in blocked)) |> Enum.uniq()
+    blocked = blocked ++ pairs
 
     blocked ++ (struck_out_titles(series_id) -- blocked)
   end
+
+  # The entry each crossing scoped row adds under its indexer's linked pair of the other source
+  # (#1673): Prowlarr indexer P and the configured indexer whose `prowlarr_indexer_id` is P. A row
+  # whose indexer has no link adds none. The links are read only when a row can cross.
+  defp linked_pair_entries(rows) do
+    crossing =
+      for {title, source, id, reason} <- rows,
+          reason in @crossing_reasons and not is_nil(id),
+          do: {title, source, id}
+
+    if crossing == [] do
+      []
+    else
+      links = Indexers.prowlarr_links()
+      native_of = Map.new(links, fn {native, prowlarr} -> {prowlarr, native} end)
+      prowlarr_of = Map.new(links)
+
+      for {title, source, id} <- crossing,
+          other = pair(source, id, native_of, prowlarr_of),
+          other != nil,
+          do: {title, other}
+    end
+  end
+
+  defp pair(@prowlarr_source, id, native_of, _prowlarr_of),
+    do: if(native = native_of[id], do: {@native_source, native})
+
+  defp pair(@native_source, id, _native_of, prowlarr_of),
+    do: if(prowlarr = prowlarr_of[id], do: {@prowlarr_source, prowlarr})
+
+  defp pair(_source, _id, _native_of, _prowlarr_of), do: nil
 
   defp struck_out_titles(series_id) do
     Repo.all(
