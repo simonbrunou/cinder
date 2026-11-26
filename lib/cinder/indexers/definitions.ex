@@ -11,9 +11,12 @@ defmodule Cinder.Indexers.Definitions do
   version `Cinder.Indexers.Definitions.Loader.fingerprint/0` declares.
 
   1. A `MIN_VERSION` above the engine's version refuses the answer as `:cinder_too_old`.
-  2. The guard counts the distinct file names in every folder at or above `MIN_VERSION`. With no
-     stored set, an answer under 100 names is refused as `:first_too_small`. With a stored set,
-     an answer under 90% of its count is refused as `:shrank` by N%, N rounded down. An answer at
+  2. The guard counts the distinct file names with a file in a folder from `MIN_VERSION` up to
+     the engine's version: the names that get a mirror copy once the answer applies. A name only
+     in folders above the engine or below `MIN_VERSION` does not count. The stored set's `count`
+     and the `count` of a `:shrank` or `:first_too_small` refusal are that number. With no stored
+     set, an answer under 100 names is refused as `:first_too_small`. With a stored set, an
+     answer under 90% of its count is refused as `:shrank` by N%, N rounded down. An answer at
      the commit `accept_smaller_set/1` took passes this guard, until an apply succeeds or a
      refusal at another commit follows.
   3. The mirror's copy of each file name is the one in the highest folder from `MIN_VERSION` up
@@ -122,7 +125,7 @@ defmodule Cinder.Indexers.Definitions do
       refuse(stored, set, :cinder_too_old, refused_versions: set.versions.values)
     else
       files = counted_files(set)
-      count = files |> Enum.uniq_by(& &1.name) |> length()
+      count = mirror_count(files)
 
       case guard(stored, set.commit, count) do
         :ok -> load(set, files, count, opts)
@@ -151,6 +154,14 @@ defmodule Cinder.Indexers.Definitions do
         number = folder_number(file.folder),
         is_integer(number) and number >= set.versions.min,
         do: %{folder: number, name: file.name, file: file}
+  end
+
+  # The names that get a mirror copy once the answer applies: those of `counted_files/1` with a
+  # file in a folder up to the engine's version. The guard and the stored set's count both read
+  # this.
+  defp mirror_count(files) do
+    ceiling = engine_version()
+    files |> Enum.filter(&(&1.folder <= ceiling)) |> Enum.uniq_by(& &1.name) |> length()
   end
 
   # `Cinder.Indexers.Definitions.Archive` keeps every `v<digits>` folder. Only the plain spelling

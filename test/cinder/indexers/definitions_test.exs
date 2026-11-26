@@ -59,6 +59,8 @@ defmodule Cinder.Indexers.DefinitionsTest do
   defp names(count, prefix \\ "n"),
     do: for(i <- 1..count//1, do: file("v11", "#{prefix}-#{i}.yml"))
 
+  defp in_folder(folder, files), do: Enum.map(files, &%{&1 | folder: folder})
+
   # The pure loader, reporting each call to the test: no worker, so the big sets stay fast.
   defp counting_check do
     test_pid = self()
@@ -157,18 +159,90 @@ defmodule Cinder.Indexers.DefinitionsTest do
       assert snapshot() == before
     end
 
-    test "the guard counts distinct names across every folder from MIN_VERSION up, not the mirror" do
-      # 90 names in v11, the same 90 in v12, 10 only in v13, and 50 in v10 below MIN_VERSION:
-      # 100 names count, of which 90 enter the mirror.
+    test "the stored count is the number of names with a mirror copy" do
+      # 100 names in v11, the same 100 in v12, 10 only in v13 above the engine, and 50 only in v10
+      # below MIN_VERSION: only the 100 with a copy count.
       files =
-        names(90) ++
-          Enum.map(names(90), &%{&1 | folder: "v12"}) ++
-          Enum.map(names(10, "up"), &%{&1 | folder: "v13"}) ++
-          Enum.map(names(50, "low"), &%{&1 | folder: "v10"})
+        names(100) ++
+          in_folder("v12", names(100)) ++
+          in_folder("v13", names(10, "up")) ++ in_folder("v10", names(50, "low"))
 
       assert {:ok, {:loaded, %{count: 100}}} = apply_counting(answer(@commit_a, files))
-      assert Repo.aggregate(from(e in Entry, where: not is_nil(e.blob_sha)), :count) == 90
+      assert Repo.aggregate(from(e in Entry, where: not is_nil(e.blob_sha)), :count) == 100
       assert {:loaded, %{count: 100}} = Definitions.set_state()
+      assert Definitions.name_status("up-1.yml") == {:needs_newer_cinder, 13}
+
+      # The next 90% line compares with that 100: 90 names apply.
+      assert {:ok, {:loaded, %{count: 90}}} = apply_counting(answer(@commit_b, names(90)))
+    end
+
+    test "the count stops at the engine's version, never at MAX_VERSION" do
+      above = answer(@commit_a, in_folder("v13", names(100)), max: 13)
+      assert {:error, {:first_too_small, %{count: 0}}} = apply_counting(above)
+
+      below = answer(@commit_b, in_folder("v12", names(100)), max: 11)
+      assert {:ok, {:loaded, %{count: 100, commit: @commit_b}}} = apply_counting(below)
+    end
+
+    test "the first-answer floor counts only names that would get a mirror copy" do
+      files = in_folder("v12", names(99)) ++ in_folder("v13", names(10, "up"))
+
+      assert {:error, {:first_too_small, %{count: 99}}} = apply_counting(answer(@commit_a, files))
+      assert {:first_too_small, %{count: 99, loaded: nil}} = Definitions.set_state()
+    end
+
+    test "a first answer whose names are all above the engine is refused with count 0, until accepted" do
+      first = answer(@commit_a, in_folder("v13", names(100)))
+
+      assert {:error, {:first_too_small, %{commit: @commit_a, count: 0}}} = apply_counting(first)
+      assert {:first_too_small, %{count: 0, loaded: nil}} = Definitions.set_state()
+      assert Definitions.picker() == []
+
+      assert :ok = Definitions.accept_smaller_set(@commit_a)
+      assert {:ok, {:loaded, %{count: 0, commit: @commit_a}}} = apply_counting(first)
+      assert Definitions.picker() == []
+      assert Definitions.name_status("n-1.yml") == {:needs_newer_cinder, 13}
+    end
+
+    test "an answer that moves every name above the engine is refused and keeps every copy, load result and entry" do
+      {:ok, _state} = apply_counting(answer(@commit_a, in_folder("v12", names(200))))
+      before = snapshot()
+
+      assert {:error, {:shrank, %{percent: 100, commit: @commit_b, count: 0}}} =
+               apply_counting(answer(@commit_b, in_folder("v13", names(200))))
+
+      assert {:shrank, %{percent: 100, count: 0, loaded: %{commit: @commit_a, count: 200}}} =
+               Definitions.set_state()
+
+      assert snapshot() == before
+      assert length(Definitions.picker()) == 200
+      assert Definitions.name_status("n-1.yml") == :in_mirror
+    end
+
+    test "an answer that moves 150 of 200 names above the engine is refused as shrank by 75%" do
+      {:ok, _state} = apply_counting(answer(@commit_a, in_folder("v12", names(200))))
+      before = snapshot()
+      {kept, moved} = Enum.split(names(200), 50)
+      files = in_folder("v12", kept) ++ in_folder("v13", moved)
+
+      assert {:error, {:shrank, %{percent: 75, count: 50}}} =
+               apply_counting(answer(@commit_b, files))
+
+      assert {:shrank, %{percent: 75, count: 50}} = Definitions.set_state()
+      assert snapshot() == before
+    end
+
+    test "an accepted answer that moves every name above the engine empties the mirror" do
+      {:ok, _state} = apply_counting(answer(@commit_a, in_folder("v12", names(200))))
+      moved = answer(@commit_b, in_folder("v13", names(200)))
+      assert {:error, {:shrank, %{percent: 100}}} = apply_counting(moved)
+
+      assert :ok = Definitions.accept_smaller_set(@commit_b)
+      assert {:ok, {:loaded, %{count: 0, commit: @commit_b}}} = apply_counting(moved)
+
+      assert Definitions.picker() == []
+      assert Repo.aggregate(Copy, :count) == 0
+      assert Definitions.name_status("n-1.yml") == {:needs_newer_cinder, 13}
     end
   end
 
