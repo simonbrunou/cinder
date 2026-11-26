@@ -79,6 +79,19 @@
   in under half a second. On #1670 (PR #1712) the Spec review found `\C`, and the re-check then
   found `\c\\C` hiding a real `\C` from the first fix's scan, a second fix round the sweep would
   have saved.
+- A fix that escapes each value inserted into text a parser then reads as one string, such as
+  the `$` to `$$` of `Cardigann.Filters`' `re_replace`, tests an insertion with the parser's
+  syntax written right before it and right after it, each beside a value whose first or last
+  characters can extend that syntax. For .NET replacement syntax that is a `$` written right
+  before a value starting with `$0`, `0`, `&` or `{x}`, a `$1` written right before a value
+  starting with a digit, and a `0` or a `$0` written right after a value ending in `$`. The test
+  asserts the whole output: the written syntax's own expansion and the value's characters, in order.
+  Where the output differs, the test pins it, and the claims and an issue name it. On #1728
+  (PR #1789) neither the triage brief nor the first draft wrote a `$` right before an inserted
+  value. A `$` written before an inserted `$0` paired with the escape's first `$`, so
+  `${{ .X }}` gave `$` and the match. The cross-family Standards review found it, and narrowing
+  the claims took a fix commit, a re-check and a second fix commit. #1786 holds the open
+  decision.
 - When review finds a second bug of one kind in the same code, the fix commit adds a sweep: a test
   over every combination of the inputs the bugs differ in, as `Cinder.Books.IdentityCollisionTest`
   enumerates its folds after six review rounds found one collision each. A streaming decoder gets
