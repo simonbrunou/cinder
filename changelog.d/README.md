@@ -35,6 +35,14 @@ finds each subtitle workspace. #1196 made a recovery try to remove a folder that
 #1281 changed which corrections keep their record for the recovery and left #1156's fragment wrong
 again: about 17 minutes from finding it to the fix, and a second CI run.
 
+A change that adds a member to a set, such as an indexer type, a download client or a book kind,
+also searches `changelog.d/` for the names of the set's other members, since a sentence that
+lists them can say that only they do something. #1671 (PR #1836) gave Cardigann indexers a Test
+and left #1657's fragment saying that `Native.test_indexer/1` asks one Newznab or Torznab
+indexer. The fragment check of AGENTS.md "Merge authority" found it after CI had passed, and
+the fix took closing the PR, a fix commit and a second CI run: about 14 minutes from the green
+run to the merge.
+
 Each kind of sentence below has its own paragraph, in the order of this list. Read the first one
 always, and each other one whose kind the fragment holds; a new paragraph adds its kind here. On
 #964 the author read the first 60 lines, which then ended above the paragraph on what Cinder did
