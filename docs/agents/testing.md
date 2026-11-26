@@ -42,6 +42,16 @@
   keeps a running limit and zeroes the failures, so an indexer edited during a limit passed
   once the limit ended, with no answer under its new settings. The next re-check found it,
   and a third fix commit took the clause out.
+- When code reads a stored value against a declaration that can change while the value stays
+  stored, such as a definition's settings, a schema or an option list, test each path that
+  leaves the value stored without its declaration, with a later declaration that names it
+  again in the same test. Run that case through each code path that reads the value. On #1668
+  (PR #1788) a Cardigann secret stayed stored after an update that removed its setting was
+  applied or accepted. The next copy that declared it again crashed the whole apply with a
+  `BadMapError`, and Accept's held hosts left out the hosts the running copy already named. The
+  9 × 4 hold table never stored a key without its declaration, and the 72 mutants, every one
+  killed but an equivalent one, never needed such a test: a Standards review found the crash,
+  and a re-check the held hosts.
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
