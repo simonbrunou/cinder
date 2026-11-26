@@ -8731,3 +8731,28 @@ msgstr "Utilisez un port de 1 à 65535."
 #, elixir-autogen, elixir-format
 msgid "Kind:"
 msgstr "Type :"
+
+#: lib/cinder_web/live/settings_live.ex
+#, elixir-autogen, elixir-format
+msgid "Built-in needs at least one enabled indexer that works or is waiting out a rate limit. Add, enable or test one below first."
+msgstr "Intégré demande au moins un indexeur activé qui fonctionne ou qui attend la fin d’une limite de requêtes. Ajoutez, activez ou testez-en un ci-dessous d’abord."
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Choose a listed indexer source."
+msgstr "Choisissez une des sources des indexeurs proposées."
+
+#: lib/cinder_web/components/settings_components.ex
+#, elixir-autogen, elixir-format
+msgid "Grabs already found through Prowlarr still download through it."
+msgstr "Les téléchargements déjà trouvés via Prowlarr passent toujours par lui."
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer source"
+msgstr "Source des indexeurs"
+
+#: lib/cinder_web/components/settings_components.ex
+#, elixir-autogen, elixir-format
+msgid "Searches go through Prowlarr. The indexers below can still be added, tested and imported; Cinder searches them once you switch to Built-in."
+msgstr "Les recherches passent par Prowlarr. Les indexeurs ci-dessous peuvent quand même être ajoutés, testés et importés ; Cinder les interroge une fois la source passée à Intégré."

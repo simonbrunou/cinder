@@ -846,7 +846,8 @@ library root being set, though in practice you configure both together.
 runs no search sweep at all — `Cinder.Acquisition.Ebooks`/`Audiobooks` export no automatic-release
 function, a deliberate gate pending a corpus-precision measurement the roadmap has not yet taken.
 Once a target is approved, an admin opens **manual search** on `/books/:id`, where Cinder ranks
-Prowlarr's book/audiobook candidates for the admin to choose from, scoring each against:
+the selected indexer source's book/audiobook candidates for the admin to choose from, scoring
+each against:
 
 - **Accepted formats**: EPUB, AZW3, MOBI for e-books (EPUB preferred); M4B, MP3 for audiobooks
   (M4B preferred). An unrecognized or contradictory format is refused, never guessed.
@@ -928,7 +929,8 @@ are pruned automatically.
 ## Known limitations
 
 - **There is no tracker-specific or RSS automation.** Cinder searches the normalized results that
-  Prowlarr exposes for a requested title; it does not infer private-tracker rules, consume tracker
+  the selected indexer source, Prowlarr or Built-in, returns for a requested title; it does not
+  infer private-tracker rules, consume tracker
   RSS feeds, or apply tracker-specific folklore without a concrete, generic policy to enforce.
 
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so

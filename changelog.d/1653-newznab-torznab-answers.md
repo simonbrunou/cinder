@@ -2,9 +2,9 @@
 - **A search through the native indexer source now returns the results of the Newznab and
   Torznab indexers whose caps take the query (#1653).** The `:indexer_adapters` app env maps
   `newznab` to `Cinder.Acquisition.Indexer.Newznab` and `torznab` to
-  `Cinder.Acquisition.Indexer.Torznab`. A search through `IndexerSource.Native`, which only
-  `Cinder.Settings.put/2` selects, sends each configured indexer of those types that it asks the
-  requests its caps can take, and returns the items of its RSS answers as rows. An item gives a
+  `Cinder.Acquisition.Indexer.Torznab`. A search through `IndexerSource.Native`, which a stored
+  `indexer_source` of `native` selects, sends each configured indexer of those types that it asks
+  the requests its caps can take, and returns the items of its RSS answers as rows. An item gives a
   row when its title is not blank and at most 1,024 bytes, and when it has a link the indexer's
   protocol carries: on a Torznab indexer the torrent file, else the magnet; on a Newznab indexer
   the NZB link. One answer gives at most 1,000 rows, and a link repeated inside one answer gives

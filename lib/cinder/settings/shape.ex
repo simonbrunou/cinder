@@ -28,7 +28,9 @@ defmodule Cinder.Settings.Shape do
   ]
 
   @doc "Whether a value of this shape can be rejected on its own."
-  def validates?({tag, _options}) when tag in [:choice, :download_client], do: true
+  def validates?({tag, _options}) when tag in [:choice, :download_client, :indexer_source],
+    do: true
+
   def validates?(shape), do: shape in @validated
 
   @doc "The message shown when a value of this shape is rejected."
@@ -47,6 +49,7 @@ defmodule Cinder.Settings.Shape do
   def message(:hours), do: "Enter a non-negative whole number of hours."
   def message(:resolution), do: "Choose a cutoff included in the preferred resolutions list."
   def message({:download_client, _choice}), do: "Choose a listed download client."
+  def message({:indexer_source, _spec}), do: "Choose a listed indexer source."
   def message(_shape), do: nil
 
   # --- form ---
@@ -68,6 +71,7 @@ defmodule Cinder.Settings.Shape do
     end
   end
 
+  def form_value({:indexer_source, spec}, value, _lookup), do: shown_indexer_source(spec, value)
   def form_value(_shape, value, _lookup), do: value || ""
 
   @doc "The value a re-rendered form keeps from a rejected submit, or `:keep` for the stored one."
@@ -84,6 +88,11 @@ defmodule Cinder.Settings.Shape do
     if is_binary(value) and option(choice.options, value), do: {:ok, value}, else: :keep
   end
 
+  def resubmitted({:indexer_source, spec}, key, params) do
+    value = params[key]
+    if is_binary(value) and option(spec.options, value), do: {:ok, value}, else: :keep
+  end
+
   def resubmitted(_shape, key, params) do
     case params[key] do
       value when is_binary(value) -> {:ok, value}
@@ -93,10 +102,16 @@ defmodule Cinder.Settings.Shape do
 
   @doc """
   Whether a submitted `value` (nil when absent) is rejected. A blank value always passes: it
-  clears the setting, except for a client choice, which must name a listed option.
+  clears the setting, except for a client choice and an indexer source, which must name a
+  listed option.
   """
   def invalid?({:download_client, choice}, value),
     do: not is_nil(value) and is_nil(option(choice.options, value))
+
+  # Matched exactly, untrimmed: `plan/3` trims what it stores, so a padded `" native "` that
+  # passed here would reach the store as `"native"` past the switch rule, which compares exactly.
+  def invalid?({:indexer_source, spec}, value),
+    do: not is_nil(value) and is_nil(option(spec.options, value))
 
   def invalid?(:root_list, value), do: "/" in split_import_roots(value || "")
   def invalid?(:positive_integer, value), do: rejects?(value, &is_nil(positive_integer(&1)))
@@ -337,21 +352,29 @@ defmodule Cinder.Settings.Shape do
 
   The overlay writes its answer to the `:indexer_source` env on boot and on every save.
   """
-  def running_indexer_source(%{options: options, default: default}, value, captured) do
+  def running_indexer_source(%{options: options} = spec, value, captured) do
     cond do
-      option = option(options, value) ->
-        option.module
-
-      unlisted_module?(options, captured) ->
-        captured
-
-      option = Enum.find(options, &Enum.any?(&1.os_env, fn name -> set_env?(name) end)) ->
-        option.module
-
-      true ->
-        option(options, default).module
+      option = option(options, value) -> option.module
+      unlisted_module?(options, captured) -> captured
+      true -> bootstrap_indexer_source(spec).module
     end
   end
+
+  @doc """
+  The `indexer_source` option value the `/settings` select shows, the switch rule compares with
+  and the Indexers group's source lines read: the stored (decoded) `value` when it is an option,
+  else the option `running_indexer_source/3` picks in its steps 3 and 4. It skips that
+  function's step 2, since a captured module no option lists (the test mock) has no value.
+  """
+  def shown_indexer_source(%{options: options} = spec, value),
+    do: (option(options, value) || bootstrap_indexer_source(spec)).value
+
+  # Steps 3 and 4 of `running_indexer_source/3`: the first option one of whose `os_env` variables
+  # is set and not blank, else the `default` option.
+  defp bootstrap_indexer_source(%{options: options, default: default}),
+    do:
+      Enum.find(options, &Enum.any?(&1.os_env, fn name -> set_env?(name) end)) ||
+        option(options, default)
 
   # `Overlay.base/1` captures `[]` for a key unset at boot, which is no module.
   defp unlisted_module?(options, captured) do

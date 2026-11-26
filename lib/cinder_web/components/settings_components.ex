@@ -7,7 +7,9 @@ defmodule CinderWeb.SettingsComponents do
   Test buttons are its `Cinder.Health.targets/1`.
 
   A group's section help shows on `/setup` (`show_setup_guidance`); the Indexers group's shows on
-  both hosts (#1660), above the `indexers` slot the host fills with its indexers table.
+  both hosts (#1660), above the `indexers` slot the host fills with its indexers table. Above
+  that help, the Indexers group starts with the "Indexer source" select when the host passes
+  `indexer_source` (#1662): `/settings` does, `/setup` does not.
   """
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
@@ -40,6 +42,13 @@ defmodule CinderWeb.SettingsComponents do
   attr :show_anime, :boolean, default: true
   attr :show_setup_guidance, :boolean, default: false
   attr :open_group, :atom, default: nil, doc: "a group to render open, besides the first"
+
+  attr :indexer_source, :map,
+    default: nil,
+    doc:
+      "the Indexers group's source select (#1662), rendered only when set: `saved` (the " <>
+        "`Settings.indexer_source/0` value), `prowlarr_url?` (whether a Prowlarr URL is set) and " <>
+        "`error` (the host's refusal text, or nil); `/setup` passes none yet (#1663)"
 
   slot :indexers,
     doc:
@@ -83,6 +92,12 @@ defmodule CinderWeb.SettingsComponents do
       </summary>
 
       <div class="collapse-content">
+        <.indexer_source_field
+          :if={group == :indexer and @indexer_source}
+          form={@form}
+          source={@indexer_source}
+        />
+
         <.setup_section_help :if={@show_setup_guidance or group == :indexer} group={group} />
 
         <div :if={group == :indexer and @indexers != []}>{render_slot(@indexers)}</div>
@@ -558,6 +573,72 @@ defmodule CinderWeb.SettingsComponents do
     </details>
     """
   end
+
+  attr :form, :map, required: true
+  attr :source, :map, required: true
+
+  # The select shows the form's value, the submitted one after a rejected save. The line under it
+  # reads the saved source instead, so a refused switch does not change what it says. The host's
+  # refusal text takes the place of the shape's message.
+  defp indexer_source_field(assigns) do
+    invalid? = invalid?(assigns.form, "indexer_source")
+    line = indexer_source_line(assigns.source)
+
+    assigns =
+      assign(assigns,
+        invalid?: invalid?,
+        line: line,
+        describedby:
+          [invalid? && "indexer_source-error", line && "indexer_source-help"]
+          |> Enum.filter(& &1)
+          |> Enum.join(" ")
+      )
+
+    ~H"""
+    <div class="form-control mb-4">
+      <label class="label" for="indexer_source">
+        <span class="label-text">{DomainLabels.t(Settings.describe("indexer_source").label)}</span>
+      </label>
+      <select
+        id="indexer_source"
+        name="indexer_source"
+        aria-invalid={@invalid? && "true"}
+        aria-describedby={@describedby != "" && @describedby}
+        class={["select w-full", @invalid? && "select-error"]}
+      >
+        <option
+          :for={option <- Settings.indexer_source_options()}
+          value={option.value}
+          selected={@form.values["indexer_source"] == option.value}
+        >
+          {DomainLabels.t(option.label)}
+        </option>
+      </select>
+      <p
+        :if={@invalid? and @source.error}
+        id="indexer_source-error"
+        class="mt-1 flex items-center gap-1 text-sm text-error"
+      >
+        <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+        {@source.error}
+      </p>
+      <.field_error :if={@invalid? and is_nil(@source.error)} field="indexer_source" />
+      <p :if={@line} id="indexer_source-help" class="mt-1 text-xs opacity-70">{@line}</p>
+    </div>
+    """
+  end
+
+  # The values are the `indexer_source` options' (`Cinder.Settings.Registry`).
+  defp indexer_source_line(%{saved: "native", prowlarr_url?: true}),
+    do: gettext("Grabs already found through Prowlarr still download through it.")
+
+  defp indexer_source_line(%{saved: "prowlarr"}),
+    do:
+      gettext(
+        "Searches go through Prowlarr. The indexers below can still be added, tested and imported; Cinder searches them once you switch to Built-in."
+      )
+
+  defp indexer_source_line(_source), do: nil
 
   attr :group, :atom, required: true
 

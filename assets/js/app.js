@@ -24,6 +24,7 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/cinder"
 import topbar from "../vendor/topbar"
+import {focusInvalid} from "./focus_invalid.js"
 import {FormState} from "./form_state.js"
 import {PasskeyRegister, PasskeySignIn} from "./passkeys.js"
 
@@ -176,7 +177,7 @@ window.addEventListener("phx:page-loading-start", ({detail}) => {
 })
 window.addEventListener("phx:page-loading-stop", fadeUncachedPosters)
 window.addEventListener("phx:focus-invalid", ({detail: {id}}) => {
-  requestAnimationFrame(() => document.getElementById(id)?.focus())
+  requestAnimationFrame(() => focusInvalid(document, id))
 })
 
 // connect if there are any LiveViews on the page

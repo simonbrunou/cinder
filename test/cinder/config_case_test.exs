@@ -5,6 +5,7 @@ defmodule Cinder.ConfigCaseTest do
   import Cinder.AnimeFixtures, only: [neutral_anime_policy: 1]
 
   alias Cinder.ConfigCase
+  alias Cinder.Settings.Overlay
 
   # #839: the policy compares a release's normalized group with the groups as stored, so a test
   # that set "Trusted" matched no release and passed with the group rule removed.
@@ -120,6 +121,36 @@ defmodule Cinder.ConfigCaseTest do
     assert Application.fetch_env(:cinder, unset) == :error
     assert Application.fetch_env(:cinder, set) == {:ok, :before}
     assert Application.fetch_env(:cinder, set_nil) == {:ok, nil}
+  end
+
+  describe "update_boot_capture/2" do
+    @uncaptured :config_case_test_uncaptured
+    @captured :config_case_test_captured
+
+    defp capture_key(key), do: {Cinder.Settings, :base, key}
+
+    setup do
+      :persistent_term.put(capture_key(@captured), before: true)
+
+      # Registered first, so it runs after the test's own callbacks (ExUnit runs them last first).
+      on_exit(fn ->
+        assert :persistent_term.get(capture_key(@uncaptured), :__none__) == :__none__
+        assert :persistent_term.get(capture_key(@captured)) == [before: true]
+        :persistent_term.erase(capture_key(@captured))
+      end)
+    end
+
+    test "applies the function to the capture, then erases a capture the key did not have" do
+      ConfigCase.update_boot_capture(@uncaptured, &Keyword.put(&1, :base_url, nil))
+
+      assert Overlay.base(@uncaptured) == [base_url: nil]
+    end
+
+    test "applies the function to the capture, then puts the prior capture back" do
+      ConfigCase.update_boot_capture(@captured, &Keyword.put(&1, :base_url, nil))
+
+      assert Overlay.base(@captured) == [base_url: nil, before: true]
+    end
   end
 
   test "neutral_anime_policy/1 refuses groups as put_config/2 does" do

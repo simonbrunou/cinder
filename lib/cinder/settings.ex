@@ -26,6 +26,7 @@ defmodule Cinder.Settings do
   # type through this definition, and names and links each server through its options.
   @media_server Registry.one!(target: {:writer, :media_server})
   @media_servers Registry.media_servers()
+  @indexer_source Registry.one!(target: {:writer, :indexer_source})
 
   # Each video kind's preferred-resolutions env key, which the upgrade cutoff check falls back to.
   @preferred_resolutions_env_keys Map.new(
@@ -65,6 +66,7 @@ defmodule Cinder.Settings do
   defdelegate download_client_choices(), to: Registry
   defdelegate library_kinds(), to: Registry
   defdelegate media_server_options(), to: Registry
+  defdelegate indexer_source_options(), to: Registry
 
   @doc "The settings key of a per-kind definition, e.g. `kind_key(:tv, :min_size)`."
   defdelegate kind_key(kind, slot), to: Definition
@@ -195,6 +197,19 @@ defmodule Cinder.Settings do
       %{server: server} -> server
       nil -> nil
     end
+  end
+
+  @doc """
+  The indexer source the `/settings` select shows (`"prowlarr"` or `"native"`): the stored row
+  when it names an option, else the bootstrap choice (`Cinder.Settings.Shape.shown_indexer_source/2`).
+  `Cinder.Indexers.check_source_switch/2` compares a requested source with it. Unlike
+  `Cinder.Acquisition.IndexerSource.configured/0`, it never answers a module no option lists, such
+  as the test env's mock.
+  """
+  @spec indexer_source() :: String.t()
+  def indexer_source do
+    {:indexer_source, spec} = @indexer_source.shape
+    Shape.shown_indexer_source(spec, get(@indexer_source.key))
   end
 
   @doc """

@@ -1,5 +1,6 @@
 defmodule Cinder.Settings.IndexerSourceTest do
-  # The `indexer_source` setting and its resolver (#1651). Not async: the cases set process-global
+  # The `indexer_source` setting, its resolver (#1651) and the value its /settings select shows
+  # (#1662). Not async: the cases set process-global
   # OS env vars and save settings, which rewrite the `:cinder` env.
   use Cinder.DataCase, async: false
 
@@ -7,7 +8,7 @@ defmodule Cinder.Settings.IndexerSourceTest do
   alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.ConfigCase
   alias Cinder.Settings
-  alias Cinder.Settings.{Registry, Setting, Shape}
+  alias Cinder.Settings.{Definition, Registry, Setting, Shape}
 
   @env_vars ["PROWLARR_URL", "PROWLARR_API_KEY"]
 
@@ -89,27 +90,95 @@ defmodule Cinder.Settings.IndexerSourceTest do
   end
 
   describe "the definition" do
-    test "is saved only directly, renders no input and adds no string to translate" do
+    # #1662 renders it on /settings, in the Indexers group, saved with the form.
+    test "is saved with the form, rendered by hand in the Indexers group and validated" do
       definition = Registry.definition("indexer_source")
 
-      assert {definition.save, definition.render, definition.group} == {:direct, :none, nil}
-      assert {definition.label, definition.help, definition.message} == {nil, nil, nil}
+      assert {definition.save, definition.render, definition.group} ==
+               {:form, :custom, :indexer}
 
-      assert Enum.map(spec().options, &{&1.value, &1.module}) == [
-               {"prowlarr", Prowlarr},
-               {"native", Native}
+      assert {definition.label, definition.help} == {"Indexer source", nil}
+      assert Definition.message(definition) == "Choose a listed indexer source."
+      assert Definition.validated?(definition)
+
+      assert Enum.map(spec().options, &{&1.value, &1.label, &1.module}) == [
+               {"prowlarr", "Prowlarr", Prowlarr},
+               {"native", "Built-in", Native}
              ]
 
       assert spec().default == "prowlarr"
     end
 
-    test "a /settings save whose params carry indexer_source stores nothing" do
+    test "a save_form/1 whose params carry a listed indexer_source stores it" do
       assert :ok =
                Settings.save_form(%{"indexer_source" => "native", "prowlarr_url" => "http://p"})
 
       assert Repo.get_by(Setting, key: "prowlarr_url")
+      assert Repo.get_by(Setting, key: "indexer_source").value == "native"
+      assert Application.fetch_env!(:cinder, :indexer_source) == Native
+    end
+
+    # `plan/3` trims what it stores, so a padded value must be refused, not stored trimmed.
+    test "a save_form/1 with a value that is no option is refused and stores nothing" do
+      for value <- ["builtin", " native ", "", "Native"] do
+        assert {value, Settings.save_form(%{"indexer_source" => value, "prowlarr_url" => "x"})} ==
+                 {value, {:error, ["indexer_source"]}}
+      end
+
+      refute Repo.get_by(Setting, key: "prowlarr_url")
       refute Repo.get_by(Setting, key: "indexer_source")
+    end
+
+    test "a save_form/1 without indexer_source, as /setup sends, leaves the stored source" do
+      :ok = Settings.put("indexer_source", "native")
+
+      assert :ok = Settings.save_form(%{"prowlarr_url" => "http://p"})
+
+      assert Repo.get_by(Setting, key: "indexer_source").value == "native"
+      assert Application.fetch_env!(:cinder, :indexer_source) == Native
+    end
+  end
+
+  describe "the shown source" do
+    test "the form shows a stored option, else the bootstrap choice, never the captured mock" do
+      assert Settings.form_state().values["indexer_source"] == "prowlarr"
+      assert Settings.indexer_source() == "prowlarr"
       assert Application.fetch_env!(:cinder, :indexer_source) == IndexerMock
+
+      :ok = Settings.put("indexer_source", "native")
+      assert Settings.form_state().values["indexer_source"] == "native"
+      assert Settings.indexer_source() == "native"
+    end
+
+    test "a rejected submit keeps a listed source and drops one that is no option" do
+      :ok = Settings.put("indexer_source", "native")
+
+      assert Settings.form_state(%{"indexer_source" => "prowlarr"}).values["indexer_source"] ==
+               "prowlarr"
+
+      for value <- ["builtin", " prowlarr ", ""] do
+        assert {value, Settings.form_state(%{"indexer_source" => value}).values["indexer_source"]} ==
+                 {value, "native"}
+      end
+    end
+
+    # Today the bootstrap always names Prowlarr (its env vars or the default), so a spec whose
+    # default is Native tells the bootstrap steps apart, as in `running_indexer_source/3` above.
+    test "Shape.shown_indexer_source/2: a stored option, else a set env var, else the default" do
+      native_default = %{spec() | default: "native"}
+
+      assert Shape.shown_indexer_source(native_default, "prowlarr") == "prowlarr"
+      assert Shape.shown_indexer_source(native_default, nil) == "native"
+      assert Shape.shown_indexer_source(native_default, "builtin") == "native"
+
+      put_os_env([{"PROWLARR_API_KEY", "k"}])
+      assert Shape.shown_indexer_source(native_default, nil) == "prowlarr"
+      assert Shape.shown_indexer_source(native_default, "native") == "native"
+
+      System.delete_env("PROWLARR_API_KEY")
+      put_os_env([{"PROWLARR_URL", " "}])
+      assert Shape.shown_indexer_source(native_default, nil) == "native"
+      assert Shape.shown_indexer_source(spec(), nil) == "prowlarr"
     end
   end
 

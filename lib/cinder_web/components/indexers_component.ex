@@ -35,10 +35,11 @@ defmodule CinderWeb.IndexersComponent do
   and one the runner's restart ended included.
 
   The rows are read again after a saved switch or Delete, on a Test's finish and on the runner's
-  reset, and just past the first running backoff's end, which changes a state with no write to
-  tell the page. A Test's start only marks its row, with no read. Each read also
-  reads the saved indexer source that Delete's warning names: no field of the page writes it
-  until #1662 renders it.
+  reset, on a `%{refresh: true}` update, and just past the first running backoff's end, which
+  changes a state with no write to tell the page. A Test's start only marks its row, with no
+  read. Each read also reads the saved indexer source that Delete's warning names. The Indexers
+  group's "Indexer source" select saves it with `#settings-form`, so `/settings` sends the
+  component a `%{refresh: true}` update after each saved submit of that form (#1662).
   The rows render through the stream `:table_rows`. Each read sends every row again, since each
   row's Delete warning and focus target read the other rows. A row that keeps its place is
   patched in place, so the focus on its switch or its Delete stays, and only a new order resets

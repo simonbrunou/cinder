@@ -115,7 +115,7 @@ Secrets are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 | Group | Settings |
 |---|---|
 | TMDB | API read token (v4 bearer) |
-| Indexer | Prowlarr URL + API key |
+| Indexer | Indexer source (Prowlarr or Built-in); Prowlarr URL + API key; Built-in's Newznab and Torznab indexers |
 | Download | At most one torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet) — either protocol can be set to Disabled — credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
 | Library paths | Required standard roots (`movies_library_path`, `tv_library_path`, `books_library_path`, `audiobooks_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root. The two book roots have no env bootstrap (see below) — type them into the wizard or `/settings` directly |
@@ -185,8 +185,8 @@ stable `4xx` JSON errors and are never converted to atoms.
 ## How it works
 
 Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series requests), **Acquisition**
-(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/Transmission and
-SABnzbd/NZBGet clients + a polling
+(search through the selected indexer source + release parsing/scoring), **Download**
+(qBittorrent/Transmission and SABnzbd/NZBGet clients + a polling
 GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
 dashboard updates live. A title's lifecycle state — a movie's status and an episode's derived
@@ -244,9 +244,9 @@ guessing when identity is ambiguous.
 **There is no automatic release search for books, by design** — the roadmap gates it behind a
 corpus-precision measurement that has not been taken, so `Cinder.Acquisition.Ebooks`/`Audiobooks`
 export no automatic-selection function at all. Instead, an admin opens **manual search** on
-`/books/:id`, where Cinder ranks Prowlarr's book/audiobook candidates against the accepted format
-list (EPUB/AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title evidence for the admin
-to pick from. Once a release is chosen, the pipeline takes over unattended: download, atomic
+`/books/:id`, where Cinder ranks the selected indexer source's book/audiobook candidates against
+the accepted format list (EPUB/AZW3/MOBI for e-books, M4B/MP3 for audiobooks) and author/title
+evidence for the admin to pick from. Once a release is chosen, the pipeline takes over unattended: download, atomic
 import (a multi-track audiobook imports as one target) into the `books`/`audiobooks` library
 roots, retry, and "Find a better match," the same way they work for movies/TV. Booklore reads the
 `books` root directly; Cinder requests an Audiobookshelf scan after every audiobook import and

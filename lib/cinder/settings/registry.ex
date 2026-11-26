@@ -584,13 +584,15 @@ defmodule Cinder.Settings.Registry do
     new("setup_complete", :boolean, save: :direct, render: :none)
   ]
 
-  # The indexer source every search uses unless its caller names one (#1651). Written only through
-  # `Cinder.Settings.put/2` and the upgrade migration until #1662 renders it: a `save: :form` key
-  # is planned from any submitted param, input or not. Each option's `os_env` lists the variables
-  # whose value, set and not blank, makes it the bootstrap choice; `default` is the fresh-install
-  # choice. `Cinder.Settings.Shape.running_indexer_source/3` picks the module. Each option's
-  # `label` is an English msgid: the select's option text (#1623 point 8) and the parenthesis of
-  # the dashboard's indexer row (`Cinder.Health`).
+  # The indexer source every search uses unless its caller names one (#1651). `/settings` renders
+  # its select at the top of the Indexers group (#1662) and saves it with the form; `/setup`
+  # renders none, so its form sends no `indexer_source` and its saves leave the stored source as
+  # it is. `Cinder.Indexers.switch_source/1` writes it alone, and the upgrade migration writes it
+  # too. Each option's `os_env` lists the variables whose value, set and not blank, makes it the
+  # bootstrap choice; `default` is the fresh-install choice.
+  # `Cinder.Settings.Shape.running_indexer_source/3` picks the module. Each option's `label` is an
+  # English msgid: the select's option text (#1623 point 8) and the parenthesis of the dashboard's
+  # indexer row (`Cinder.Health`).
   @indexer_source new(
                     "indexer_source",
                     {:indexer_source,
@@ -612,8 +614,8 @@ defmodule Cinder.Settings.Registry do
                        default: "prowlarr"
                      }},
                     target: {:writer, :indexer_source},
-                    save: :direct,
-                    render: :none
+                    group: :indexer,
+                    label: "Indexer source"
                   )
 
   {:indexer_source, spec} = @indexer_source.shape
@@ -774,6 +776,12 @@ defmodule Cinder.Settings.Registry do
       option -> option.label
     end
   end
+
+  @doc """
+  The `indexer_source` options, in select order: each one's stored `value`, English `label`
+  msgid, `module` and `os_env` variables.
+  """
+  def indexer_source_options, do: @indexer_source_options
 
   @doc "The media server types the form offers."
   def media_server_options, do: Enum.map(@media_servers, & &1.value)

@@ -10,6 +10,7 @@ defmodule Cinder.ConfigCase do
   """
 
   alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.Settings.Overlay
 
   @doc """
   Merges `overrides` onto the current `Application.get_env(:cinder, key)` and
@@ -139,5 +140,26 @@ defmodule Cinder.ConfigCase do
     end)
 
     :persistent_term.put(key, module)
+  end
+
+  @doc """
+  Replaces the boot capture the env overlay keeps for `key` (`Cinder.Settings.Overlay.base/1`)
+  with `fun` applied to it, and restores the capture on exit. Each settings save rebuilds the env
+  from that capture plus the stored rows, so a `put_config/2` made before a save is gone once it
+  returns (docs/agents/testing.md); this keeps the change through saves. The capture is
+  process-global, so only an `async: false` module calls it.
+  """
+  def update_boot_capture(key, fun) when is_function(fun, 1) do
+    pt_key = {Cinder.Settings, :base, key}
+    prior = :persistent_term.get(pt_key, :__none__)
+
+    ExUnit.Callbacks.on_exit(fn ->
+      case prior do
+        :__none__ -> :persistent_term.erase(pt_key)
+        value -> :persistent_term.put(pt_key, value)
+      end
+    end)
+
+    :persistent_term.put(pt_key, fun.(Overlay.base(key)))
   end
 end

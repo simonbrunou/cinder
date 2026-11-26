@@ -14,7 +14,8 @@ indexers table's switches and Delete in /settings, and checks its width at 390 p
 13 drives its Add and Edit dialogs: the portal, typed values across Test finishes, the Tab trap,
 Escape and the focus it returns, and a save (#1661). Case 14 submits a credential in the base URL,
 the API path and the additional parameters with Enter, in the Add and the Edit dialog, and checks
-that the refusal empties the focused input (#1697).
+that the refusal empties the focused input (#1697). Case 15 retries a refused switch to Built-in
+after closing the Indexers group, which must open again with the select focused (#1662).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -1235,6 +1236,67 @@ def case_14_refused_credential_clears_the_focused_input(page):
         context.close()
         delete_indexer(edited)
 
+
+def stored_indexer_source():
+    return rpc(
+        'IO.puts("RPCRESULT:#{inspect(Cinder.Settings.get("indexer_source"))}")'
+    )
+
+
+def case_15_refused_source_switch_reopens_its_group(page):
+    """The "Indexer source" select in /settings (#1662). With one enabled indexer that was never
+    checked, the gate fails, so a save that switches to Built-in is refused: the refusal shows
+    under the select and the select takes focus. The admin then closes the Indexers group and
+    saves again, and the group must open with the select focused. Two things open it: the
+    `focus-invalid` push, which opens each closed `<details>` around the field
+    (assets/js/focus_invalid.js), and the retry's patch, which sets the group's `open` again
+    because each save clears the flash first. Run on 2026-11-26 with both taken out, the group
+    stayed closed; with either one alone, it opened. Nothing is stored either time."""
+    indexer = seed_indexer("CI Source Gate", 40)
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        gate = rpc(
+            "IO.puts(\"RPCRESULT:#{Cinder.Acquisition.IndexerSource.Native.IndexerState"
+            '.passes_gate?()}")'
+        )
+        if gate != "false":
+            raise CaseFailure(f"case 15 (setup): the gate passes before the case, got {gate!r}")
+        before = stored_indexer_source()
+
+        settings = context.new_page()
+        login(settings)
+        settings.goto(f"{BASE_URL}/settings?group=indexer")
+        wait_for_liveview(settings)
+        group = settings.locator("#settings-group-indexer")
+        select = settings.locator("#indexer_source")
+        refusal = settings.locator("#indexer_source-error")
+        save = settings.locator("#settings-form button[type=submit]")
+
+        select.select_option("native")
+        save.click()
+        expect(refusal).to_contain_text(
+            "Built-in needs at least one enabled indexer", timeout=5_000
+        )
+        expect(select).to_be_focused(timeout=5_000)
+
+        settings.locator("#settings-group-indexer > summary").click()
+        expect(group).to_have_js_property("open", False, timeout=5_000)
+        save.click()
+        expect(group).to_have_js_property("open", True, timeout=5_000)
+        expect(select).to_be_focused(timeout=5_000)
+        expect(refusal).to_be_visible()
+
+        after = stored_indexer_source()
+        if after != before:
+            raise CaseFailure(
+                "case 15 (store): a refused switch changed the stored source "
+                f"{before!r} to {after!r}"
+            )
+    finally:
+        context.close()
+        delete_indexer(indexer)
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -1258,6 +1320,10 @@ CASES = [
     (
         "case14_refused_credential_clears_the_focused_input",
         case_14_refused_credential_clears_the_focused_input,
+    ),
+    (
+        "case15_refused_source_switch_reopens_its_group",
+        case_15_refused_source_switch_reopens_its_group,
     ),
 ]
 

@@ -43,7 +43,7 @@ defmodule Cinder.Settings.DefinitionTest do
     movies_anime_library_path tv_library_path tv_anime_library_path books_library_path
     audiobooks_library_path movies_min_size movies_max_size movies_upgrade_cutoff tv_min_size
     tv_max_size tv_upgrade_cutoff household_timezone anime_embedded_subtitle_mode
-    anime_group_fallback_delay
+    anime_group_fallback_delay indexer_source
   )
 
   test "every settings key has exactly one definition" do

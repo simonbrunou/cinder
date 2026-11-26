@@ -14,6 +14,12 @@ defmodule CinderWeb.SettingsLive do
   buttons save at once and add no field to the form, and whose Add and Edit dialogs render
   outside the form, in a portal to `body`; the page forwards the per-indexer Test runner's
   messages to it.
+
+  The Indexers group starts with the "Indexer source" select, a field of the form. Each save
+  first asks `Cinder.Indexers.check_source_switch/2`: a switch to Built-in while no enabled
+  indexer passes the gate is refused whole, with the refusal under the select and in the flash.
+  A saved submit makes the indexers table read its rows again, since Delete's warning names the
+  saved source.
   """
   use CinderWeb, :live_view
 
@@ -21,7 +27,8 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Acquisition.IndexerSource.Native.TestRunner
-  alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Settings}
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
+  alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Indexers, Settings}
   alias Cinder.Catalog.UpgradeHunter
   alias CinderWeb.{DomainLabels, IndexersComponent}
 
@@ -34,6 +41,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        open_group: open_group(params),
        form: Settings.form_state(),
+       indexer_source: indexer_source(),
        health: %{},
        form_revision: 0,
        undecryptable_secrets: Settings.undecryptable_secret_keys(),
@@ -115,27 +123,67 @@ defmodule CinderWeb.SettingsLive do
 
   defp open_group(_params), do: nil
 
+  # The source switch rule runs first and compares with the stored source, never with the form
+  # assign, which keeps a refused value. A refusal saves nothing, as a rejected value does. Each
+  # outcome replaces the last save's banner, since `Phoenix.LiveView.put_flash/3` of one kind
+  # keeps the other.
   defp save_settings(params, socket) do
-    case Settings.save_form(params) do
-      :ok ->
+    socket = clear_flash(socket)
+
+    with :ok <- Indexers.check_source_switch(params["indexer_source"]),
+         :ok <- Settings.save_form(params) do
+      # The indexers table reads the saved source for Delete's warning on each read of its rows.
+      send_update(IndexersComponent, id: "indexers", refresh: true)
+
+      {:noreply,
+       socket
+       |> assign(
+         form: Settings.form_state(),
+         indexer_source: indexer_source(),
+         health: %{},
+         form_revision: socket.assigns.form_revision + 1,
+         undecryptable_secrets: Settings.undecryptable_secret_keys()
+       )
+       |> put_flash(:info, gettext("Settings saved."))}
+    else
+      {:error, :no_working_indexer} ->
+        message = source_refusal()
+
         {:noreply,
          socket
          |> assign(
-           form: Settings.form_state(),
-           health: %{},
-           form_revision: socket.assigns.form_revision + 1,
-           undecryptable_secrets: Settings.undecryptable_secret_keys()
+           form: Settings.form_state(params, ["indexer_source"]),
+           indexer_source: indexer_source(message)
          )
-         |> put_flash(:info, gettext("Settings saved."))}
+         |> push_event("focus-invalid", %{id: "indexer_source"})
+         |> put_flash(:error, message)}
 
       {:error, invalid_keys} ->
         {:noreply,
          socket
-         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> assign(
+           form: Settings.form_state(params, invalid_keys),
+           indexer_source: indexer_source()
+         )
          |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
          |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
   end
+
+  # What the Indexers group's source select reads besides the form: the saved source and whether
+  # a Prowlarr URL is set, for the line under it, and the refusal text to show, if any.
+  defp indexer_source(error \\ nil),
+    do: %{
+      saved: Settings.indexer_source(),
+      prowlarr_url?: not is_nil(Prowlarr.saved_base_url()),
+      error: error
+    }
+
+  defp source_refusal,
+    do:
+      gettext(
+        "Built-in needs at least one enabled indexer that works or is waiting out a rate limit. Add, enable or test one below first."
+      )
 
   # The per-indexer Test runner's start and finish messages go to the indexers table.
   @impl true
@@ -220,7 +268,12 @@ defmodule CinderWeb.SettingsLive do
         data-form-revision={@form_revision}
         class="space-y-8"
       >
-        <.service_fields form={@form} health={@health} open_group={@open_group}>
+        <.service_fields
+          form={@form}
+          health={@health}
+          open_group={@open_group}
+          indexer_source={@indexer_source}
+        >
           <:indexers>
             <.live_component
               module={IndexersComponent}

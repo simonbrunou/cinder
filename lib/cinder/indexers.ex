@@ -37,15 +37,33 @@ defmodule Cinder.Indexers do
       secret fields it holds.
     * `list/0`: every configured indexer, without secret values, each marked by
       `secrets_readable`.
+
+  ## The source switch
+
+  `check_source_switch/2` is the rule a switch of the `indexer_source` setting to Built-in
+  passes: some enabled indexer passes the gate. `switch_source/1` applies it and writes the
+  setting alone.
   """
 
   import Ecto.Changeset, only: [validate_change: 3]
   import Ecto.Query
 
   alias Cinder.Accounts.User
+  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.Native.IndexerState
   alias Cinder.Audit
   alias Cinder.Indexers.{CardigannSettings, ConfiguredIndexer, Definitions, Secrets}
   alias Cinder.Repo
+  alias Cinder.Settings
+  alias Cinder.Settings.Registry
+
+  # The indexer source setting, found by its overlay target like the overlay's own writers: its
+  # key, its option values and the value whose module is Native (Built-in).
+  @source_definition Registry.one!(target: {:writer, :indexer_source})
+  @source_key @source_definition.key
+  {:indexer_source, source_spec} = @source_definition.shape
+  @source_values Enum.map(source_spec.options, & &1.value)
+  @native_source Enum.find(source_spec.options, &(&1.module == Native)).value
 
   @type actor :: User.t() | nil
   @type write_result :: {:ok, ConfiguredIndexer.t()} | {:error, Ecto.Changeset.t()}
@@ -483,6 +501,42 @@ defmodule Cinder.Indexers do
   end
 
   def through_prowlarr?(_base_url, _api_path, _prowlarr_url), do: false
+
+  @doc """
+  The rule for a switch of the indexer source (#1662, #1622 point 5): `:ok`, or
+  `{:error, :no_working_indexer}` for a `requested` source of `"native"` (Built-in) while
+  `current` is another source and `IndexerState.passes_gate?/1` fails, so no enabled indexer is
+  usable or in a limit backoff. A request that keeps Built-in, or names any other value, nil
+  included, answers `:ok`: the setting's shape refuses a value that is no option.
+
+  `current` defaults to `Cinder.Settings.indexer_source/0`, the source the `/settings` form
+  showed: the stored row, else the bootstrap choice. `/settings` calls this on every save, before
+  `Cinder.Settings.save_form/1`, which does not apply the rule, since `/setup` saves through it
+  too. It writes nothing and answers a code, never text.
+  """
+  @spec check_source_switch(term(), String.t()) :: :ok | {:error, :no_working_indexer}
+  def check_source_switch(requested, current \\ Settings.indexer_source())
+
+  def check_source_switch(@native_source, current) when current != @native_source do
+    if IndexerState.passes_gate?(), do: :ok, else: {:error, :no_working_indexer}
+  end
+
+  def check_source_switch(_requested, _current), do: :ok
+
+  @doc """
+  Writes the indexer source `requested` alone, as `"prowlarr"` or `"native"`, once
+  `check_source_switch/2` allows it against the source `/settings` shows: for a switch made
+  outside the form, such as over `rpc` (#1688). A value that is no option, matched exactly,
+  answers `{:error, :unknown_indexer_source}`, and a refused switch `{:error, :no_working_indexer}`;
+  neither writes. An allowed request writes its row through `Cinder.Settings.put/2`, also when
+  that source is already stored.
+  """
+  @spec switch_source(term()) :: :ok | {:error, :no_working_indexer | :unknown_indexer_source}
+  def switch_source(requested) when requested in @source_values do
+    with :ok <- check_source_switch(requested), do: Settings.put(@source_key, requested)
+  end
+
+  def switch_source(_requested), do: {:error, :unknown_indexer_source}
 
   defp ordered(query), do: order_by(query, [c], asc: c.priority, asc: c.id)
 
