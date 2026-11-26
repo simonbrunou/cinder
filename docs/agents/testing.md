@@ -304,6 +304,20 @@
   that message is still on its way, so read what the server decided from its state instead,
   as that test's `holder_pid/2` reads the slot's holder. On #1770 (for #1655) the Standards
   review found both in the first `LeaseTest`, and the fix took a review round and a re-check.
+- A test that sends a LiveView a message with `send(view.pid, msg)`, where the view's
+  `handle_info/2` passes it on to a component with `send_update/3`, calls `render(view)` once
+  before the call that checks the component. Each `render/1` or `has_element?` call pings the view,
+  then reads the HTML the view has sent back. `send_update/3` sends the update to the view's own
+  pid, so it can queue behind the first call's ping. When it does, and its HTML reaches the test
+  after that call reads, the call sees the component as it was before the message. A `refute`
+  there then passes on the unfixed code. The second call's ping queues behind the update. Each
+  further message on the way, such as a `send(self(), ...)` before the `send_update/3` or a
+  `send_update/3` from the component's `update/2`, takes one more `render(view)`. No count of
+  calls waits for `send_update_after/4`: poll a positive assert until it holds, as `eventually/2`
+  in `CinderWeb.SettingsIndexersTest` does, before the `refute`. On #1660 (PR #1797) the red
+  run of "a reset names no Test that still runs" in that module passed while its `refute` was
+  the first call after the send. On that page a probe's first call found the reset's notice in
+  0 of 20 runs, and its second call in 20 of 20.
 - When the code computes a value that a message or a return reports, such as an elapsed time or
   a count, the mutant list holds mutants that report a wrong value, such as a constant and `0`,
   besides one that drops the value. The test pins the value, or bounds it on both sides where it
