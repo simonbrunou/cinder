@@ -19,7 +19,14 @@ defmodule Cinder.TestRunnerHelpers do
   alias Cinder.Acquisition.IndexerSource.Native.TestRunner
   alias Cinder.ConfigCase
 
-  @doc "Points the Newznab type at the adapter mock and stubs its Test as the moduledoc says."
+  @doc """
+  Points the Newznab type at the adapter mock and stubs its Test as the moduledoc says. It puts
+  `:indexer_adapters` whole, so Torznab loses its adapter. A search then asks no Torznab
+  indexer, a Test of one whose secrets decrypt refuses with `{:error, {:not_supported,
+  :torznab}}` and no request, and an enabled one whose secrets decrypt reads `{:not_supported,
+  :torznab}` in `IndexerState.list/1`. A test that needs a Torznab indexer to work puts
+  `torznab:` back in the map after this call.
+  """
   def block_tests do
     ConfigCase.put_env(:indexer_adapters, %{newznab: IndexerAdapterMock})
     test_pid = self()
