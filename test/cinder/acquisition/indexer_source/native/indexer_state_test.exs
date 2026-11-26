@@ -11,7 +11,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStateTest do
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus}
   alias Cinder.ConfigCase
+  alias Cinder.DefinitionFixtures
   alias Cinder.Indexers
+  alias Cinder.Indexers.Definitions
 
   @now ~U[2026-11-26 12:00:00Z]
 
@@ -248,6 +250,258 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStateTest do
         indexer!(:newznab, "nzb.example") |> record!([{{:limit, at(600)}, 0}, {:timeout, 0}])
 
       assert state(indexer) == {:limit_backoff, ~U[2026-11-26 12:10:00Z]}
+    end
+  end
+
+  # Cardigann rows' definition codes (#1668). Their type has no adapter until #1671, so each
+  # test names one; Torznab's module stands in, since only the map's key is read here.
+  describe "list/1: Cardigann definition codes" do
+    setup do
+      ConfigCase.put_env(:indexer_adapters, %{
+        newznab: Cinder.Acquisition.Indexer.Newznab,
+        torznab: Cinder.Acquisition.Indexer.Torznab,
+        cardigann: Cinder.Acquisition.Indexer.Torznab
+      })
+
+      DefinitionFixtures.mirror!(DefinitionFixtures.definition())
+      :ok
+    end
+
+    defp cardigann!(secrets \\ %{"password" => "hunter2"}),
+      do: DefinitionFixtures.cardigann!(DefinitionFixtures.definition(), secrets)
+
+    test "a running copy that reads not supported is red, with its first feature" do
+      unsupported = DefinitionFixtures.definition("tracker-ns")
+      DefinitionFixtures.mirror!(unsupported)
+      row = DefinitionFixtures.cardigann!(unsupported) |> record!([{:success, 0}])
+
+      assert state(row) == {:not_supported, :html_search}
+      refute IndexerState.usable?(%{state: state(row)})
+    end
+
+    test "a running copy that no longer loads is red and not usable" do
+      row = cardigann!() |> record!([{:success, 0}])
+
+      :ok =
+        Definitions.store_results([
+          {DefinitionFixtures.blob_sha(DefinitionFixtures.definition()), {:error, :not_utf8}}
+        ])
+
+      assert state(row) == {:definition_no_longer_loads, :not_utf8}
+      refute IndexerState.passes_gate?(@now)
+    end
+
+    test "a held update reads held with its reason, keeps the last success and stays usable" do
+      for {label, candidate, more, reason} <- [
+            {"hosts",
+             DefinitionFixtures.definition("tracker", %{"description" => "https://new.invalid/"}),
+             [], :hosts},
+            {"certificates",
+             DefinitionFixtures.definition("tracker", %{"certificates" => ["AB"]}), [],
+             :certificates},
+            {"removed credential",
+             DefinitionFixtures.definition("tracker", %{
+               "settings" =>
+                 Enum.reject(DefinitionFixtures.settings(), &(&1["name"] == "password"))
+             }), [], :removed_credential},
+            {"retyped credential",
+             DefinitionFixtures.definition("tracker", %{
+               "settings" =>
+                 Enum.map(
+                   DefinitionFixtures.settings(),
+                   &if(&1["name"] == "password", do: %{&1 | "type" => "text"}, else: &1)
+                 )
+             }), [], :retyped_credential},
+            {"fails", DefinitionFixtures.failing("held"), [], :fails},
+            {"not supported", DefinitionFixtures.definition("tracker-ns"), [],
+             {:not_supported, :html_search}},
+            {"newer", DefinitionFixtures.definition(),
+             [{"v13", "tracker.yml", DefinitionFixtures.definition("v13")}],
+             {:needs_newer_cinder, 13}}
+          ] do
+        DefinitionFixtures.mirror!(DefinitionFixtures.definition())
+        row = cardigann!() |> record!([{:success, -60}])
+        DefinitionFixtures.mirror!(candidate, more)
+
+        assert {label, state(row)} ==
+                 {label, {:definition_update_held, reason, ~U[2026-11-26 11:59:00Z]}}
+
+        assert IndexerState.usable?(%{state: state(row)})
+        :ok = Indexers.delete(nil, row.id)
+      end
+    end
+
+    test "a lone held indexer with a success passes the gate and leaves health at ok" do
+      row = cardigann!() |> record!([{:success, 0}])
+      DefinitionFixtures.mirror!(DefinitionFixtures.failing("held"))
+
+      assert {:definition_update_held, :fails, _at} = state(row)
+      assert IndexerState.passes_gate?(@now)
+      assert Native.health() == :ok
+    end
+
+    # The gate newly accepts the three definition states: each path into one, with the gate
+    # asserted after it, and the config_version rises that end the last success.
+    test "each path into a definition state passes the gate; an edit and an Accept end it" do
+      base = DefinitionFixtures.definition()
+
+      hosted =
+        DefinitionFixtures.definition("tracker", %{"description" => "https://new.invalid/"})
+
+      # An apply that holds an update.
+      row = cardigann!() |> record!([{:success, 0}])
+      DefinitionFixtures.mirror!(hosted)
+      assert {:definition_update_held, :hosts, @now} = state(row)
+      assert IndexerState.passes_gate?(@now)
+
+      # An Accept raises config_version: no success under the new copy yet.
+      :ok = Definitions.accept(row.id, DefinitionFixtures.blob_sha(hosted), nil)
+      assert state(row) == :never_checked
+      refute IndexerState.passes_gate?(@now)
+      :ok = Indexers.delete(nil, row.id)
+
+      # A re-check that holds an update: the mirror's copy had no result, then fails.
+      DefinitionFixtures.mirror!(base)
+      row = cardigann!() |> record!([{:success, 0}])
+      unchecked = DefinitionFixtures.definition("tracker", %{"name" => "Unchecked"})
+
+      ExUnit.CaptureLog.capture_log(fn ->
+        {:ok, _} =
+          DefinitionFixtures.apply_files([{"v11", "tracker.yml", unchecked}],
+            check: fn _bytes -> Process.sleep(:infinity) end,
+            timeout_ms: 50
+          )
+      end)
+
+      assert state(row) == {:usable, @now}
+
+      :ok =
+        Definitions.store_results([{DefinitionFixtures.blob_sha(unchecked), {:error, :not_utf8}}])
+
+      assert {:definition_update_held, :fails, @now} = state(row)
+      assert IndexerState.passes_gate?(@now)
+
+      # An edit that raises config_version ends the last success, so the hold no longer passes.
+      fresh = Repo.get!(Cinder.Indexers.ConfiguredIndexer, row.id)
+
+      {:ok, _} =
+        Indexers.update(nil, row.id, fresh.lock_version, %{settings: %{"sort" => "size"}})
+
+      assert state(row) == :never_checked
+      refute IndexerState.passes_gate?(@now)
+      :ok = Indexers.delete(nil, row.id)
+
+      # Removed upstream, then replaced by, through applies.
+      DefinitionFixtures.mirror!(base)
+      row = cardigann!() |> record!([{:success, 0}])
+      {:ok, _} = DefinitionFixtures.apply_files([])
+      assert state(row) == {:removed_upstream, @now}
+      assert IndexerState.passes_gate?(@now)
+
+      successor = DefinitionFixtures.definition("successor", %{"replaces" => ["tracker"]})
+      {:ok, _} = DefinitionFixtures.apply_files([{"v11", "successor.yml", successor}])
+      assert state(row) == {:replaced_by, "successor.yml", @now}
+      assert IndexerState.passes_gate?(@now)
+    end
+
+    test "a first success after a definition state exists reads that state and passes the gate" do
+      base = DefinitionFixtures.definition()
+
+      hosted =
+        DefinitionFixtures.definition("tracker", %{"description" => "https://new.invalid/"})
+
+      row = cardigann!()
+      DefinitionFixtures.mirror!(hosted)
+      assert state(row) == :never_checked
+      refute IndexerState.passes_gate?(@now)
+      record!(row, [{:success, 0}])
+      assert state(row) == {:definition_update_held, :hosts, @now}
+      assert IndexerState.passes_gate?(@now)
+      :ok = Indexers.delete(nil, row.id)
+
+      DefinitionFixtures.mirror!(base)
+      row = cardigann!()
+      {:ok, _} = DefinitionFixtures.apply_files([])
+      assert state(row) == :never_checked
+      refute IndexerState.passes_gate?(@now)
+      record!(row, [{:success, 0}])
+      assert state(row) == {:removed_upstream, @now}
+      assert IndexerState.passes_gate?(@now)
+      :ok = Indexers.delete(nil, row.id)
+
+      DefinitionFixtures.mirror!(base)
+      row = cardigann!()
+      successor = DefinitionFixtures.definition("successor", %{"replaces" => ["tracker"]})
+      {:ok, _} = DefinitionFixtures.apply_files([{"v11", "successor.yml", successor}])
+      assert state(row) == :never_checked
+      refute IndexerState.passes_gate?(@now)
+      record!(row, [{:success, 0}])
+      assert state(row) == {:replaced_by, "successor.yml", @now}
+      assert IndexerState.passes_gate?(@now)
+    end
+
+    test "a held indexer never checked, or in a backoff, reads that state and is not usable" do
+      fresh = cardigann!()
+      failing = cardigann!() |> record!([{:timeout, 0}])
+      DefinitionFixtures.mirror!(DefinitionFixtures.failing("held"))
+
+      assert state(fresh) == :never_checked
+      assert {:failure_backoff, _until, :timeout, 1} = state(failing)
+    end
+
+    test "removed upstream and replaced by keep the last success and stay usable" do
+      removed = cardigann!() |> record!([{:success, 0}])
+      replacer = DefinitionFixtures.definition("successor", %{"replaces" => ["tracker"]})
+
+      assert {:ok, _} = DefinitionFixtures.apply_files([])
+      assert state(removed) == {:removed_upstream, @now}
+      assert IndexerState.usable?(%{state: state(removed)})
+
+      assert {:ok, _} = DefinitionFixtures.apply_files([{"v11", "successor.yml", replacer}])
+      assert state(removed) == {:replaced_by, "successor.yml", @now}
+      assert IndexerState.usable?(%{state: state(removed)})
+    end
+
+    test "red outranks a held update" do
+      row = cardigann!() |> record!([{:success, 0}])
+      DefinitionFixtures.mirror!(DefinitionFixtures.failing("held"))
+      record!(row, [{:rejected_credentials, 0}])
+      assert state(row) == {:credentials_rejected, nil}
+
+      :ok =
+        Definitions.store_results([
+          {DefinitionFixtures.blob_sha(DefinitionFixtures.definition()), {:error, :not_utf8}}
+        ])
+
+      assert Definitions.indexer_codes() == %{row.id => {:no_longer_loads, :not_utf8}}
+      assert state(row) == {:definition_no_longer_loads, :not_utf8}
+    end
+
+    test "an undecryptable indexer reads undecryptable; its hold is a code of its own" do
+      row = cardigann!()
+      :ok = DefinitionFixtures.undecryptable!(row)
+      DefinitionFixtures.mirror!(DefinitionFixtures.definition("tracker", %{"name" => "Renamed"}))
+
+      assert state(row) == :undecryptable
+      assert Definitions.indexer_codes() == %{row.id => {:held, :undecryptable}}
+    end
+
+    test "under the default adapter map a Cardigann row reads not supported: Cardigann" do
+      ConfigCase.put_env(:indexer_adapters, %{newznab: Cinder.Acquisition.Indexer.Newznab})
+      row = cardigann!() |> record!([{:success, 0}])
+      DefinitionFixtures.mirror!(DefinitionFixtures.failing("held"))
+
+      assert state(row) == {:not_supported, :cardigann}
+    end
+
+    test "a type with no adapter wins over a red definition code" do
+      ConfigCase.put_env(:indexer_adapters, %{newznab: Cinder.Acquisition.Indexer.Newznab})
+      unsupported = DefinitionFixtures.definition("tracker-ns")
+      DefinitionFixtures.mirror!(unsupported)
+      row = DefinitionFixtures.cardigann!(unsupported) |> record!([{:success, 0}])
+
+      assert Definitions.indexer_codes() == %{row.id => {:not_supported, :html_search}}
+      assert state(row) == {:not_supported, :cardigann}
     end
   end
 

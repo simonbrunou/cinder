@@ -764,6 +764,8 @@ defmodule Cinder.HealthTest do
   describe "the indexer rows (#1657)" do
     alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
     alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
+    alias Cinder.DefinitionFixtures
+    alias Cinder.Indexers.Definitions
 
     @now ~U[2026-11-26 12:00:00Z]
 
@@ -853,6 +855,40 @@ defmodule Cinder.HealthTest do
 
       assert Enum.map([flare, locked, limited, failing, due], colour) ==
                [:error, :error, :warning, :warning, :warning]
+    end
+
+    # Cardigann rows have no adapter until #1671; Torznab's module stands in for the map's key.
+    test "a definition that no longer loads is red; a held update stays yellow" do
+      put_env(:indexer_source, Native)
+
+      put_env(:indexer_adapters, %{
+        newznab: Cinder.Acquisition.Indexer.Newznab,
+        torznab: Cinder.Acquisition.Indexer.Torznab,
+        cardigann: Cinder.Acquisition.Indexer.Torznab
+      })
+
+      base = DefinitionFixtures.definition()
+      DefinitionFixtures.mirror!(base)
+      broken = DefinitionFixtures.cardigann!(base)
+      :written = IndexerStatus.record(broken, :success, @now)
+
+      :ok =
+        Definitions.store_results([
+          {DefinitionFixtures.blob_sha(base), {:error, :not_utf8}}
+        ])
+
+      assert row(Health.check_all(), "indexer-#{broken.id}").status ==
+               {:error, {:native_indexer, {:definition_no_longer_loads, :not_utf8}, @now}}
+
+      :ok = Cinder.Indexers.delete(nil, broken.id)
+      second = DefinitionFixtures.definition("tracker", %{"name" => "Second"})
+      DefinitionFixtures.mirror!(second)
+      held = DefinitionFixtures.cardigann!(second, %{"password" => "hunter2"})
+      :written = IndexerStatus.record(held, :success, @now)
+      DefinitionFixtures.mirror!(DefinitionFixtures.failing("held"))
+
+      assert row(Health.check_all(), "indexer-#{held.id}").status ==
+               {:warning, {:native_indexer, {:definition_update_held, :fails, @now}, @now}}
     end
 
     test "under Prowlarr or the mock, no per-indexer row" do

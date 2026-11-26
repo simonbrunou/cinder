@@ -45,6 +45,24 @@ defmodule Cinder.Indexers.Definitions do
   - `name_status/1`: what the mirror says about one file name.
   - `picker/0`: the mirror's names with their display fields and load results.
 
+  ## Configured indexers' copies (#1668)
+
+  Each Cardigann configured indexer has one row in `indexer_definition_pins`
+  (`Cinder.Indexers.Definitions.Pin`): the copy it runs, the copy held back from it and the
+  hold's reason.
+
+  - `Cinder.Indexers`' create calls `pin/2` for the copy the form rendered and `attach_pin/2`
+    once the row exists, in its own transaction.
+  - The apply's transaction and `store_results/1`'s re-read every Cardigann configured indexer
+    through `Cinder.Indexers.cardigann_indexers/0` and decide each one's copies with
+    `Cinder.Indexers.Definitions.Hold.decide/1`; a row deleted since the load checks is not
+    read. An apply never writes `configured_indexers`. When it moves the effective base URL of
+    an indexer with no credentials, the same transaction writes one audit row with a nil actor.
+  - `accept/3` makes a held copy the running copy; `held_hosts/1` lists the hosts it adds.
+  - A copy stays while the mirror or a pin's running or held copy uses it.
+  - `indexer_codes/0` gives each pinned indexer's definition code for
+    `Cinder.Acquisition.IndexerSource.Native.IndexerState`.
+
   Every state and status is a code; the web layer owns their texts (#1676).
   """
 
@@ -62,6 +80,10 @@ defmodule Cinder.Indexers.Definitions do
     StoredSet
   }
 
+  alias Cinder.Audit
+  alias Cinder.Indexers
+  alias Cinder.Indexers.ConfiguredIndexer
+  alias Cinder.Indexers.Definitions.{CredentialHosts, Hold, Pin}
   alias Cinder.Indexers.ParserWorker
   alias Cinder.Repo
 
@@ -111,12 +133,13 @@ defmodule Cinder.Indexers.Definitions do
 
   @doc """
   Applies an upstream answer. Returns the new set state, or the refusal, which `set_state/0`
-  then reads too.
+  then reads too. `{:error, changeset}` is a refused audit row of a base URL move, which rolls
+  the whole apply back.
 
   `opts`: `:check`, the load check run on each copy's bytes (`LoadCheck.check/2` with no options
   unless set; a test seam), and `:timeout_ms`, which `check_copies/2` reads.
   """
-  @spec apply_set(Set.t(), keyword()) :: {:ok, state()} | {:error, refusal()}
+  @spec apply_set(Set.t(), keyword()) :: {:ok, state()} | {:error, refusal() | Ecto.Changeset.t()}
   def apply_set(%Set{} = set, opts \\ []) do
     stored = Repo.get(StoredSet, @set_id)
     min = set.versions.min
@@ -264,7 +287,7 @@ defmodule Cinder.Indexers.Definitions do
     |> MapSet.new()
   end
 
-  # The one write of an applied set. #1668 adds the configured indexers' holds and audit here.
+  # The one write of an applied set, the configured indexers' copies included.
   defp swap_set(set, count, copies, results, entries) do
     %{schema_version: version, revision: revision} = Loader.fingerprint()
     insert_copies(copies)
@@ -305,6 +328,7 @@ defmodule Cinder.Indexers.Definitions do
       conflict_target: :id
     )
 
+    decide_pins()
     delete_unused(version, revision)
     {:ok, {:loaded, %{count: count, commit: set.commit, loaded_at: loaded_at}}}
   end
@@ -406,7 +430,14 @@ defmodule Cinder.Indexers.Definitions do
               where:
                 e.blob_sha == parent_as(:copy).blob_sha and e.folder == parent_as(:copy).folder
             )
-          )
+          ) and
+            not exists(
+              from(p in Pin,
+                where:
+                  p.running_copy_id == parent_as(:copy).id or
+                    p.held_copy_id == parent_as(:copy).id
+              )
+            )
       )
     )
 
@@ -549,13 +580,16 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   @doc """
-  Stores `check_copies/2`'s answers under the current fingerprint, in one transaction, and sets
-  each mirror entry's `replaces` from its copy's new answer. An answer for a blob hash no stored
-  copy has any more, since an apply deleted it meanwhile, is dropped.
+  Stores `check_copies/2`'s answers under the current fingerprint, in one transaction, sets
+  each mirror entry's `replaces` from its copy's new answer, and decides every configured
+  indexer's copies again. An answer for a blob hash no stored copy has any more, since an apply
+  deleted it meanwhile, is dropped. `{:error, changeset}` is a refused audit row of a base URL
+  move, which rolls the whole store back.
   """
-  @spec store_results([{String.t(), {:ok, map()} | {:error, term()}}]) :: :ok
+  @spec store_results([{String.t(), {:ok, map()} | {:error, term()}}]) ::
+          :ok | {:error, Ecto.Changeset.t()}
   def store_results(results) do
-    {:ok, :ok} =
+    result =
       Repo.transact(fn ->
         stored = MapSet.new(Repo.all(from(c in Copy, distinct: true, select: c.blob_sha)))
         kept = Enum.filter(results, &MapSet.member?(stored, elem(&1, 0)))
@@ -567,10 +601,11 @@ defmodule Cinder.Indexers.Definitions do
           )
         end
 
+        decide_pins()
         {:ok, :ok}
       end)
 
-    :ok
+    with {:ok, :ok} <- result, do: :ok
   end
 
   @doc """
@@ -662,4 +697,344 @@ defmodule Cinder.Indexers.Definitions do
 
   defp result(%LoadResult{outcome: :fails, detail: detail}),
     do: {:fails, :erlang.binary_to_term(detail, [:safe])}
+
+  @typedoc "A copy `pin/2` checked: its row id, its blob hash and its loaded definition."
+  @type pinned :: %{copy_id: pos_integer(), blob_sha: String.t(), definition: map()}
+
+  @typedoc "A configured indexer's definition code (`indexer_codes/0`)."
+  @type indexer_code ::
+          {:not_supported, term()}
+          | {:no_longer_loads, Loader.reason()}
+          | {:held, Hold.reason() | {:needs_newer_cinder, pos_integer()}}
+          | {:replaced_by, String.t()}
+          | :removed_upstream
+
+  @doc """
+  Checks the copy a Cardigann create pins: the mirror's copy of the file `name` must have the
+  blob hash `blob_sha`, else `{:error, :not_in_mirror}`, and must load, else `{:error, :fails}`.
+  A copy that reads not supported pins. Writes nothing; `attach_pin/2` writes the pin.
+  """
+  @spec pin(String.t(), String.t()) :: {:ok, pinned()} | {:error, :not_in_mirror | :fails}
+  def pin(name, blob_sha) when is_binary(name) and is_binary(blob_sha) do
+    case mirror_copy(name) do
+      %Copy{blob_sha: ^blob_sha} = copy -> pinned(copy)
+      _other -> {:error, :not_in_mirror}
+    end
+  end
+
+  def pin(_name, _blob_sha), do: {:error, :not_in_mirror}
+
+  # The load check fails a copy only where the loader does (`LoadCheck.check/2`), so the loader
+  # alone decides here and also gives the definition the create checks against.
+  defp pinned(copy) do
+    case Loader.load(copy.bytes) do
+      {:ok, definition} ->
+        {:ok, %{copy_id: copy.id, blob_sha: copy.blob_sha, definition: definition}}
+
+      {:error, _reason} ->
+        {:error, :fails}
+    end
+  end
+
+  @doc "Writes the pin of the new configured indexer `id`: it runs the `pinned` copy."
+  @spec attach_pin(pos_integer(), pinned()) :: :ok
+  def attach_pin(id, %{copy_id: copy_id}) do
+    Repo.insert!(%Pin{configured_indexer_id: id, running_copy_id: copy_id})
+    :ok
+  end
+
+  @doc """
+  The loaded definition of the copy the configured indexer `id` runs: `{:error, :no_pin}` for
+  an indexer with no pin, the loader's `{:error, reason}` for a copy that no longer parses.
+  """
+  @spec running_definition(pos_integer()) :: {:ok, map()} | {:error, term()}
+  def running_definition(id) do
+    case Repo.get(Pin, id) do
+      nil -> {:error, :no_pin}
+      pin -> Repo.get!(Copy, pin.running_copy_id).bytes |> Loader.load()
+    end
+  end
+
+  defp mirror_copy(name) do
+    from(c in Copy,
+      join: e in Entry,
+      on: e.blob_sha == c.blob_sha and e.folder == c.folder,
+      where: e.name == ^name
+    )
+    |> Repo.one()
+  end
+
+  # The copy's load result under the current fingerprint, `:unchecked` with none.
+  defp result_of(blob_sha) do
+    case Repo.one(
+           from(r in LoadResult, where: r.blob_sha == ^blob_sha and current_fingerprint(r))
+         ) do
+      nil -> :unchecked
+      row -> result(row)
+    end
+  end
+
+  # Decides every pinned Cardigann configured indexer's copies, inside the caller's transaction.
+  defp decide_pins do
+    pins = Map.new(Repo.all(Pin), &{&1.configured_indexer_id, &1})
+
+    for {row, settings} <- Indexers.cardigann_indexers(), pin = pins[row.id], pin != nil do
+      decide_pin(row, settings, pin)
+    end
+
+    :ok
+  end
+
+  defp decide_pin(row, settings, pin) do
+    running = Repo.get!(Copy, pin.running_copy_id)
+    running_definition = Loader.load(running.bytes)
+    {mirror, newer} = mirror_of(row.definition)
+
+    input = %{
+      running: %{blob_sha: running.blob_sha, definition: running_definition},
+      mirror: mirror && candidate(mirror),
+      newer: newer,
+      stored_url: row.base_url,
+      settings: settings
+    }
+
+    case Hold.decide(input) do
+      :unchanged ->
+        :ok
+
+      {:keep, newer} ->
+        write_pin(pin, pin.running_copy_id, nil, newer)
+
+      {:hold, reason} ->
+        write_pin(pin, pin.running_copy_id, mirror.id, reason)
+
+      {:apply, newer} ->
+        audit_move(
+          row,
+          settings,
+          {running, running_definition},
+          {mirror, input.mirror.definition}
+        )
+
+        write_pin(pin, mirror.id, nil, newer)
+    end
+  end
+
+  # The mirror's copy of the file `name` (nil with none), and the folder above the engine that
+  # holds another copy of it (nil with none).
+  defp mirror_of(name) do
+    case Repo.get_by(Entry, name: name) do
+      nil -> {nil, nil}
+      %Entry{blob_sha: nil} = entry -> {nil, entry.needs_version}
+      entry -> {mirror_copy(name), entry.newer_folder}
+    end
+  end
+
+  defp candidate(copy),
+    do: %{
+      blob_sha: copy.blob_sha,
+      result: result_of(copy.blob_sha),
+      definition: Loader.load(copy.bytes)
+    }
+
+  defp write_pin(pin, running_id, held_id, hold) do
+    hold = if hold, do: :erlang.term_to_binary(hold)
+
+    if {pin.running_copy_id, pin.held_copy_id, pin.hold} != {running_id, held_id, hold} do
+      pin
+      |> Ecto.Changeset.change(running_copy_id: running_id, held_copy_id: held_id, hold: hold)
+      |> Repo.update!()
+    end
+
+    :ok
+  end
+
+  # #1616 rule 13: an applied copy that moves a public indexer's effective base URL.
+  defp audit_move(row, settings, {old, old_definition}, {new, {:ok, new_definition}}) do
+    old_url =
+      case old_definition do
+        {:ok, definition} -> CredentialHosts.effective_base_url(definition, row.base_url)
+        {:error, _reason} -> nil
+      end
+
+    new_url = CredentialHosts.effective_base_url(new_definition, row.base_url)
+
+    if new_url != old_url and not Hold.credentials?(old_definition, settings) do
+      Audit.log_or_rollback(
+        nil,
+        "move_configured_indexer_base_url",
+        {"ConfiguredIndexer", row.id},
+        %{
+          fields: ["base_url"],
+          from_copy: old.blob_sha,
+          to_copy: new.blob_sha
+        }
+      )
+    end
+
+    :ok
+  end
+
+  @doc """
+  Accepts the held definition update of the configured indexer `id`, whose held copy the admin
+  saw as `blob_sha`, in one transaction (#1616 rule 6, #1620 point 12). It refuses, first match:
+
+  - `{:error, :not_found}`: no Cardigann configured indexer `id`, or one with no pin;
+  - `{:error, :undecryptable}`: its secrets do not decrypt;
+  - `{:error, :stale}`: no copy is held, or the held copy's hash is not `blob_sha`;
+  - `{:error, :not_acceptable}`: the hold's reason is not a credential rule
+    (`Hold.credential_reasons/0`).
+
+  Otherwise the held copy becomes the running copy, the copies are decided again, the indexer's
+  `config_version` rises through `Cinder.Indexers.bump_config_version/1`, and one audit row
+  names the reason and the two copy hashes, never a setting value. `{:error, changeset}` is a
+  refused audit row, which rolls it all back.
+  """
+  @spec accept(pos_integer(), String.t(), Indexers.actor()) ::
+          :ok
+          | {:error, :not_found | :undecryptable | :stale | :not_acceptable | Ecto.Changeset.t()}
+  def accept(id, blob_sha, actor) do
+    Repo.transact(fn ->
+      with {:ok, row, settings, pin} <- held_indexer(id),
+           {:ok, held} <- held_copy(pin, blob_sha),
+           {:ok, reason} <- acceptable(pin) do
+        running = Repo.get!(Copy, pin.running_copy_id)
+        :ok = write_pin(pin, held.id, nil, nil)
+        decide_pin(row, settings, Repo.get!(Pin, id))
+        :ok = Indexers.bump_config_version(id)
+
+        Audit.log_or_rollback(
+          actor,
+          "accept_configured_indexer_definition",
+          {"ConfiguredIndexer", id},
+          %{
+            fields: ["definition"],
+            reason: Atom.to_string(reason),
+            from_copy: running.blob_sha,
+            to_copy: held.blob_sha
+          }
+        )
+
+        {:ok, :accepted}
+      end
+    end)
+    |> case do
+      {:ok, :accepted} -> :ok
+      error -> error
+    end
+  end
+
+  defp held_indexer(id) do
+    case {Enum.find(Indexers.cardigann_indexers(), &(elem(&1, 0).id == id)), Repo.get(Pin, id)} do
+      {nil, _pin} -> {:error, :not_found}
+      {_row, nil} -> {:error, :not_found}
+      {{_row, :undecryptable}, _pin} -> {:error, :undecryptable}
+      {{row, settings}, pin} -> {:ok, row, settings, pin}
+    end
+  end
+
+  defp held_copy(%Pin{held_copy_id: nil}, _blob_sha), do: {:error, :stale}
+
+  defp held_copy(pin, blob_sha) do
+    case Repo.get!(Copy, pin.held_copy_id) do
+      %Copy{blob_sha: ^blob_sha} = held -> {:ok, held}
+      _other -> {:error, :stale}
+    end
+  end
+
+  defp acceptable(pin) do
+    reason = hold_of(pin)
+    if reason in Hold.credential_reasons(), do: {:ok, reason}, else: {:error, :not_acceptable}
+  end
+
+  defp hold_of(%Pin{hold: nil}), do: nil
+  defp hold_of(%Pin{hold: hold}), do: :erlang.binary_to_term(hold, [:safe])
+
+  @doc """
+  The credential hosts the held copy of the configured indexer `id` names that its running copy
+  does not, sorted (`CredentialHosts.hosts/2`), for Accept's confirm. Every host of the held
+  copy when the running copy no longer parses, or when the held copy declares a stored secret
+  again (`Hold.declares_again?/3`), since the running copy sent that secret nowhere. Refuses
+  `:not_found` and `:undecryptable` as `accept/3` does, `:stale` with no held copy, and `:fails`
+  for a held copy that does not parse.
+  """
+  @spec held_hosts(pos_integer()) ::
+          {:ok, [CredentialHosts.host()]}
+          | {:error, :not_found | :undecryptable | :stale | :fails}
+  def held_hosts(id) do
+    with {:ok, row, settings, pin} <- held_indexer(id),
+         {:ok, held} <- held_any(pin),
+         {:ok, held_definition} <- loaded(held) do
+      stored = %{stored_url: row.base_url, settings: Map.merge(settings.plain, settings.secrets)}
+
+      running = Loader.load(Repo.get!(Copy, pin.running_copy_id).bytes)
+
+      running_hosts =
+        if match?({:ok, _}, running) and
+             not Hold.declares_again?(running, held_definition, settings),
+           do: CredentialHosts.hosts(elem(running, 1), stored),
+           else: MapSet.new()
+
+      held_definition
+      |> CredentialHosts.hosts(stored)
+      |> MapSet.difference(running_hosts)
+      |> Enum.sort()
+      |> then(&{:ok, &1})
+    end
+  end
+
+  defp held_any(%Pin{held_copy_id: nil}), do: {:error, :stale}
+  defp held_any(pin), do: {:ok, Repo.get!(Copy, pin.held_copy_id)}
+
+  defp loaded(copy) do
+    case Loader.load(copy.bytes) do
+      {:ok, definition} -> {:ok, definition}
+      {:error, _reason} -> {:error, :fails}
+    end
+  end
+
+  @doc """
+  Each pinned configured indexer's definition code, by id; an indexer with none is left out.
+  First match:
+
+  - `{:not_supported, feature}`: its running copy reads not supported, `feature` the first code;
+  - `{:no_longer_loads, reason}`: its running copy fails to load on this build;
+  - `{:held, reason}`: an update is held, `reason` as `Hold.decide/1` gives it, or
+    `{:needs_newer_cinder, version}`;
+  - `{:replaced_by, name}` and `:removed_upstream`, from `name_status/1`.
+
+  A running copy with no load result under the current fingerprint reads as neither red code.
+  """
+  @spec indexer_codes() :: %{pos_integer() => indexer_code()}
+  def indexer_codes do
+    from(p in Pin,
+      join: c in Copy,
+      on: c.id == p.running_copy_id,
+      join: i in ConfiguredIndexer,
+      on: i.id == p.configured_indexer_id,
+      select: {p, c.blob_sha, i.definition}
+    )
+    |> Repo.all()
+    |> Enum.flat_map(fn {pin, blob_sha, name} ->
+      case indexer_code(pin, result_of(blob_sha), name) do
+        nil -> []
+        code -> [{pin.configured_indexer_id, code}]
+      end
+    end)
+    |> Map.new()
+  end
+
+  defp indexer_code(_pin, {:not_supported, [feature | _]}, _name), do: {:not_supported, feature}
+  defp indexer_code(_pin, {:fails, reason}, _name), do: {:no_longer_loads, reason}
+
+  defp indexer_code(%Pin{hold: hold} = pin, _result, _name) when hold != nil,
+    do: {:held, hold_of(pin)}
+
+  defp indexer_code(_pin, _result, name) do
+    case name_status(name) do
+      {:replaced_by, replacer} -> {:replaced_by, replacer}
+      :removed_upstream -> :removed_upstream
+      _other -> nil
+    end
+  end
 end

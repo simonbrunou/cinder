@@ -366,7 +366,12 @@ defmodule Cinder.Health do
 
   defp native_status(state, now)
        when state == :undecryptable or
-              (is_tuple(state) and elem(state, 0) in [:not_supported, :credentials_rejected]),
+              (is_tuple(state) and
+                 elem(state, 0) in [
+                   :not_supported,
+                   :credentials_rejected,
+                   :definition_no_longer_loads
+                 ]),
        do: {:error, {:native_indexer, state, now}}
 
   defp native_status(state, now), do: {:warning, {:native_indexer, state, now}}

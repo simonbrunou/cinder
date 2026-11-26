@@ -63,12 +63,14 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
   def secret_fields(type) when type in [:newznab, :torznab], do: ["api_key"]
   def secret_fields(_type), do: []
 
-  @doc "A new row's changeset. A Cardigann row is refused until definitions can be pinned."
+  @doc """
+  A new row's changeset. A Cardigann row needs its definition file name; `Cinder.Indexers`
+  checks its base URL and settings against the copy it pins.
+  """
   @spec create_changeset(map()) :: Ecto.Changeset.t()
   def create_changeset(attrs) do
     %__MODULE__{}
     |> cast(plain(attrs), @create_fields)
-    |> refuse_cardigann()
     |> validate()
   end
 
@@ -85,12 +87,6 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
   # Secret inputs travel apart from the plain attrs. A `secrets` key left among them would stay in
   # the changeset's params, which a form renders from.
   defp plain(attrs), do: Map.drop(attrs, ["secrets", :secrets])
-
-  defp refuse_cardigann(changeset) do
-    if get_field(changeset, :type) == :cardigann,
-      do: add_error(changeset, :type, "is invalid", validation: :cardigann_unsupported),
-      else: changeset
-  end
 
   defp refuse_change(changeset, field) do
     if Map.has_key?(changeset.changes, field),
@@ -117,6 +113,9 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
         |> validate_change(:api_path, &api_path_errors/2)
         |> refuse_definition()
         |> validate_settings(type)
+
+      :cardigann ->
+        validate_required(changeset, :definition)
 
       _other ->
         changeset

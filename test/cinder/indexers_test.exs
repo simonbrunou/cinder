@@ -121,11 +121,13 @@ defmodule Cinder.IndexersTest do
                Indexers.fetch_with_secrets(row.id)
     end
 
-    test "a Cardigann create returns {:error, changeset} with an error on type" do
+    # Cardigann creates pin a definition copy: `Cinder.IndexersCardigannTest` covers them.
+    test "a Cardigann create with no mirror copy is refused on its definition" do
       assert {:error, changeset} =
-               Indexers.create(nil, attrs(%{type: :cardigann, definition: "nyaasi"}), %{})
+               Indexers.create(nil, attrs(%{type: :cardigann, definition: "nyaasi.yml"}), %{})
 
-      assert refusals(changeset, :type) == [{"is invalid", :cardigann_unsupported}]
+      assert refusals(changeset, :type) == []
+      assert refusals(changeset, :definition) == [{"is invalid", :definition_not_in_mirror}]
       assert Repo.aggregate(ConfiguredIndexer, :count) == 0
     end
 

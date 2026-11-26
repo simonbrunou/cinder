@@ -35,11 +35,12 @@ defmodule Cinder.Indexers do
       `secrets_readable`.
   """
 
+  import Ecto.Changeset, only: [validate_change: 3]
   import Ecto.Query
 
   alias Cinder.Accounts.User
   alias Cinder.Audit
-  alias Cinder.Indexers.{ConfiguredIndexer, Secrets}
+  alias Cinder.Indexers.{CardigannSettings, ConfiguredIndexer, Definitions, Secrets}
   alias Cinder.Repo
 
   @type actor :: User.t() | nil
@@ -53,11 +54,78 @@ defmodule Cinder.Indexers do
   @spec create(actor(), map(), map()) :: write_result()
   def create(_actor, attrs, secrets \\ %{}) do
     changeset = ConfiguredIndexer.create_changeset(attrs)
-    type = Ecto.Changeset.get_field(changeset, :type)
 
+    create_typed(changeset, Ecto.Changeset.get_field(changeset, :type), attrs, secrets)
+  end
+
+  defp create_typed(changeset, :cardigann, attrs, secrets),
+    do: Repo.transact(fn -> create_cardigann(changeset, blob_sha(attrs), secrets) end)
+
+  defp create_typed(changeset, type, _attrs, secrets) do
     with {:ok, values} <- create_secrets(changeset, type, secrets) do
       Repo.transact(fn -> insert_with_secrets(changeset, values) end)
     end
+  end
+
+  defp blob_sha(attrs), do: Map.get(attrs, :definition_blob_sha, attrs["definition_blob_sha"])
+
+  # A Cardigann create pins the copy the form rendered, then checks the base URL and the
+  # settings against it, all inside one transaction.
+  defp create_cardigann(%Ecto.Changeset{valid?: false} = changeset, _blob_sha, _secrets),
+    do: {:error, %{changeset | action: :insert}}
+
+  defp create_cardigann(changeset, blob_sha, secrets) do
+    name = Ecto.Changeset.get_field(changeset, :definition)
+    input = Ecto.Changeset.get_field(changeset, :settings)
+
+    with {:ok, pinned} <- pin(changeset, name, blob_sha),
+         :ok <- check_link(changeset, pinned.definition, :insert),
+         {:ok, plain, values} <- cardigann_values(changeset, pinned.definition, input, secrets),
+         {:ok, row} <-
+           changeset
+           |> Ecto.Changeset.put_change(:settings, plain)
+           |> insert_with_secrets(values) do
+      :ok = Definitions.attach_pin(row.id, pinned)
+      {:ok, row}
+    end
+  end
+
+  defp pin(changeset, name, blob_sha) do
+    case Definitions.pin(name, blob_sha) do
+      {:ok, pinned} ->
+        {:ok, pinned}
+
+      {:error, reason} ->
+        {:error, refuse(changeset, :definition, pin_validation(reason), :insert)}
+    end
+  end
+
+  defp pin_validation(:not_in_mirror), do: :definition_not_in_mirror
+  defp pin_validation(:fails), do: :definition_fails
+
+  # The base URL must be one of the copy's links; Ecto runs the check only when the base URL
+  # changes, so an edit of other fields keeps a URL the running copy now lists as legacy.
+  defp check_link(changeset, definition, action) do
+    changeset =
+      validate_change(changeset, :base_url, fn field, url ->
+        if url in (definition.links || []),
+          do: [],
+          else: [{field, {"is invalid", validation: :base_url_links}}]
+      end)
+
+    if changeset.valid?, do: :ok, else: {:error, %{changeset | action: action}}
+  end
+
+  defp cardigann_values(changeset, definition, input, secrets) do
+    case CardigannSettings.create(definition, input || %{}, secrets) do
+      {:ok, plain, values} -> {:ok, plain, values}
+      {:error, field, validation} -> {:error, refuse(changeset, field, validation, :insert)}
+    end
+  end
+
+  defp refuse(changeset, field, validation, action) do
+    changeset = Ecto.Changeset.add_error(changeset, field, "is invalid", validation: validation)
+    %{changeset | action: action}
   end
 
   defp create_secrets(changeset, type, secrets) do
@@ -135,15 +203,68 @@ defmodule Cinder.Indexers do
   # the row's is refused here, because Ecto skips the optimistic lock's check on a changeset that
   # fails validation; the immediate transaction keeps another write out until the save.
   defp edit(row, lock_version, attrs, secrets) do
-    changeset = ConfiguredIndexer.edit_changeset(row, attrs)
+    changeset = ConfiguredIndexer.edit_changeset(row, Map.drop(attrs, plain_settings_keys(row)))
 
+    if row.lock_version != lock_version,
+      do: {:error, stale_error(changeset)},
+      else: edit_fields(row, changeset, attrs, secrets)
+  end
+
+  # A Cardigann edit's settings merge into the stored ones (`edit_cardigann/4`), so the cast
+  # never sees them.
+  defp plain_settings_keys(%ConfiguredIndexer{type: :cardigann}), do: [:settings, "settings"]
+  defp plain_settings_keys(_row), do: []
+
+  defp edit_fields(%ConfiguredIndexer{type: :cardigann} = row, changeset, attrs, secrets) do
+    input = Map.get(attrs, :settings, attrs["settings"]) || %{}
+
+    if input == %{} and secrets == %{} and not Map.has_key?(changeset.changes, :base_url),
+      do: finish_edit(changeset, row, :unchanged),
+      else: edit_cardigann(row, changeset, input, secrets)
+  end
+
+  defp edit_fields(row, changeset, _attrs, secrets) do
     case Secrets.merge(Secrets.open(row), secrets, ConfiguredIndexer.secret_fields(row.type)) do
-      _merge when row.lock_version != lock_version ->
-        {:error, stale_error(changeset)}
+      {:error, tag} -> {:error, secrets_error(changeset, tag, :update)}
+      merge -> finish_edit(changeset, row, merge)
+    end
+  end
 
-      {:error, tag} ->
-        {:error, secrets_error(changeset, tag, :update)}
+  # A Cardigann edit that touches the base URL, a setting or a secret checks it against the
+  # running copy, never the mirror's.
+  defp edit_cardigann(row, changeset, input, secrets) do
+    stored = Secrets.open(row)
+    secret_keys = MapSet.new(if match?({:ok, _}, stored), do: Map.keys(elem(stored, 1)), else: [])
 
+    with {:ok, definition} <- running_definition(row, changeset),
+         :ok <- check_link(changeset, definition, :update),
+         {:ok, plain} <- edit_plain(changeset, definition, row.settings, secret_keys, input) do
+      fields = CardigannSettings.secret_fields(definition, plain, stored)
+      changeset = Ecto.Changeset.put_change(changeset, :settings, plain)
+
+      case CardigannSettings.edit_secrets(definition, stored, secrets, fields) do
+        {:error, field, validation} -> {:error, refuse(changeset, field, validation, :update)}
+        merge -> finish_edit(changeset, row, merge)
+      end
+    end
+  end
+
+  defp running_definition(row, changeset) do
+    case Definitions.running_definition(row.id) do
+      {:ok, definition} -> {:ok, definition}
+      {:error, _reason} -> {:error, refuse(changeset, :definition, :definition_fails, :update)}
+    end
+  end
+
+  defp edit_plain(changeset, definition, stored, secret_keys, input) do
+    case CardigannSettings.edit_plain(definition, stored, secret_keys, input) do
+      {:ok, plain} -> {:ok, plain}
+      {:error, field, validation} -> {:error, refuse(changeset, field, validation, :update)}
+    end
+  end
+
+  defp finish_edit(changeset, row, merge) do
+    case merge do
       :unchanged ->
         {:ok, bump_counters(changeset, []), audit_detail(changeset, [])}
 
@@ -284,6 +405,42 @@ defmodule Cinder.Indexers do
     |> ordered()
     |> Repo.all()
     |> Enum.map(&%{&1 | secrets_readable: Secrets.open(&1) != :unreadable})
+  end
+
+  @doc """
+  Every Cardigann configured indexer, enabled or not, by id, each with its stored values: its
+  plain `settings` and its decrypted secrets, or `:undecryptable` when they do not decrypt.
+  `Cinder.Indexers.Definitions` reads it inside its write transactions.
+  """
+  @spec cardigann_indexers() :: [
+          {ConfiguredIndexer.t(), %{plain: map(), secrets: Secrets.values()} | :undecryptable}
+        ]
+  def cardigann_indexers do
+    ConfiguredIndexer
+    |> where([c], c.type == :cardigann)
+    |> order_by([c], asc: c.id)
+    |> Repo.all()
+    |> Enum.map(fn row ->
+      case Secrets.open(row) do
+        {:ok, values} -> {row, %{plain: row.settings, secrets: values}}
+        :unreadable -> {row, :undecryptable}
+      end
+    end)
+  end
+
+  @doc """
+  Raises `config_version` and `lock_version` of the configured indexer `id` by one: Accept of a
+  held definition update (`Cinder.Indexers.Definitions.accept/3`) changes what the indexer runs,
+  and a form opened before it must reload. Runs inside the caller's transaction.
+  """
+  @spec bump_config_version(pos_integer()) :: :ok | {:error, :not_found}
+  def bump_config_version(id) do
+    case Repo.update_all(from(c in ConfiguredIndexer, where: c.id == ^id),
+           inc: [config_version: 1, lock_version: 1]
+         ) do
+      {1, _rows} -> :ok
+      {0, _rows} -> {:error, :not_found}
+    end
   end
 
   defp ordered(query), do: order_by(query, [c], asc: c.priority, asc: c.id)
