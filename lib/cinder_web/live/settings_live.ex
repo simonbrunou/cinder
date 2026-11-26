@@ -11,8 +11,9 @@ defmodule CinderWeb.SettingsLive do
   Clear box to remove it. "Test connection" probes the **saved** config, so save first.
   The grouped fields render via `CinderWeb.SettingsComponents` (shared with `/setup`). The
   Indexers group also holds `CinderWeb.IndexersComponent`, the configured indexers' table, whose
-  buttons save at once and add no field to the form; the page forwards the per-indexer Test
-  runner's messages to it.
+  buttons save at once and add no field to the form, and whose Add and Edit dialogs render
+  outside the form, in a portal to `body`; the page forwards the per-indexer Test runner's
+  messages to it.
   """
   use CinderWeb, :live_view
 

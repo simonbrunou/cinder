@@ -282,6 +282,19 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
+  @doc """
+  The Prowlarr URL the admin set, in `/settings` or through the environment: the `base_url`
+  this module runs with, or nil when none is set or it is blank. Unlike a search, it never
+  falls back to `#{@default_base_url}`.
+  """
+  @spec saved_base_url() :: String.t() | nil
+  def saved_base_url do
+    case Keyword.get(config(), :base_url) do
+      url when is_binary(url) -> if String.trim(url) == "", do: nil, else: url
+      _none -> nil
+    end
+  end
+
   defp error({:ok, %{status: status}}), do: {:error, {:prowlarr_status, status}}
   defp error({:error, reason}), do: {:error, reason}
 

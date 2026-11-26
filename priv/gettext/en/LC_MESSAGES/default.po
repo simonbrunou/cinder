@@ -164,6 +164,7 @@ msgid "Can't demote the last admin."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/issue_components.ex
 #: lib/cinder_web/live/library_adoption_live.ex
 #: lib/cinder_web/live/library_live.ex
@@ -221,6 +222,7 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
 msgid "Clear saved value"
@@ -467,6 +469,7 @@ msgstr ""
 msgid "Downloads"
 msgstr ""
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/movie_detail_live.ex
 #: lib/cinder_web/live/profiles_live.ex
 #: lib/cinder_web/live/series_detail_components.ex
@@ -950,6 +953,7 @@ msgstr ""
 msgid "Roles and request quotas."
 msgstr ""
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/series_detail_components.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
@@ -1296,6 +1300,7 @@ msgstr ""
 msgid "to your account now."
 msgstr ""
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
 msgid "•••• saved (leave blank to keep)"
@@ -8161,4 +8166,214 @@ msgstr ""
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "%{name} no longer exists."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "%{name} added."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "%{name} saved."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "1 to 50. A lower number comes first in results."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "A new base URL or any changed credential drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "API key"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "API path"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Add indexer"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Additional parameters"
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Another indexer already has this name."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Any Usenet indexer with an API key"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Any torrent indexer with a Torznab API, or Jackett and Prowlarr"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Back"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Base URL"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder tests an enabled indexer when you save it."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Close"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Edit %{name}"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Edit indexer"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Enabled"
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter a URL with a host name."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter a name."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter a path that starts with a single /, such as /api."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter a valid URL, such as https://indexer.example."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter a whole number from 1 to 50."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter the API key as plain text."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter the indexer's URL."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter the parameters as &name=value pairs, such as &cat=2000."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer type matches."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Priority"
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Put the API key in the API key field, not in additional parameters."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Remove the part from the # on from the URL."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Remove the query, from the ? on, from the URL."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Remove the user name and password from the URL."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Save and test"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Search indexer types"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Searched through Prowlarr: Prowlarr drops results that have no size or no categories, and dates undated results now."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Start the URL with http:// or https://."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "The saved API key can't be decrypted: type it again, or tick Clear, before you save a key."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer changed in another tab: reload it before saving."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer was deleted in another tab."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer's saved secrets can't be decrypted. Type every secret again, or tick its Clear box, before you save a secret."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Use a port from 1 to 65535."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Kind:"
 msgstr ""

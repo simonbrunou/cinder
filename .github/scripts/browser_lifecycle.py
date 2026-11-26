@@ -10,7 +10,9 @@ future change to either has the same chance of being caught before review as eve
 this app. Cases 8 to 10 cover #702: a failed poster whose card a live update re-renders, a
 poster whose `src` a live update changes, and a stalled poster whose 3-second reveal must
 survive a re-render. Case 11 adds a passkey and signs in with it (#1560). Case 12 drives the
-indexers table's switches and Delete in /settings, and checks its width at 390 px (#1660).
+indexers table's switches and Delete in /settings, and checks its width at 390 px (#1660). Case
+13 drives its Add and Edit dialogs: the portal, typed values across Test finishes, the Tab trap,
+Escape and the focus it returns, and a save (#1661).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -1017,6 +1019,116 @@ def case_12_indexer_switches_in_the_settings_form(page):
         delete_indexer(second)
 
 
+def start_indexer_test(indexer_id):
+    """Starts a per-indexer Test in the running node, as the table's Test button does. A seeded
+    indexer's host ends in `.invalid`, so its Test ends at once on a failed lookup."""
+    rpc(
+        f"Cinder.Acquisition.IndexerSource.Native.TestRunner.start({indexer_id}); "
+        'IO.puts("RPCRESULT:ok")'
+    )
+
+
+def focus_in(page, selector):
+    return page.evaluate(
+        "(selector) => !!document.querySelector(selector)?.contains(document.activeElement)",
+        selector,
+    )
+
+
+def case_13_indexer_dialogs(page):
+    """The Add and Edit dialogs of the indexers table (#1661). With the edit dialog open and a
+    name and key typed: #settings-form's FormData holds no indexer field and the dialog's form is
+    not inside #settings-form; the typed name and key stay after another row's Test ends and
+    after the edited row's Test ends; Tab stays inside the dialog. Escape closes each dialog and
+    focus returns to the button that opened it, and a real save of a typed key stores it and
+    returns focus to its Edit button."""
+    first = seed_indexer("CI Dialog Alpha", 30)
+    second = seed_indexer("CI Dialog Bravo", 31)
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        settings = context.new_page()
+        login(settings)
+        settings.goto(f"{BASE_URL}/settings?group=indexer")
+        wait_for_liveview(settings)
+        notice = settings.locator("#indexers-notice")
+        box = settings.locator("#indexer-dialog-box")
+        edit = settings.locator(f"#indexer-{first}-edit")
+
+        edit.focus()
+        settings.keyboard.press("Enter")
+        expect(box).to_be_visible(timeout=5_000)
+        settings.wait_for_function(
+            "() => document.getElementById('indexer-dialog-box')"
+            "?.contains(document.activeElement)",
+            timeout=5_000,
+        )
+        name = settings.locator("#indexer-form-name")
+        key = settings.locator("#indexer-form input[name='secrets[api_key]']")
+        name.fill("CI typed name")
+        key.fill("ci-typed-key")
+        # LiveView marks the form while a change event awaits its reply: once the mark is gone,
+        # the typed name is in the component's assigns.
+        expect(settings.locator("#indexer-form.phx-change-loading")).to_have_count(0)
+
+        leaks = settings.evaluate(
+            """() => {
+              const form = document.getElementById("settings-form");
+              const names = [...new FormData(form).keys()];
+              return {names: names.filter((n) => /^(indexer|secrets)\\[/.test(n)),
+                      nested: form.contains(document.getElementById("indexer-form")),
+                      total: names.length};
+            }"""
+        )
+        if leaks["names"] or leaks["nested"] or leaks["total"] == 0:
+            raise CaseFailure(
+                "case 13 (portal): #settings-form holds indexer fields or the dialog form, "
+                f"{leaks!r}"
+            )
+
+        for indexer_id, label in [(second, "CI Dialog Bravo"), (first, "CI Dialog Alpha")]:
+            start_indexer_test(indexer_id)
+            expect(notice).to_contain_text(f"Test of {label}", timeout=15_000)
+            expect(name).to_have_value("CI typed name")
+            expect(key).to_have_value("ci-typed-key")
+
+        # Tab past every control twice over: focus never leaves the dialog.
+        for step in range(30):
+            settings.keyboard.press("Tab")
+            if not focus_in(settings, "#indexer-dialog-box"):
+                raise CaseFailure(f"case 13 (Tab): focus left the dialog after {step + 1} Tab(s)")
+
+        settings.keyboard.press("Escape")
+        expect(box).to_have_count(0, timeout=5_000)
+        expect(edit).to_be_focused()
+
+        add = settings.locator("#indexers-add")
+        add.focus()
+        settings.keyboard.press("Enter")
+        expect(settings.locator("#indexer-kind-query")).to_be_focused(timeout=5_000)
+        settings.keyboard.press("Escape")
+        expect(box).to_have_count(0, timeout=5_000)
+        expect(add).to_be_focused()
+
+        edit.click()
+        expect(box).to_be_visible(timeout=5_000)
+        settings.locator("#indexer-form-name").fill("CI Dialog Saved")
+        settings.locator("#indexer-form input[name='secrets[api_key]']").fill("ci-saved-key")
+        settings.locator("#indexer-form-save").click()
+        expect(notice).to_have_text("CI Dialog Saved saved.", timeout=5_000)
+        expect(box).to_have_count(0)
+        expect(edit).to_be_focused()
+        stored = rpc(
+            f"{{:ok, row}} = Cinder.Indexers.fetch_with_secrets({first}); "
+            'IO.puts("RPCRESULT:#{row.name}|#{row.secrets["api_key"] == "ci-saved-key"}")'
+        )
+        if stored != "CI Dialog Saved|true":
+            raise CaseFailure(f"case 13 (save): the store read back {stored!r}")
+    finally:
+        context.close()
+        delete_indexer(first)
+        delete_indexer(second)
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -1036,6 +1148,7 @@ CASES = [
         "case12_indexer_switches_in_the_settings_form",
         case_12_indexer_switches_in_the_settings_form,
     ),
+    ("case13_indexer_dialogs", case_13_indexer_dialogs),
 ]
 
 

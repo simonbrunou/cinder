@@ -8,9 +8,21 @@ defmodule CinderWeb.IndexersComponent do
   `Cinder.Acquisition.IndexerSource.Native.IndexerState.list/1`, the read the dashboard rows use,
   worded by `CinderWeb.IndexerStateText`.
 
-  It renders buttons only, each `type="button"` with no `name`, so the host form's payload never
-  holds an indexer field and `FormState` (`assets/js/form_state.js`), which skips buttons,
-  restores nothing onto them. The enable control is a `role="switch"` button.
+  Inside the host form it renders buttons only, each `type="button"` with no `name`, so the host
+  form's payload never holds an indexer field and `FormState` (`assets/js/form_state.js`), which
+  skips buttons, restores nothing onto them. The enable control is a `role="switch"` button.
+
+  "Add indexer" and each Newznab or Torznab row's Edit open a dialog (#1661), rendered with
+  `<.portal>` to `body`, so its form is never inside the host form. Add's step 1 searches the
+  types by name and description; step 2, and Edit, render the form of `CinderWeb.IndexerDialog`,
+  which keeps the typed non-secret values across re-renders and saves through `Cinder.Indexers`.
+  The API key input posts under `secrets[api_key]`, which `config :phoenix, :filter_parameters`
+  filters from the logs, and its value goes from the save's params to the store, never into an
+  assign. A save of an enabled indexer tries to start its Test through `TestRunner.start/1` after
+  a create and after an edit that raised `config_version`; while a Test of that indexer still
+  runs, the save starts none. A refused save moves focus to the first field it refused. Each
+  dialog wraps focus, closes on Escape, and gives focus back to the button that opened it when it
+  goes, or to "Add indexer" once the edited indexer's row is gone.
 
   Its own actions save at once and say so in one `role="status"` line. The switch saves through
   `Cinder.Indexers.set_enabled/4`, checked against the `lock_version` the row was read with, and
@@ -35,8 +47,10 @@ defmodule CinderWeb.IndexersComponent do
   The host subscribes to `TestRunner.topic/0` before the component's first render reads
   `TestRunner.running/0`, and forwards each message with
   `send_update(CinderWeb.IndexersComponent, id: id, runner: message)`; a finish reads the rows and
-  the running Tests again. Each event's id is client-controlled: one that is no integer, or names
-  no row, changes nothing.
+  the running Tests again, and leaves an open dialog as it is. Each event's payload is
+  client-controlled: an id that is no integer or names no row, a type the dialogs do not add,
+  and a save whose `indexer` or `secrets` is not a map change nothing. A form value that is not
+  text, or under a key the form does not render, is left out of the save.
 
   Required assigns: `id` and `actor`, the `%User{}` the audit rows name.
   """
@@ -46,7 +60,10 @@ defmodule CinderWeb.IndexersComponent do
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, TestRunner}
   alias Cinder.Indexers
-  alias CinderWeb.IndexerStateText
+  alias CinderWeb.{IndexerDialog, IndexerStateText}
+
+  # The types the Add and Edit dialogs handle; Cardigann's form comes with #1676.
+  @kinds [:newznab, :torznab]
 
   @impl true
   def mount(socket),
@@ -62,7 +79,11 @@ defmodule CinderWeb.IndexersComponent do
 
     if Map.has_key?(socket.assigns, :rows),
       do: {:ok, socket},
-      else: {:ok, socket |> assign(notice: nil, testing: TestRunner.running()) |> load_rows()}
+      else:
+        {:ok,
+         socket
+         |> assign(notice: nil, dialog: nil, opener: nil, testing: TestRunner.running())
+         |> load_rows()}
   end
 
   defp runner_message(socket, {TestRunner, :started, id}),
@@ -207,7 +228,105 @@ defmodule CinderWeb.IndexersComponent do
     end
   end
 
+  def handle_event("open_add", _params, socket),
+    do: {:noreply, assign(socket, dialog: %{step: :pick, query: ""}, opener: "indexers-add")}
+
+  def handle_event("search", %{"query" => query}, %{assigns: %{dialog: %{step: :pick}}} = socket)
+      when is_binary(query),
+      do: {:noreply, assign(socket, dialog: %{socket.assigns.dialog | query: query})}
+
+  def handle_event("pick", %{"type" => raw}, %{assigns: %{dialog: %{step: :pick}}} = socket) do
+    case Enum.find(@kinds, &(Atom.to_string(&1) == raw)) do
+      nil -> {:noreply, socket}
+      type -> {:noreply, assign(socket, dialog: IndexerDialog.add(type))}
+    end
+  end
+
+  def handle_event("back", _params, %{assigns: %{dialog: %{mode: :add}}} = socket),
+    do: {:noreply, assign(socket, dialog: %{step: :pick, query: ""})}
+
+  def handle_event("close", _params, %{assigns: %{dialog: %{deleted?: true}}} = socket),
+    do: {:noreply, socket |> close_dialog("indexers-add") |> load_rows()}
+
+  def handle_event("close", _params, %{assigns: %{dialog: %{}}} = socket),
+    do: {:noreply, close_dialog(socket, socket.assigns.opener)}
+
+  def handle_event("open_edit", %{"id" => raw}, socket) do
+    case find_row(socket, raw) do
+      %{type: type} = row when type in @kinds ->
+        {:noreply,
+         assign(socket, dialog: IndexerDialog.edit(row.id), opener: "indexer-#{row.id}-edit")}
+
+      _other ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("change", params, %{assigns: %{dialog: %{step: :form}}} = socket),
+    do: {:noreply, assign(socket, dialog: IndexerDialog.change(socket.assigns.dialog, params))}
+
+  # The dialog's form always posts both maps: a save that lacks either changes nothing.
+  def handle_event(
+        "save",
+        %{"indexer" => %{}, "secrets" => %{}} = params,
+        %{assigns: %{dialog: %{step: :form, deleted?: false}}} = socket
+      ),
+      do: save(socket, params)
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # The dialog goes, and keyboard focus goes back to the button that opened it, or to "Add
+  # indexer" when that button's row is gone: `phx:focus-invalid` (`assets/js/app.js`) focuses an
+  # element by id once the patch is applied. A `JS.pop_focus/0` from the dialog's `phx-remove`
+  # never ran on the element the portal moved to `body` (browser case 13).
+  defp close_dialog(socket, opener) do
+    opener =
+      if opener == "indexers-add" or
+           Enum.any?(socket.assigns.rows, &(opener == "indexer-#{&1.id}-edit")),
+         do: opener,
+         else: "indexers-add"
+
+    socket |> assign(dialog: nil) |> push_event("focus-invalid", %{id: opener})
+  end
+
+  # A refused save sends focus to the first field it refused, in the form's order, as a refused
+  # save of the settings form does; a refusal shown above the fields moves none.
+  defp focus_refusal(socket, dialog) do
+    case Enum.find(IndexerDialog.field_ids(dialog), fn {field, _id} -> dialog.errors[field] end) do
+      {_field, id} -> push_event(socket, "focus-invalid", %{id: id})
+      nil -> socket
+    end
+  end
+
+  # The secret input goes from `params` to the store and is never assigned. A save of an enabled
+  # indexer tries to start its Test after a create, and after an edit that raised
+  # `config_version`: `start_test/1` says when it starts none.
+  defp save(socket, params) do
+    dialog = socket.assigns.dialog
+
+    case IndexerDialog.save(dialog, socket.assigns.actor, params) do
+      {:ok, row} ->
+        if row.enabled and IndexerDialog.test_on_save?(dialog, row), do: start_test(row.id)
+
+        notice =
+          if dialog.mode == :add,
+            do: gettext("%{name} added.", name: row.name),
+            else: gettext("%{name} saved.", name: row.name)
+
+        {:noreply,
+         socket
+         |> assign(notice: notice)
+         |> close_dialog(socket.assigns.opener)
+         |> load_rows()}
+
+      {:error, dialog} ->
+        {:noreply, socket |> assign(dialog: dialog) |> focus_refusal(dialog)}
+    end
+  end
+
+  # `{:error, :running}`: a Test of that indexer started before the save still runs, and its
+  # answer is dropped for the edit (`Native.test_indexer/1`); the save starts none of its own.
+  defp start_test(id), do: _started = TestRunner.start(id)
 
   defp find_row(socket, raw) when is_binary(raw) do
     case Integer.parse(raw) do
@@ -338,7 +457,37 @@ defmodule CinderWeb.IndexersComponent do
        else: question
   end
 
+  defp editable?(type), do: type in @kinds
+
   defp kind(type), do: type |> Atom.to_string() |> String.capitalize()
+
+  # Step 1's list: each type the dialogs add, with what it reaches.
+  defp kind_entries do
+    [
+      %{
+        type: :newznab,
+        name: "Newznab",
+        description: gettext("Any Usenet indexer with an API key")
+      },
+      %{
+        type: :torznab,
+        name: "Torznab",
+        description: gettext("Any torrent indexer with a Torznab API, or Jackett and Prowlarr")
+      }
+    ]
+  end
+
+  # The entries whose name or description holds the query, case aside.
+  defp matching_kinds(query) do
+    needle = query |> String.trim() |> String.downcase()
+
+    Enum.filter(kind_entries(), fn entry ->
+      String.contains?(String.downcase(entry.name), needle) or
+        String.contains?(String.downcase(entry.description), needle)
+    end)
+  end
+
+  defp close_js(myself), do: JS.push("close", target: myself)
 
   defp protocol(:usenet), do: gettext("Usenet")
   defp protocol(:torrent), do: gettext("Torrent")
@@ -347,6 +496,18 @@ defmodule CinderWeb.IndexersComponent do
   def render(assigns) do
     ~H"""
     <div id={@id} class="mb-4 space-y-2">
+      <div class="flex justify-end">
+        <.button
+          type="button"
+          size="sm"
+          id="indexers-add"
+          phx-click="open_add"
+          phx-target={@myself}
+        >
+          {gettext("Add indexer")}
+        </.button>
+      </div>
+
       <p :if={@rows == []} id="indexers-empty" class="text-sm text-base-content/70">
         {gettext("No indexer added. Add one, or import them from Prowlarr.")}
       </p>
@@ -420,6 +581,19 @@ defmodule CinderWeb.IndexersComponent do
                     {gettext("Test")}
                   </.button>
                   <.button
+                    :if={editable?(row.type)}
+                    type="button"
+                    variant="neutral"
+                    size="sm"
+                    id={"indexer-#{row.id}-edit"}
+                    phx-click="open_edit"
+                    phx-target={@myself}
+                    phx-value-id={row.id}
+                    aria-label={gettext("Edit %{name}", name: row.name)}
+                  >
+                    {gettext("Edit")}
+                  </.button>
+                  <.button
                     type="button"
                     variant="ghost"
                     size="sm"
@@ -443,6 +617,254 @@ defmodule CinderWeb.IndexersComponent do
       </div>
 
       <p id="indexers-notice" role="status" class="text-sm">{@notice}</p>
+
+      <.portal :if={@dialog} id="indexer-dialog" target="body">
+        <div
+          id="indexer-dialog-backdrop"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          phx-window-keydown={close_js(@myself)}
+          phx-key="Escape"
+        >
+          <.focus_wrap
+            id="indexer-dialog-box"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="indexer-dialog-title"
+            class="max-h-full w-full max-w-lg overflow-y-auto rounded-box bg-base-100 p-6 shadow-xl"
+          >
+            <.pick_step :if={@dialog.step == :pick} dialog={@dialog} myself={@myself} />
+            <.form_step :if={@dialog.step == :form} dialog={@dialog} myself={@myself} />
+          </.focus_wrap>
+        </div>
+      </.portal>
+    </div>
+    """
+  end
+
+  attr :dialog, :map, required: true
+  attr :myself, :any, required: true
+
+  defp pick_step(assigns) do
+    assigns =
+      assign(assigns,
+        kinds: matching_kinds(assigns.dialog.query),
+        form: to_form(%{"query" => assigns.dialog.query})
+      )
+
+    ~H"""
+    <div id="indexer-dialog-pick" class="space-y-4" phx-mounted={JS.focus_first()}>
+      <h2 id="indexer-dialog-title" class="text-lg font-semibold">{gettext("Add indexer")}</h2>
+      <.form
+        for={@form}
+        id="indexer-kind-search"
+        phx-change="search"
+        phx-submit="search"
+        phx-target={@myself}
+      >
+        <.input
+          type="search"
+          field={@form[:query]}
+          id="indexer-kind-query"
+          label={gettext("Search indexer types")}
+          autocomplete="off"
+        />
+      </.form>
+      <ul id="indexer-kinds" class="space-y-2">
+        <li :for={kind <- @kinds}>
+          <button
+            type="button"
+            id={"indexer-kind-#{kind.type}"}
+            phx-click="pick"
+            phx-value-type={kind.type}
+            phx-target={@myself}
+            class="w-full rounded-box border border-base-content/20 p-3 text-left hover:bg-base-200 focus-visible:outline-2 focus-visible:outline-(--color-focus-ring)"
+          >
+            <span class="block font-medium">{kind.name}</span>
+            <span class="block text-sm text-base-content/70">{kind.description}</span>
+          </button>
+        </li>
+      </ul>
+      <p :if={@kinds == []} id="indexer-kinds-none" class="text-sm text-base-content/70">
+        {gettext("No indexer type matches.")}
+      </p>
+      <div class="flex justify-end">
+        <.button type="button" variant="ghost" phx-click={close_js(@myself)}>
+          {gettext("Cancel")}
+        </.button>
+      </div>
+    </div>
+    """
+  end
+
+  attr :dialog, :map, required: true
+  attr :myself, :any, required: true
+
+  defp form_step(%{dialog: %{deleted?: true}} = assigns) do
+    ~H"""
+    <div id="indexer-dialog-deleted" class="space-y-4" phx-mounted={JS.focus_first()}>
+      <h2 id="indexer-dialog-title" class="text-lg font-semibold">{gettext("Edit indexer")}</h2>
+      <p id="indexer-form-deleted" role="alert" class="alert alert-warning text-sm">
+        {gettext("This indexer was deleted in another tab.")}
+      </p>
+      <div class="flex justify-end">
+        <.button type="button" phx-click={close_js(@myself)}>{gettext("Close")}</.button>
+      </div>
+    </div>
+    """
+  end
+
+  defp form_step(assigns) do
+    dialog = assigns.dialog
+
+    assigns =
+      assign(assigns,
+        form: IndexerDialog.to_form(dialog),
+        errors: dialog.errors,
+        key_saved?: IndexerDialog.key_saved?(dialog),
+        through_prowlarr?: IndexerDialog.through_prowlarr?(dialog)
+      )
+
+    ~H"""
+    <div id={"indexer-dialog-#{@dialog.mode}"} class="space-y-4" phx-mounted={JS.focus_first()}>
+      <h2 id="indexer-dialog-title" class="text-lg font-semibold">
+        {if @dialog.mode == :add, do: gettext("Add indexer"), else: gettext("Edit indexer")}
+      </h2>
+      <.form
+        for={@form}
+        id="indexer-form"
+        phx-change="change"
+        phx-submit="save"
+        phx-target={@myself}
+      >
+        <p
+          :if={@dialog.stale?}
+          id="indexer-form-stale"
+          role="alert"
+          class="alert alert-warning mb-2 text-sm"
+        >
+          {gettext("This indexer changed in another tab: reload it before saving.")}
+        </p>
+        <p
+          :if={@dialog.stored_secrets == :unreadable}
+          id="indexer-form-unreadable"
+          role="alert"
+          class="alert alert-warning mb-2 text-sm"
+        >
+          {gettext(
+            "This indexer's saved secrets can't be decrypted. Type every secret again, or tick its Clear box, before you save a secret."
+          )}
+        </p>
+        <p
+          :for={message <- @errors[:form] || []}
+          role="alert"
+          class="indexer-form-error mb-2 text-sm text-error"
+        >
+          {message}
+        </p>
+
+        <.input
+          field={@form[:name]}
+          id="indexer-form-name"
+          label={gettext("Name")}
+          autocomplete="off"
+        />
+        <p class="mb-2 text-sm">
+          <span class="text-base-content/70">{gettext("Kind:")}</span>
+          <span id="indexer-form-kind">{kind(@dialog.type)}</span>
+        </p>
+        <.input
+          field={@form[:base_url]}
+          id="indexer-form-base-url"
+          label={gettext("Base URL")}
+          inputmode="url"
+          autocomplete="off"
+        />
+        <.input
+          field={@form[:api_path]}
+          id="indexer-form-api-path"
+          label={gettext("API path")}
+          autocomplete="off"
+        />
+        <p :if={@through_prowlarr?} id="indexer-form-through-prowlarr" class="mb-2 text-sm">
+          {gettext(
+            "Searched through Prowlarr: Prowlarr drops results that have no size or no categories, and dates undated results now."
+          )}
+        </p>
+        <.input
+          type="password"
+          id={@dialog.secret_id}
+          name="secrets[api_key]"
+          value={nil}
+          label={gettext("API key")}
+          errors={@errors[:api_key] || []}
+          placeholder={if @key_saved?, do: gettext("•••• saved (leave blank to keep)"), else: ""}
+          autocomplete="off"
+          phx-update="ignore"
+        />
+        <.input
+          :if={@key_saved?}
+          type="checkbox"
+          id="indexer-form-clear-api-key"
+          name="secrets[clear_api_key]"
+          label={gettext("Clear saved value")}
+          checked={@dialog.values["clear_api_key"] == "true"}
+        />
+        <.input
+          :if={@dialog.type == :newznab}
+          field={@form[:additional_parameters]}
+          id="indexer-form-additional-parameters"
+          label={gettext("Additional parameters")}
+          autocomplete="off"
+        />
+        <.input
+          type="number"
+          field={@form[:priority]}
+          id="indexer-form-priority"
+          label={gettext("Priority")}
+          aria-describedby="indexer-form-priority-help"
+        />
+        <p id="indexer-form-priority-help" class="-mt-1 mb-2 text-xs text-base-content/70">
+          {gettext("1 to 50. A lower number comes first in results.")}
+        </p>
+        <.input
+          type="checkbox"
+          field={@form[:enabled]}
+          id="indexer-form-enabled"
+          label={gettext("Enabled")}
+        />
+
+        <p class="mt-2 text-sm text-base-content/70">
+          {gettext("Cinder tests an enabled indexer when you save it.")}
+        </p>
+        <p
+          :if={@dialog.mode == :edit}
+          id="indexer-form-drops"
+          class="mt-1 text-sm text-base-content/70"
+        >
+          {gettext(
+            "A new base URL or any changed credential drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+          )}
+        </p>
+
+        <div class="mt-4 flex flex-wrap justify-end gap-2">
+          <.button
+            :if={@dialog.mode == :add}
+            type="button"
+            variant="ghost"
+            id="indexer-form-back"
+            phx-click="back"
+            phx-target={@myself}
+          >
+            {gettext("Back")}
+          </.button>
+          <.button type="button" variant="ghost" phx-click={close_js(@myself)}>
+            {gettext("Cancel")}
+          </.button>
+          <.button type="submit" id="indexer-form-save">
+            {if @dialog.mode == :add, do: gettext("Save and test"), else: gettext("Save")}
+          </.button>
+        </div>
+      </.form>
     </div>
     """
   end

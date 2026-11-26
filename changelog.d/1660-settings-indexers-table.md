@@ -17,7 +17,7 @@
   API path, settings, FlareSolverr toggle or secrets. After such an edit the line says the Test
   stored nothing, and a Test started after another page deleted its indexer says it no longer
   exists. When a backoff ends while the page is open, the table reads the states again. With
-  no indexer configured, the group says so. The Add, Edit and Import buttons come later.
+  no indexer configured, the group says so. The Import button comes later.
 
 ### Changed
 - **The Indexer group of `/settings` is now titled "Indexers" (#1660).** It shows its section

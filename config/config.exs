@@ -224,7 +224,9 @@ config :logger, :default_formatter,
 # "passkey": the passkey sign-in form and the settings page's passkey events send every WebAuthn
 # field (credential id, client data with its challenge, signature) under a "passkey" key, so the
 # request and LiveView event logs print [FILTERED] for the whole map (#1560).
-config :phoenix, :filter_parameters, ["password", "email", "token", "passkey"]
+# "secrets": the indexers dialogs in /settings send a configured indexer's API key, and their
+# Clear box, under a "secrets" key, filtered as a whole map the same way (#1661).
+config :phoenix, :filter_parameters, ["password", "email", "token", "passkey", "secrets"]
 
 # i18n: English + French. The active locale is resolved per request/socket by
 # CinderWeb.Locale (authenticated user → session → Accept-Language → default). `en` is the source

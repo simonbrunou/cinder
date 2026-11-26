@@ -31,6 +31,8 @@ defmodule Cinder.Indexers do
 
     * `searchable/0`: every enabled configured indexer whose secrets decrypt, with them.
     * `fetch_with_secrets/1`: one configured indexer, enabled or not, with its secrets.
+    * `fetch_for_edit/1`: one configured indexer without secret values, with the names of the
+      secret fields it holds.
     * `list/0`: every configured indexer, without secret values, each marked by
       `secrets_readable`.
   """
@@ -408,6 +410,22 @@ defmodule Cinder.Indexers do
   end
 
   @doc """
+  The configured indexer `id` for an edit form, without secret values: `{:ok, row, stored}`,
+  where `stored` lists the names of the secret fields it holds, or is `:unreadable` when its
+  secrets do not decrypt; `{:error, :not_found}` for a missing row.
+  """
+  @spec fetch_for_edit(pos_integer()) ::
+          {:ok, ConfiguredIndexer.t(), [String.t()] | :unreadable} | {:error, :not_found}
+  def fetch_for_edit(id) do
+    with {:ok, row} <- fetch_row(id) do
+      case Secrets.open(row) do
+        {:ok, values} -> {:ok, %{row | secrets_readable: true}, Enum.sort(Map.keys(values))}
+        :unreadable -> {:ok, %{row | secrets_readable: false}, :unreadable}
+      end
+    end
+  end
+
+  @doc """
   Every Cardigann configured indexer, enabled or not, by id, each with its stored values: its
   plain `settings` and its decrypted secrets, or `:undecryptable` when they do not decrypt.
   `Cinder.Indexers.Definitions` reads it inside its write transactions.
@@ -442,6 +460,25 @@ defmodule Cinder.Indexers do
       {0, _rows} -> {:error, :not_found}
     end
   end
+
+  @doc """
+  Whether a Newznab or Torznab configured indexer with `base_url` and `api_path` is searched
+  through Prowlarr at `prowlarr_url`: its API path is `/<digits>/api`, Prowlarr's per-indexer
+  endpoint, and its base URL equals `prowlarr_url`, each with its trailing slashes removed. A nil
+  or blank `prowlarr_url`, or one that is only slashes, answers false. The settings form shows
+  what Prowlarr does to such an indexer's results (#1661); the Prowlarr import is to create its
+  rows in this shape (#1673).
+  """
+  @spec through_prowlarr?(String.t() | nil, String.t() | nil, String.t() | nil) :: boolean()
+  def through_prowlarr?(base_url, api_path, prowlarr_url)
+      when is_binary(base_url) and is_binary(api_path) and is_binary(prowlarr_url) do
+    prowlarr = String.trim_trailing(prowlarr_url, "/")
+
+    String.trim(prowlarr) != "" and Regex.match?(~r/\A\/[0-9]+\/api\z/, api_path) and
+      String.trim_trailing(base_url, "/") == prowlarr
+  end
+
+  def through_prowlarr?(_base_url, _api_path, _prowlarr_url), do: false
 
   defp ordered(query), do: order_by(query, [c], asc: c.priority, asc: c.id)
 
