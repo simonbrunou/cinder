@@ -230,6 +230,12 @@
   Pair a refute on a collection with a positive control that proves the collection is the right
   one and populated, and refute the stem, not a guessed inflection. After a rename that changes
   how an identifier is built, re-run the check on every negative that names it.
+- When two guards stop the same effect, the mutant that breaks one survives the other. The
+  negative test then also refutes what only the other guard leaves, such as the value it returns
+  or a log line it writes. On #1659 (PR #1785), `IndexerStatus.record/3` drops the answer of a
+  grab whose configured indexer was deleted during the fetch, and the foreign key would refuse
+  the insert anyway. The mutant that skipped the drop survived until the test also refuted the
+  `not recorded` warning that the refused insert logs.
 - A limit the change adds (a lifetime, a rate-limit window, a cap) gets a test that pins the
   value the app runs with, without waiting it out: `PasskeyChallengesTest` "an entry lives 3
   minutes by default" asserts the stored expiry, and `IpRateLimiterTest` "the :passkey_options
