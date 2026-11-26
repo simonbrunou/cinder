@@ -46,3 +46,13 @@ To run a native search over real HTTP for a native-indexer PR's test path, run
 dev indexers on it, among them a limited, a rejected and a flaky one, and prints what the
 searches found, each dev indexer's backoff state and each request line, as its header says. On
 #1653 (PR #1755) that test path took a hand-written Python listener and a second script.
+
+To serve the dev app with indexer definitions you wrote, apply them and serve from one script,
+`PHX_SERVER=true PORT=4123 mix run --no-halt <script>`. Stop the definitions updater on the
+script's first line, with `Supervisor.terminate_child/2` on `Cinder.PollerSupervisor` and
+`Cinder.Indexers.Definitions.Updater`. At boot the updater fetches the definitions from GitHub
+and tries to apply them over your set, so a separate `mix phx.server` boot can replace it.
+`Cinder.Indexers.Definitions.apply_set/2` refuses a set the shrink guard rejects, as step 2 of
+that module's moduledoc says. After that refusal, `accept_smaller_set(set.commit)` of the same
+module lets the same `%Set{}` pass the guard. On #1675 (PR #1861) the updater replaced the test
+set once, and the script then applied 2,500 filler files to pass the guard.
