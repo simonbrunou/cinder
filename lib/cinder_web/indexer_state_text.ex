@@ -14,8 +14,11 @@ defmodule CinderWeb.IndexerStateText do
 
   alias CinderWeb.LiveHelpers
 
-  @doc "The detail line of an indexer in `state`, judged at `now`."
-  @spec detail(term(), DateTime.t()) :: String.t()
+  @doc """
+  The detail line of an indexer in `state`, judged at `now`, or nil for a state it does not word
+  yet, such as one #1668 adds before #1676 words it.
+  """
+  @spec detail(term(), DateTime.t() | nil) :: String.t() | nil
   def detail(state, now)
 
   def detail({:usable, at}, now),
@@ -73,16 +76,44 @@ defmodule CinderWeb.IndexerStateText do
 
   def detail(:undecryptable, _now), do: gettext("Credentials can't be decrypted: re-enter them")
   def detail(:disabled, _now), do: gettext("Disabled")
+  def detail(_state, _now), do: nil
+
+  @doc """
+  The last-Test line of the indexers table in `/settings` (#1660, #1619 point 11), for a
+  `last_test` (`IndexerStatus.last_test/1`) shown at `now`: "Last Test: worked at 14:07", "Last
+  Test: API key rejected at 14:07", with the date when the Test ran on another household day. A
+  failure reads its `cause/1`.
+  """
+  @spec last_test(%{outcome: term(), at: DateTime.t()}, DateTime.t()) :: String.t()
+  def last_test(%{outcome: outcome, at: at}, now),
+    do:
+      gettext("Last Test: %{outcome} %{at}",
+        outcome: test_outcome(outcome),
+        at: at_phrase(at, now)
+      )
+
+  @doc """
+  The words for a stored Test outcome, as `last_test/2` and the table's notice line show it:
+  "worked", "limit reached", or the failure's `cause/1`.
+  """
+  @spec test_outcome(term()) :: String.t()
+  def test_outcome(:success), do: gettext("worked")
+  def test_outcome(:limit), do: gettext("limit reached")
+  def test_outcome(outcome), do: cause(outcome)
 
   @doc """
   The source row's reason for `{:native_indexers, listed, more, now}`: each listed indexer's
-  name, never translated, with its detail, then "and N more", joined through gettext.
+  name, never translated, with its detail, then "and N more", joined through gettext. A state
+  `detail/2` does not word yet shows the name alone.
   """
   @spec indexers(list(), non_neg_integer(), DateTime.t()) :: String.t()
   def indexers(listed, more, now) do
     lines =
       Enum.map(listed, fn %{name: name, state: state} ->
-        gettext("%{name}: %{detail}", name: name, detail: detail(state, now))
+        case detail(state, now) do
+          nil -> name
+          detail -> gettext("%{name}: %{detail}", name: name, detail: detail)
+        end
       end)
 
     lines =

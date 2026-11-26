@@ -223,9 +223,9 @@ defmodule Cinder.Health do
   `{:error, {:native_indexer, state, at}}` for a state the admin must act on
   (`IndexerState.needs_admin?/1`: undecryptable, not supported, a definition that no longer
   loads, credentials rejected), else `{:warning, {:native_indexer, state, at}}`, the usable
-  states that carry a definition code included. The rows
-  come from the indexer probe's one state read; when that probe times out, only the indexer row
-  shows, with its timeout.
+  states that carry a definition code included. `native_indexer_level/1` gives that colour. The
+  rows come from the indexer probe's one state read; when that probe times out, only the indexer
+  row shows, with its timeout.
   """
   def check_all do
     Enum.flat_map(concurrently(dashboard_probes()), fn
@@ -364,13 +364,25 @@ defmodule Cinder.Health do
     |> Map.merge(%{status: native_status(state, now), indexer_state: state, checked_at: now})
   end
 
-  defp native_status({:usable, _at}, _now), do: :ok
-
   defp native_status(state, now) do
-    if IndexerState.needs_admin?(state),
-      do: {:error, {:native_indexer, state, now}},
-      else: {:warning, {:native_indexer, state, now}}
+    case native_indexer_level(state) do
+      :ok -> :ok
+      level -> {level, {:native_indexer, state, now}}
+    end
   end
+
+  @doc """
+  The colour of a configured indexer's `IndexerState` state, which the dashboard's per-indexer
+  rows and the indexers table in `/settings` (#1660) both show: `:ok` for `{:usable, _}`,
+  `:error` for a state `IndexerState.needs_admin?/1` holds, else `:warning`. The usable states
+  that carry a definition code (an update held, a definition removed or replaced upstream) read
+  `:warning`, as does a state neither names.
+  """
+  @spec native_indexer_level(term()) :: :ok | :warning | :error
+  def native_indexer_level({:usable, _at}), do: :ok
+
+  def native_indexer_level(state),
+    do: if(IndexerState.needs_admin?(state), do: :error, else: :warning)
 
   defp dashboard_status(%Target{dashboard: policy} = target) do
     case run_target(target) do

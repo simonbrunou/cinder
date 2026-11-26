@@ -81,6 +81,19 @@ defmodule CinderWeb.IndexerStateTextTest do
       assert IndexerStateText.detail(:disabled, @now) == "Disabled"
     end
 
+    test "a state it does not word yet gives nil, and the source row names that indexer alone" do
+      assert IndexerStateText.detail({:some_new_state, @now}, @now) == nil
+
+      assert IndexerStateText.indexers(
+               [
+                 %{name: "New", state: {:some_new_state, @now}},
+                 %{name: "Fresh", state: :never_checked}
+               ],
+               0,
+               @now
+             ) =~ ~r/^New\b(?!:)/
+    end
+
     test "a backoff that ended names its cause, and a limit that ended names none" do
       assert IndexerStateText.detail({:retry_due, at(-60), {:http_status, 410}, 2}, @now) ==
                "Backoff ended at 11:59: Disabled in Prowlarr, 2 failures in a row. " <>
@@ -118,6 +131,29 @@ defmodule CinderWeb.IndexerStateTextTest do
 
       assert IndexerStateText.detail({:failure_backoff, at(10_800), :dns, 1}, @now) ==
                "Backing off until Nov 27 at 00:00 (in 3 h): Host not found, 1 failure in a row"
+    end
+  end
+
+  describe "last_test/2" do
+    test "words each outcome, a failure by its cause" do
+      lines =
+        for outcome <- [:success, :rejected_credentials, :limit, :timeout, {:http_status, 503}],
+            do: IndexerStateText.last_test(%{outcome: outcome, at: at(-3_600)}, @now)
+
+      assert lines == [
+               "Last Test: worked at 11:00",
+               "Last Test: API key rejected at 11:00",
+               "Last Test: limit reached at 11:00",
+               "Last Test: Timed out at 11:00",
+               "Last Test: HTTP 503 at 11:00"
+             ]
+    end
+
+    test "shows the household's time, with the date on another day" do
+      put_env(:household_timezone, "Asia/Tokyo")
+
+      assert IndexerStateText.last_test(%{outcome: :success, at: at(-86_400)}, @now) ==
+               "Last Test: worked on Nov 25 at 21:00"
     end
   end
 

@@ -9,7 +9,8 @@ The other five of the first seven cases cover the rest of each lifecycle's real 
 future change to either has the same chance of being caught before review as everything else in
 this app. Cases 8 to 10 cover #702: a failed poster whose card a live update re-renders, a
 poster whose `src` a live update changes, and a stalled poster whose 3-second reveal must
-survive a re-render. Case 11 adds a passkey and signs in with it (#1560).
+survive a re-render. Case 11 adds a passkey and signs in with it (#1560). Case 12 drives the
+indexers table's switches and Delete in /settings, and checks its width at 390 px (#1660).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -897,6 +898,125 @@ def case_11_passkey_add_then_sign_in(page):
         context.close()
 
 
+def seed_indexer(name, priority):
+    """Creates an enabled configured Newznab indexer on a host that never answers, and returns
+    its id. Nothing in the case sends it a request: the case never presses Test."""
+    return rpc_int(
+        "{:ok, row} = Cinder.Indexers.create(nil, %{"
+        f"name: {_elixir_string(name)}, type: :newznab, priority: {priority}, "
+        f'base_url: "https://{name.lower().replace(" ", "-")}.invalid", api_path: "/api"'
+        '}, %{"api_key" => "ci-key"}); IO.puts("RPCRESULT:#{row.id}")'
+    )
+
+
+def delete_indexer(indexer_id):
+    rpc(
+        f"Cinder.Indexers.delete(nil, {indexer_id}); "
+        'IO.puts("RPCRESULT:ok")'
+    )
+
+
+def case_12_indexer_switches_in_the_settings_form(page):
+    """The indexers table in /settings (#1660). With focus on a row's enable switch, Enter and
+    Space each toggle it and neither submits #settings-form, whose save flashes "Settings
+    saved.". After the first row is deleted from the keyboard, focus is on the remaining row's
+    Delete and that row's switch reads its own state, not the deleted row's. At 390 px wide the
+    page has no horizontal scroll, and a sideways wheel over the table scrolls the table's own
+    box until the row's Delete button shows. The second row's
+    name has no place to break a line, so the table is wider than the group: the group clips what
+    sticks out, and without that box the button stays out of reach. Its own browser context keeps
+    the narrow viewport away from the other cases."""
+    first = seed_indexer("CI Indexer Alpha", 10)
+    second = seed_indexer("CIIndexerBravoWithALongUnbrokenName0123456789", 20)
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        settings = context.new_page()
+        login(settings)
+        settings.goto(f"{BASE_URL}/settings?group=indexer")
+        wait_for_liveview(settings)
+
+        switch = settings.locator(f"#indexer-{first}-enabled")
+        notice = settings.locator("#indexers-notice")
+        expect(switch).to_have_attribute("aria-checked", "true")
+
+        switch.focus()
+        settings.keyboard.press("Enter")
+        expect(switch).to_have_attribute("aria-checked", "false", timeout=5_000)
+        expect(notice).to_have_text("CI Indexer Alpha disabled.")
+        settings.keyboard.press("Space")
+        expect(switch).to_have_attribute("aria-checked", "true", timeout=5_000)
+        expect(notice).to_have_text("CI Indexer Alpha enabled.")
+        if any("Settings saved." in text for text in flash_texts(settings)):
+            raise CaseFailure(
+                "case 12 (switch keys): Enter or Space on an indexer switch submitted "
+                f"#settings-form, flash {flash_texts(settings)!r}"
+            )
+
+        # The second row off, the first on: a state carried over by position would show.
+        settings.locator(f"#indexer-{second}-enabled").click()
+        expect(settings.locator(f"#indexer-{second}-enabled")).to_have_attribute(
+            "aria-checked", "false", timeout=5_000
+        )
+        # Deleted from the keyboard: focus moves to the next row's Delete, not to the page.
+        settings.once("dialog", lambda dialog: dialog.accept())
+        settings.locator(f"#indexer-{first}-delete").focus()
+        settings.keyboard.press("Enter")
+        expect(settings.locator(f"#indexer-{first}")).to_have_count(0, timeout=5_000)
+        expect(settings.locator(f"#indexer-{second}-delete")).to_be_focused()
+        expect(settings.locator(f"#indexer-{second}-enabled")).to_have_attribute(
+            "aria-checked", "false"
+        )
+
+        settings.set_viewport_size({"width": 390, "height": 844})
+        settings.reload()
+        wait_for_liveview(settings)
+        expect(settings.locator(f"#indexer-{second}")).to_be_visible()
+        widths = settings.evaluate(
+            "[document.documentElement.scrollWidth, document.documentElement.clientWidth]"
+        )
+        if widths[0] > widths[1]:
+            raise CaseFailure(
+                f"case 12 (390 px): the page scrolls sideways, scrollWidth {widths[0]} over "
+                f"clientWidth {widths[1]}"
+            )
+
+        delete_id = f"indexer-{second}-delete"
+        name_cell = settings.locator(f"#indexer-{second} td").first
+        # Centres the row vertically. The name cell is already in view sideways, so nothing
+        # scrolls sideways here, and the Delete button below it stays inside the viewport.
+        name_cell.evaluate("(cell) => cell.scrollIntoView({block: 'center', inline: 'nearest'})")
+        name_cell.hover()
+        settings.mouse.wheel(600, 0)
+        # Polls up to 5 s until the point at the button's centre hits the button: nothing clips
+        # it. Each answer also carries the button's box for the failure message.
+        reach = None
+        for _ in range(50):
+            reach = settings.evaluate(
+                """(id) => {
+                  const button = document.getElementById(id);
+                  const box = button.getBoundingClientRect();
+                  const hit = document.elementFromPoint(
+                    box.left + box.width / 2, box.top + box.height / 2);
+                  return {hit: !!hit && button.contains(hit),
+                          box: [box.left, box.right, box.top, box.bottom]};
+                }""",
+                delete_id,
+            )
+            if reach["hit"]:
+                break
+            settings.wait_for_timeout(100)
+        if not reach["hit"]:
+            left, right, top, bottom = reach["box"]
+            raise CaseFailure(
+                "case 12 (390 px): a sideways wheel over the table left its Delete button out of "
+                f"reach, at left {left}, right {right}, top {top}, bottom {bottom} px"
+            )
+    finally:
+        context.close()
+        delete_indexer(first)
+        delete_indexer(second)
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -912,6 +1032,10 @@ CASES = [
         case_10_stalled_poster_stays_revealed_across_live_rerender,
     ),
     ("case11_passkey_add_then_sign_in", case_11_passkey_add_then_sign_in),
+    (
+        "case12_indexer_switches_in_the_settings_form",
+        case_12_indexer_switches_in_the_settings_form,
+    ),
 ]
 
 

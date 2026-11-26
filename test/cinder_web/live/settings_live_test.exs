@@ -102,7 +102,13 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
     assert has_element?(lv, ~s(a[href="/settings/profiles"]), "Media profiles")
-    refute has_element?(lv, ".setup-section-help")
+    # The Indexers group shows its section help on /settings too (#1660); no other group does.
+    assert has_element?(lv, "#settings-group-indexer .setup-section-help")
+
+    for {group, _label} <- Settings.groups(), group != :indexer do
+      refute has_element?(lv, "#settings-group-#{group} .setup-section-help")
+    end
+
     refute has_element?(lv, "[data-setup-step]")
     refute has_element?(lv, "[data-setup-optional]")
   end

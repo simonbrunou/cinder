@@ -74,7 +74,7 @@ defmodule Cinder.Settings.Registry do
 
   @groups [
     tmdb: "TMDB",
-    indexer: "Indexer",
+    indexer: "Indexers",
     migration: "Migration sources",
     download: "Download clients",
     media_server: "Media server",

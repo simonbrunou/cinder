@@ -657,7 +657,7 @@ defmodule CinderWeb.CoreComponents do
   """
   attr :kind, :atom,
     required: true,
-    values: [:movie, :series, :request, :episode, :grab, :health, :monitored]
+    values: [:movie, :series, :request, :episode, :grab, :health, :monitored, :indexer]
 
   attr :status, :any, required: true
   attr :id, :string, default: nil
@@ -879,6 +879,20 @@ defmodule CinderWeb.CoreComponents do
 
   defp badge_spec(:health, {:error, _reason}),
     do: {gettext("Unreachable"), "badge-error", "hero-exclamation-triangle"}
+
+  # A configured indexer's `IndexerState` state (#1660): grey when the admin turned it off, else
+  # the colour `Cinder.Health.native_indexer_level/1` gives the dashboard's per-indexer rows. A
+  # state that function does not name reads yellow.
+  defp badge_spec(:indexer, :disabled),
+    do: {gettext("Disabled"), "badge-ghost", "hero-pause-circle"}
+
+  defp badge_spec(:indexer, state) do
+    case Cinder.Health.native_indexer_level(state) do
+      :ok -> {gettext("OK"), "badge-success", "hero-check-circle"}
+      :warning -> {gettext("Warning"), "badge-warning", "hero-exclamation-triangle"}
+      :error -> {gettext("Needs attention"), "badge-error", "hero-exclamation-circle"}
+    end
+  end
 
   # safe fallback — a view must never crash over an unmapped state
   defp badge_spec(_kind, status),

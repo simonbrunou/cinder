@@ -5,6 +5,9 @@ defmodule CinderWeb.SettingsComponents do
   `"test"` event and supplies `form` (from `Settings.form_state/0`) and `health`
   (a `%{probe_target_id => :ok | {:warning, term()} | {:error, term()}}` map). Each group's
   Test buttons are its `Cinder.Health.targets/1`.
+
+  A group's section help shows on `/setup` (`show_setup_guidance`); the Indexers group's shows on
+  both hosts (#1660), above the `indexers` slot the host fills with its indexers table.
   """
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
@@ -37,6 +40,11 @@ defmodule CinderWeb.SettingsComponents do
   attr :show_anime, :boolean, default: true
   attr :show_setup_guidance, :boolean, default: false
   attr :open_group, :atom, default: nil, doc: "a group to render open, besides the first"
+
+  slot :indexers,
+    doc:
+      "the host's indexers table (#1660), placed in the Indexers group after its section help " <>
+        "and before its fields; `/setup` passes none yet (#1663)"
 
   def service_fields(assigns) do
     [{first_group, _label} | _groups] = Settings.groups()
@@ -75,7 +83,9 @@ defmodule CinderWeb.SettingsComponents do
       </summary>
 
       <div class="collapse-content">
-        <.setup_section_help :if={@show_setup_guidance} group={group} />
+        <.setup_section_help :if={@show_setup_guidance or group == :indexer} group={group} />
+
+        <div :if={group == :indexer and @indexers != []}>{render_slot(@indexers)}</div>
 
         <div :if={group == :media_server} class="form-control mb-2">
           <label class="label" for="media_server_type">

@@ -187,6 +187,57 @@ defmodule CinderWeb.StatusBadgeTest do
     assert html =~ "hero-arrow-up-circle"
   end
 
+  describe "the :indexer kind (#1660)" do
+    @at ~U[2026-11-26 12:00:00Z]
+
+    # Each red state `IndexerState.needs_admin?/1` names, `{:usable, at}`, the badge's own
+    # `:disabled` clause, the waits, the usable states that carry a definition code (#1668), which
+    # read yellow, and a state no code names.
+    test "words and colours each state with an icon, an unknown one in yellow" do
+      cases = [
+        {{:usable, @at}, "OK", "badge-success", "hero-check-circle"},
+        {:disabled, "Disabled", "badge-ghost", "hero-pause-circle"},
+        {:undecryptable, "Needs attention", "badge-error", "hero-exclamation-circle"},
+        {{:not_supported, :flaresolverr}, "Needs attention", "badge-error", "hero-"},
+        {{:credentials_rejected, nil}, "Needs attention", "badge-error", "hero-"},
+        {{:definition_no_longer_loads, :parse_error}, "Needs attention", "badge-error", "hero-"},
+        {:never_checked, "Warning", "badge-warning", "hero-exclamation-triangle"},
+        {{:limit_backoff, @at}, "Warning", "badge-warning", "hero-"},
+        {{:failure_backoff, @at, :timeout, 1}, "Warning", "badge-warning", "hero-"},
+        {{:retry_due, @at, :limit, 0}, "Warning", "badge-warning", "hero-"},
+        {{:definition_update_held, :fails, @at}, "Warning", "badge-warning", "hero-"},
+        {{:removed_upstream, @at}, "Warning", "badge-warning", "hero-"},
+        {{:replaced_by, "Other", @at}, "Warning", "badge-warning", "hero-"},
+        {{:some_new_state, @at}, "Warning", "badge-warning", "hero-"}
+      ]
+
+      for {state, label, colour, icon} <- cases do
+        html = badge(%{kind: :indexer, status: state})
+        assert html =~ label, inspect(state)
+        assert html =~ colour, inspect(state)
+        assert html =~ icon, inspect(state)
+      end
+    end
+
+    test "Health.native_indexer_level/1, which the dashboard's per-indexer rows read, gives the same levels" do
+      for {state, level} <- [
+            {{:usable, @at}, :ok},
+            {:undecryptable, :error},
+            {{:credentials_rejected, {:code, 100}}, :error},
+            {{:not_supported, :cardigann}, :error},
+            {{:definition_no_longer_loads, :parse_error}, :error},
+            {{:definition_update_held, :fails, @at}, :warning},
+            {{:removed_upstream, @at}, :warning},
+            {{:replaced_by, "Other", @at}, :warning},
+            {:never_checked, :warning},
+            {{:limit_backoff, @at}, :warning},
+            {:some_new_state, :warning}
+          ] do
+        assert Cinder.Health.native_indexer_level(state) == level, inspect(state)
+      end
+    end
+  end
+
   test "an unmapped status falls back to a neutral badge instead of raising" do
     html = badge(%{kind: :movie, status: :some_new_state})
     assert html =~ "badge-neutral"

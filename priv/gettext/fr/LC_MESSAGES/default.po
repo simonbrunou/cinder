@@ -352,6 +352,7 @@ msgstr "Création…"
 msgid "Dashboard"
 msgstr "Tableau de bord"
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/library_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
@@ -1565,11 +1566,6 @@ msgstr "Hôte introuvable"
 #, elixir-autogen
 msgid "Host unreachable"
 msgstr "Hôte injoignable"
-
-#: lib/cinder_web/domain_labels.ex
-#, elixir-autogen
-msgid "Indexer"
-msgstr "Indexeur"
 
 #: lib/cinder_web/domain_labels.ex
 #, elixir-autogen
@@ -6133,6 +6129,7 @@ msgstr ""
 "Transmission pour les torrents, et SABnzbd ou NZBGet pour Usenet, puis suit "
 "les releases jusqu’à leur import."
 
+#: lib/cinder_web/components/core_components.ex
 #: lib/cinder_web/domain_labels.ex
 #: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
@@ -6325,6 +6322,7 @@ msgstr "Profil multimédia enregistré."
 msgid "Media profiles"
 msgstr "Profils multimédias"
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/profiles_live.ex
 #, elixir-autogen, elixir-format
 msgid "Name"
@@ -7348,6 +7346,7 @@ msgstr "Impossible de supprimer les dossiers de téléchargement."
 msgid "Couldn't scan the download folders."
 msgstr "Impossible d'analyser les dossiers de téléchargement."
 
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/download_folders_live.ex
 #, elixir-autogen, elixir-format
 msgid "Delete %{name}"
@@ -8402,3 +8401,118 @@ msgstr[1] "Les identifiants de %{count} indexeurs ne peuvent pas être déchiffr
 #, elixir-autogen, elixir-format
 msgid "Limit ended %{at}: the next search asks it again"
 msgstr "Limite terminée %{at} : la prochaine recherche l'interroge à nouveau"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} could not be saved. Reload the page."
+msgstr "%{name} n’a pas pu être enregistré. Rechargez la page."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} deleted."
+msgstr "%{name} supprimé."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} disabled."
+msgstr "%{name} désactivé."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} enabled"
+msgstr "%{name} activé"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} enabled."
+msgstr "%{name} activé."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Actions"
+msgstr "Actions"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Delete %{name}? Its grabs still waiting to be sent are dropped: movies and episodes search again, books wait for you."
+msgstr "Supprimer %{name} ? Ses téléchargements pas encore envoyés sont abandonnés : les films et les épisodes sont recherchés à nouveau, les livres vous attendent."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "It is your only working indexer, so searches stop until another one works."
+msgstr "C’est votre seul indexeur qui fonctionne : les recherches s’arrêtent jusqu’à ce qu’un autre fonctionne."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Kind"
+msgstr "Type"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Last Test: %{outcome} %{at}"
+msgstr "Dernier test : %{outcome} %{at}"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer added. Add one, or import them from Prowlarr."
+msgstr "Aucun indexeur ajouté. Ajoutez-en un, ou importez-les depuis Prowlarr."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "State"
+msgstr "État"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Test"
+msgstr "Tester"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Test %{name}"
+msgstr "Tester %{name}"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Torrent"
+msgstr "Torrent"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Usenet"
+msgstr "Usenet"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "limit reached"
+msgstr "limite atteinte"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "worked"
+msgstr "réussi"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Test of %{name} did not finish. Try again."
+msgstr "Le test de %{name} n’a pas abouti. Réessayez."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Test of %{name} stored nothing: the indexer changed while it ran."
+msgstr "Le test de %{name} n’a rien enregistré : l’indexeur a changé pendant son exécution."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Test of %{name}: %{outcome}."
+msgstr "Test de %{name} : %{outcome}."
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Testing %{name}…"
+msgstr "Test de %{name} en cours…"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} no longer exists."
+msgstr "%{name} n’existe plus."

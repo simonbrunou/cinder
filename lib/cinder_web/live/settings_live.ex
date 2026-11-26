@@ -9,19 +9,26 @@ defmodule CinderWeb.SettingsLive do
   Secret inputs are never pre-filled — they render empty so a value can't be echoed
   back to the client, even on a re-render. Leave a secret blank to keep it; tick its
   Clear box to remove it. "Test connection" probes the **saved** config, so save first.
-  The grouped fields render via `CinderWeb.SettingsComponents` (shared with `/setup`).
+  The grouped fields render via `CinderWeb.SettingsComponents` (shared with `/setup`). The
+  Indexers group also holds `CinderWeb.IndexersComponent`, the configured indexers' table, whose
+  buttons save at once and add no field to the form; the page forwards the per-indexer Test
+  runner's messages to it.
   """
   use CinderWeb, :live_view
 
   import CinderWeb.SettingsComponents
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Acquisition.IndexerSource.Native.TestRunner
   alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Settings}
   alias Cinder.Catalog.UpgradeHunter
-  alias CinderWeb.DomainLabels
+  alias CinderWeb.{DomainLabels, IndexersComponent}
 
   @impl true
   def mount(params, _session, socket) do
+    # Before the indexers table first reads which Tests run, so no finish falls between the two.
+    if connected?(socket), do: TestRunner.subscribe()
+
     {:ok,
      assign(socket,
        open_group: open_group(params),
@@ -129,9 +136,15 @@ defmodule CinderWeb.SettingsLive do
     end
   end
 
+  # The per-indexer Test runner's start and finish messages go to the indexers table.
+  @impl true
+  def handle_info(message, socket) when is_tuple(message) and elem(message, 0) == TestRunner do
+    send_update(IndexersComponent, id: "indexers", runner: message)
+    {:noreply, socket}
+  end
+
   # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); ignore those
   # broadcasts here — the on_mount hook already re-renders the badge.
-  @impl true
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
@@ -206,7 +219,15 @@ defmodule CinderWeb.SettingsLive do
         data-form-revision={@form_revision}
         class="space-y-8"
       >
-        <.service_fields form={@form} health={@health} open_group={@open_group} />
+        <.service_fields form={@form} health={@health} open_group={@open_group}>
+          <:indexers>
+            <.live_component
+              module={IndexersComponent}
+              id="indexers"
+              actor={@current_scope.user}
+            />
+          </:indexers>
+        </.service_fields>
         <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}
         </.button>
