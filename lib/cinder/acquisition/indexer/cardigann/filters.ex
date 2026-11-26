@@ -8,7 +8,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   or a list of strings. A list runs in order, each step on the previous output:
 
   - `re_replace [pattern, replacement]`: the replacement evaluated as a template, then every
-    match replaced, .NET replacement syntax included;
+    match replaced. The template's own text reads as .NET replacement syntax, and each `$` in a
+    value the template inserts becomes `$$` first, so the value reads as its own text. A `$` or
+    `$N` written right before a value still joins with it: a written `$` before an inserted `0`
+    gives the match (#1786);
   - `regexp pattern`: the first match's group 1, empty text when nothing matches;
   - `replace [from, to]`: every literal occurrence, `to` evaluated as a template;
   - `split [sep, index]`: split on the first character of `sep`, a negative index counting from
@@ -77,7 +80,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   # Each step answers its output and the bytes of the templates it evaluated.
   defp step(%{name: "re_replace", args: [pattern, replacement]}, data, env, left)
        when is_binary(pattern) and is_binary(replacement) do
-    with {:ok, rendered} <- template(replacement, env, left),
+    with {:ok, rendered} <- template(replacement, env, left, modifier: &escape_dollar/1),
          left = left - byte_size(rendered),
          {:ok, out} <- BoundedRegex.replace(pattern, data, rendered, max(left, 0)) do
       {:ok, out, byte_size(rendered)}
@@ -137,8 +140,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
 
   defp step(_not_a_filter, _data, _env, _left), do: {:error, :filter_invalid}
 
-  defp template(text, env, left),
-    do: Template.render(text, env.vars, env.now, max_bytes: max(left, 0))
+  defp template(text, env, left, opts \\ []),
+    do: Template.render(text, env.vars, env.now, [max_bytes: max(left, 0)] ++ opts)
+
+  # `$$` is .NET replacement syntax for one `$`. A `$` written right before the value can still
+  # pair with the value's first character (#1786).
+  defp escape_dollar(value), do: String.replace(value, "$", "$$")
 
   defp pick(parts, n) when n >= 0 and n < length(parts), do: {:ok, Enum.at(parts, n), 0}
   defp pick(_parts, _n), do: {:error, :split_index}

@@ -69,6 +69,53 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
       assert run(title, step, off) == {:ok, "[Grp] Kaiju Harbor [1080p]"}
     end
 
+    test "re_replace inserts a bracketed $0, $&, $$, $1, $` or ${x} variable as text" do
+      step = [f("re_replace", ["a", "[{{ .X }}]"])]
+
+      for value <- ["$0", "$&", "$$", "$1", "$`", "${x}"] do
+        assert {value, run("ab", step, %{".X" => value})} == {value, {:ok, "[#{value}]b"}}
+      end
+    end
+
+    test "re_replace still reads a $ written in its replacement as replacement syntax" do
+      step = [f("re_replace", ["a", "[{{ .X }}]$0"])]
+      # The inserted $0 is text and the written $0 is the match.
+      assert run("ab", step, %{".X" => "$0"}) == {:ok, "[$0]ab"}
+    end
+
+    test "re_replace inserts a $ from or, and, join, range or a nested re_replace as text" do
+      vars = %{".X" => "$0", ".L" => ["$0", "$`"]}
+
+      for {replacement, expected} <- [
+            {"{{ or .X \"z\" }}", "$0"},
+            {"{{ and .X .X }}", "$0"},
+            {"{{ join .L \",\" }}", "$0,$`"},
+            {"{{ range .L }}{{.}}{{ end }}", "$0$`"},
+            {"{{ re_replace .X \"z\" \"y\" }}", "$0"}
+          ] do
+        result = run("a", [f("re_replace", ["a", replacement])], vars)
+        assert {replacement, result} == {replacement, {:ok, expected}}
+      end
+    end
+
+    test "re_replace's eq condition reads a variable's $ before it is escaped" do
+      step = [f("re_replace", ["a", "{{ if eq .X \"$0\" }}Y{{ else }}N{{ end }}"])]
+      assert run("a", step, %{".X" => "$0"}) == {:ok, "Y"}
+    end
+
+    test "re_replace still joins a $ written right before an inserted value with it (#1786)" do
+      step = [f("re_replace", ["a", "${{ .X }}"])]
+      # The written $ pairs with the first $ of the escaped $$0, so $0 then reads as the match.
+      assert run("ab", step, %{".X" => "$0"}) == {:ok, "$ab"}
+      assert run("ab", step, %{".X" => "0"}) == {:ok, "ab"}
+    end
+
+    test "replace and append insert a template's $ as text, with no escaping" do
+      vars = %{".X" => "$0$$"}
+      assert run("a.b", [f("replace", [".", "{{ .X }}"])], vars) == {:ok, "a$0$$b"}
+      assert run("a", [f("append", "{{ .X }}$1")], vars) == {:ok, "a$0$$$1"}
+    end
+
     test "replace replaces every literal occurrence, its target a template" do
       assert run("a b c", [f("replace", [" ", "-"])]) == {:ok, "a-b-c"}
       assert run("a.b", [f("replace", [".", "{{ .X }}"])], %{".X" => "*"}) == {:ok, "a*b"}
@@ -162,6 +209,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
       assert {:ok, out} = run(start, List.duplicate(double, 5))
       assert byte_size(out) == 32_768
       assert run(start, List.duplicate(double, 6)) == {:error, :filter_output_cap}
+    end
+
+    test "a re_replace charges the chain its escaped replacement" do
+      step = [f("re_replace", ["a", "{{ .X }}"])]
+      # N inserted `$` charge 2N bytes of escaped replacement plus N bytes of output.
+      largest_fitting = String.duplicate("$", 21_845)
+      assert run("a", step, %{".X" => largest_fitting}) == {:ok, largest_fitting}
+      over = String.duplicate("$", 21_846)
+      assert run("a", step, %{".X" => over}) == {:error, :filter_output_cap}
     end
 
     test "a replace or an append past the cap is an error tag" do
