@@ -5,7 +5,7 @@ defmodule Cinder.HTTPPolicyTest do
 
   alias Cinder.Download.PollerProgress
   alias Cinder.HTTPPolicy
-  alias Cinder.Test.RequestDeadlines
+  alias Cinder.Test.{RequestDeadlines, SilentServer}
 
   @request_task_event [:cinder, :http, :request_task]
   # How long both cancel tests hold their request task, above the elapsed bound of
@@ -1126,6 +1126,46 @@ defmodule Cinder.HTTPPolicyTest do
         assert {:error, {%RuntimeError{message: "adapter crashed"}, _stacktrace}} =
                  HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 10_000)
       end)
+    end
+
+    # #1651: `Cinder.Acquisition.IndexerSource.Native` kills a search process at its deadline,
+    # and the request that process started must end with it. The request waits on a socket that
+    # never answers under a 60 s budget, so a task that outlives its caller is still alive at the
+    # 5 s wait below. The caller dies only once the server has accepted the request's connection.
+    test "a request task ends once its caller is killed mid-request" do
+      url = SilentServer.start!(notify: self())
+      test_pid = self()
+
+      {caller, _events} =
+        Cinder.TelemetryHelpers.capture(@request_task_event, fn ->
+          caller =
+            start_supervised!(
+              {Task,
+               fn ->
+                 HTTPPolicy.bounded_request(
+                   [url: url, retry: false, receive_timeout: 60_000],
+                   64,
+                   60_000
+                 )
+               end},
+              id: make_ref()
+            )
+
+          assert_receive {:telemetry_captured, _ref, _measurements, %{caller: ^caller} = meta},
+                         5_000
+
+          send(test_pid, {:request_task, meta.task_pid})
+          caller
+        end)
+
+      assert_received {:request_task, task_pid}
+      assert_receive :silent_server_accepted, 10_000
+      assert Process.alive?(task_pid)
+      ref = Process.monitor(task_pid)
+
+      Process.exit(caller, :kill)
+
+      assert_receive {:DOWN, ^ref, :process, ^task_pid, :killed}, 5_000
     end
   end
 

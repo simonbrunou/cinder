@@ -584,6 +584,39 @@ defmodule Cinder.Settings.Registry do
     new("setup_complete", :boolean, save: :direct, render: :none)
   ]
 
+  # The indexer source every search uses unless its caller names one (#1651). Written only through
+  # `Cinder.Settings.put/2` and the upgrade migration until #1662 renders it: a `save: :form` key
+  # is planned from any submitted param, input or not. Each option's `os_env` lists the variables
+  # whose value, set and not blank, makes it the bootstrap choice; `default` is the fresh-install
+  # choice. `Cinder.Settings.Shape.running_indexer_source/3` picks the module.
+  @indexer_source new(
+                    "indexer_source",
+                    {:indexer_source,
+                     %{
+                       options: [
+                         %{
+                           value: "prowlarr",
+                           module: Cinder.Acquisition.IndexerSource.Prowlarr,
+                           os_env: ["PROWLARR_URL", "PROWLARR_API_KEY"]
+                         },
+                         %{
+                           value: "native",
+                           module: Cinder.Acquisition.IndexerSource.Native,
+                           os_env: []
+                         }
+                       ],
+                       default: "prowlarr"
+                     }},
+                    target: {:writer, :indexer_source},
+                    save: :direct,
+                    render: :none
+                  )
+
+  {:indexer_source, spec} = @indexer_source.shape
+
+  unless Enum.any?(spec.options, &(&1.value == spec.default)),
+    do: raise(ArgumentError, "indexer_source default #{inspect(spec.default)} is no option")
+
   @definitions [
                  field("tmdb_token", {Cinder.Catalog.TMDB.HTTP, :token},
                    shape: :secret,
@@ -599,7 +632,8 @@ defmodule Cinder.Settings.Registry do
                    shape: :secret,
                    group: :indexer,
                    label: "Prowlarr API key"
-                 )
+                 ),
+                 @indexer_source
                ] ++
                  @migration ++
                  @download_choices ++

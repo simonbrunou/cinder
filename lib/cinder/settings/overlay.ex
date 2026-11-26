@@ -22,6 +22,7 @@ defmodule Cinder.Settings.Overlay do
     :mailer,
     :anime_preferences,
     :media_server,
+    :indexer_source,
     :download_clients,
     # One kind at a time, in `LibraryKind` order: its root, then (video kinds) its Anime root and
     # release rules.
@@ -47,6 +48,7 @@ defmodule Cinder.Settings.Overlay do
   @smtp_password Registry.one!(target: {:module, Cinder.Mailer, :password})
   @smtp_ssl Registry.one!(target: {:writer, :mailer}, slot: :ssl)
   @media_server Registry.one!(target: {:writer, :media_server})
+  @indexer_source Registry.one!(target: {:writer, :indexer_source})
   @import_roots Registry.one!(target: {:writer, :import_roots})
   @upgrade_hunt Registry.one!(target: {:writer, :upgrade_hunt}, slot: :enabled)
 
@@ -188,6 +190,20 @@ defmodule Cinder.Settings.Overlay do
       )
 
     Application.put_env(:cinder, :media_server, impl)
+  end
+
+  # The source module `Shape.running_indexer_source/3` picks from the stored row and the boot
+  # capture, rebuilt on every load like the media server.
+  defp write(:indexer_source, rows) do
+    source =
+      Shape.to_env(
+        @indexer_source.shape,
+        decoded(rows, @indexer_source.key),
+        base(:indexer_source),
+        Map.has_key?(rows, @indexer_source.key)
+      )
+
+    Application.put_env(:cinder, :indexer_source, source)
   end
 
   # A saved choice selects exactly one implementation per protocol. Until a choice is saved,

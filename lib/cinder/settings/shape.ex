@@ -10,6 +10,7 @@ defmodule Cinder.Settings.Shape do
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
   # | {:list, :downcase | :groups} | :timezone | :hours
+  # | {:indexer_source, %{options: [%{value, module, os_env}], default}}
 
   alias Cinder.Acquisition.{AnimePreferences, Parser}
 
@@ -194,6 +195,10 @@ defmodule Cinder.Settings.Shape do
     end
   end
 
+  # The resolver picks the source with or without a row, so it sits above the nil clause too.
+  def to_env({:indexer_source, spec}, value, fallback, _row?),
+    do: running_indexer_source(spec, value, fallback)
+
   def to_env(_shape, nil, fallback, _row?), do: fallback
   def to_env(:boolean, value, _fallback, _row?), do: value == "true"
   def to_env(:positive_integer, value, _fallback, _row?), do: positive_integer(value)
@@ -317,6 +322,44 @@ defmodule Cinder.Settings.Shape do
   # else the option its os_env selects, else the first option.
   defp shown_media_server(options, value),
     do: (running_media_server(options, value) || hd(options)).value
+
+  @doc """
+  The indexer source module that runs, for the `indexer_source` shape's `spec`, the stored
+  (decoded) `value` and the module `captured` at boot (`Cinder.Settings.Overlay.base/1`). In
+  order:
+
+  1. the stored option's module;
+  2. with no listed option stored, `captured` when it is a module and no option's (the Mox mock
+     in tests);
+  3. the first option one of whose `os_env` variables is set and not blank (Prowlarr's
+     `PROWLARR_URL` or `PROWLARR_API_KEY`);
+  4. the `default` option's module.
+
+  The overlay writes its answer to the `:indexer_source` env on boot and on every save.
+  """
+  def running_indexer_source(%{options: options, default: default}, value, captured) do
+    cond do
+      option = option(options, value) ->
+        option.module
+
+      unlisted_module?(options, captured) ->
+        captured
+
+      option = Enum.find(options, &Enum.any?(&1.os_env, fn name -> set_env?(name) end)) ->
+        option.module
+
+      true ->
+        option(options, default).module
+    end
+  end
+
+  # `Overlay.base/1` captures `[]` for a key unset at boot, which is no module.
+  defp unlisted_module?(options, captured) do
+    is_atom(captured) and captured not in [nil, true, false] and
+      not Enum.any?(options, &(&1.module == captured))
+  end
+
+  defp set_env?(name), do: String.trim(System.get_env(name) || "") != ""
 
   # The option whose os_env variable is set (PLEX_URL for Plex): the bootstrap media server choice.
   defp os_env_option(options),

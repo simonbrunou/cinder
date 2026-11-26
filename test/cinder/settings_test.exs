@@ -70,7 +70,7 @@ defmodule Cinder.SettingsTest do
     @written ~w(
       anime_preferences audiobooks_library_path books_library_path default_request_quota
       download_clients explicit_import_roots ffprobe_bin household_timezone import_roots
-      media_server move_on_import movies_anime_library_path movies_blocked_terms
+      indexer_source media_server move_on_import movies_anime_library_path movies_blocked_terms
       movies_library_path movies_max_size movies_min_size movies_preferred_resolutions
       movies_preferred_sources movies_preferred_terms movies_upgrade_cutoff
       nzbget_local_path_prefix nzbget_remote_path_prefix qbittorrent_local_path_prefix

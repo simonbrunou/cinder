@@ -26,6 +26,11 @@ Mox.defmock(Cinder.Acquisition.InHandIndexerMock, for: Cinder.Acquisition.Indexe
 # The source a test passes as a search's `indexer_source:` opt while the env names `IndexerMock`,
 # so a search that reads the env instead of the opt reaches the other mock.
 Mox.defmock(Cinder.Acquisition.PassedIndexerMock, for: Cinder.Acquisition.IndexerSource)
+# The per-type indexer seam behind `IndexerSource.Native`: a test points a type of the
+# `:indexer_adapters` map at one mock, and a second type at the other, so an indexer that reaches
+# the wrong type's adapter fails.
+Mox.defmock(Cinder.Acquisition.IndexerAdapterMock, for: Cinder.Acquisition.Indexer)
+Mox.defmock(Cinder.Acquisition.OtherIndexerAdapterMock, for: Cinder.Acquisition.Indexer)
 Mox.defmock(Cinder.Indexers.Definitions.SourceMock, for: Cinder.Indexers.Definitions.Source)
 # The source `Cinder.Indexers.Definitions.SourceTest` points `:indexer_definitions_source` at, to
 # show `Source.fetch/1` reads that key rather than naming `SourceMock`.

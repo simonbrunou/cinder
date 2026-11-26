@@ -4,7 +4,8 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
 
   alias Cinder.Acquisition.{IndexerMock, IndexerSource, InHandIndexerMock, PassedIndexerMock}
 
-  # The names this seam had before #1643, built so no source line spells them.
+  # The names this seam had before #1643, built so no source line spells them. #1651 reuses the
+  # first for the per-type seam, which declares only its own `search/3`.
   @old_behaviour Module.concat([Cinder.Acquisition, Indexer])
   @old_prowlarr Module.concat([Cinder.Acquisition, Indexer, Prowlarr])
 
@@ -21,10 +22,10 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     search_tv_query: 2
   ]
 
-  test "the seam and its Prowlarr adapter load under the IndexerSource names only" do
+  test "the seam and its Prowlarr adapter load under the IndexerSource names, and the old seam name is the per-type seam" do
     assert Code.ensure_loaded?(IndexerSource)
     assert Code.ensure_loaded?(IndexerSource.Prowlarr)
-    refute Code.ensure_loaded?(@old_behaviour)
+    assert @old_behaviour.behaviour_info(:callbacks) == [search: 3]
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 

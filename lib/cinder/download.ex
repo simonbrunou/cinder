@@ -38,6 +38,9 @@ defmodule Cinder.Download do
   ]
   @refused_release_errors @permanent_submission_errors -- [:invalid_intent_release]
 
+  # The indexer source that fetches a link, by the source name an intent records.
+  @fetch_sources %{"prowlarr" => IndexerSource.Prowlarr, "native" => IndexerSource.Native}
+
   @doc """
   The submission errors that drop a reservation for good; a book target is also held on them
   (`abandon_reserved/2`), and a movie in its search phase parks on them
@@ -811,22 +814,25 @@ defmodule Cinder.Download do
   @doc """
   The indexer source that fetches `intent`'s download link, read from the source the intent
   recorded and never from the configured one: `{:ok, module, provenance}`, where `provenance` is
-  `[indexer_source: "prowlarr", indexer_id:, credentials_version:]`, the last two `nil` when the
-  intent records none. An intent with no recorded source, such as one reserved before #1645, is
-  Prowlarr's. Any other source answers `{:error, :unknown_indexer_source}`.
+  `[indexer_source: source, indexer_id:, credentials_version:]`, the last two `nil` when the
+  intent records none. `"prowlarr"` maps to `IndexerSource.Prowlarr` and `"native"` to
+  `IndexerSource.Native`. An intent with no recorded source, such as one reserved before #1645,
+  is Prowlarr's. Any other source answers `{:error, :unknown_indexer_source}`.
   """
   @spec fetch_source(Intent.t()) :: {:ok, module(), keyword()} | {:error, :unknown_indexer_source}
   def fetch_source(%Intent{release: stored} = intent) do
-    case indexer_source(stored["indexer_source"]) do
-      "prowlarr" ->
-        {:ok, IndexerSource.Prowlarr,
+    source = indexer_source(stored["indexer_source"])
+
+    case Map.fetch(@fetch_sources, source) do
+      {:ok, module} ->
+        {:ok, module,
          [
-           indexer_source: "prowlarr",
+           indexer_source: source,
            indexer_id: indexer_id(intent),
            credentials_version: stored["credentials_version"]
          ]}
 
-      _other ->
+      :error ->
         {:error, :unknown_indexer_source}
     end
   end

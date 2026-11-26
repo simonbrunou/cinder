@@ -15,8 +15,9 @@
 Every external service (TMDB, Prowlarr, torrent and Usenet clients, Jellyfin/Plex,
 Audiobookshelf, Booklore, the Prowlarr/Indexers definitions on GitHub) is reached only through a
 behaviour, never directly from a context: `Cinder.Catalog.TMDB`,
-`Cinder.Acquisition.IndexerSource`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`,
-`Cinder.Books.Metadata`, `Cinder.Library.AudiobookServer`, `Cinder.Indexers.Definitions.Source`.
+`Cinder.Acquisition.IndexerSource`, `Cinder.Acquisition.Indexer` (one native adapter per indexer
+type), `Cinder.Download.Client`, `Cinder.Library.MediaServer`, `Cinder.Books.Metadata`,
+`Cinder.Library.AudiobookServer`, `Cinder.Indexers.Definitions.Source`.
 
 - Resolve the implementation at runtime with `Application.fetch_env!/2`, never `compile_env!/2`.
   The Mox mock is defined at runtime, so compile-time resolution breaks
@@ -407,6 +408,10 @@ Every call a poller makes has a bound:
   way through `BoundedCommand.kill_os_process/1` (#976), and `Subtitles.Sync.Ffsubsync`, which
   runs under coreutils `timeout --kill-after`, with `ionice` and `nice` between `timeout` and the
   interpreter (#954).
+- A native indexer search (`Cinder.Acquisition.IndexerSource.Native`) searches each indexer it
+  can ask in a task of its own, under one deadline for the whole search, and kills the tasks
+  still running past it. Its moduledoc gives the deadline, the heap cap and which indexers it
+  asks; `Cinder.Acquisition.Indexer.request/3` budgets each request inside.
 - A child `erl` writes to its own stdout from C, so a protocol on a child VM's output reads
   another descriptor, as the `Cinder.Indexers.ParserWorker` moduledoc says. A host `mix release`
   runs nix's ERTS, which writes nothing there, so prove such a protocol in the image. Build and

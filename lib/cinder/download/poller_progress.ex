@@ -14,7 +14,11 @@ defmodule Cinder.Download.PollerProgress do
     the tick (`beat/0`). A unit can make many such calls in series, as the anime episode search
     makes up to 24 indexer queries, so these stamps bound the stretch between two stamps by one
     request's deadline. A request made from another process, such as a `Task` the unit starts,
-    writes no stamp.
+    writes no stamp;
+  - each indexer's search that answers or crashes in a seam call of
+    `Cinder.Acquisition.IndexerSource.Native`, which searches each indexer in a process of its
+    own and calls `beat/0` in the calling process as each one ends that way. A search the
+    deadline kills writes no stamp.
 
   The store is one `:atomics` array per poller module: slot 1 holds 1 while a tick is in flight
   and 0 otherwise, slot 2 the last progress stamp. Its reference sits in `:persistent_term` under

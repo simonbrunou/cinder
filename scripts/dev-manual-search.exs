@@ -17,7 +17,9 @@
 # Edit `DevManualSearch.Source` for another case: each callback of
 # `Cinder.Acquisition.IndexerSource` answers here. The script seeds movies only, so a season's or
 # a book's panel also needs a series or a book in the dev database. The household time zone is
-# Europe/Paris, unless /settings stored one: a stored zone replaces it when the app starts.
+# Europe/Paris, unless /settings stored one: a stored zone replaces it when the app starts. A
+# /settings save while it runs writes the source the database stores back over the fake one when
+# the database stores an `indexer_source` row: restart the script then.
 defmodule DevManualSearch.Source do
   @behaviour Cinder.Acquisition.IndexerSource
 
@@ -77,6 +79,9 @@ if Mix.env() != :dev, do: Mix.raise("scripts/dev-manual-search.exs runs with MIX
 Application.put_env(:cinder, :indexer_source, DevManualSearch.Source)
 Application.put_env(:cinder, :household_timezone, "Europe/Paris")
 {:ok, _} = Application.ensure_all_started(:cinder)
+# The boot's settings overlay keeps a module set before it starts, unless the database stores an
+# `indexer_source` row, whose source it writes instead (`Shape.running_indexer_source/3`).
+Application.put_env(:cinder, :indexer_source, DevManualSearch.Source)
 
 alias Cinder.Accounts.User
 alias Cinder.Catalog.Movie

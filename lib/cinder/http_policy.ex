@@ -245,6 +245,9 @@ defmodule Cinder.HTTPPolicy do
   @doc """
   Runs a Req request with total-time and retained-response-body limits.
 
+  The request runs in a task under `Cinder.HTTPPolicy.TaskSupervisor`, which is killed once the
+  calling process exits, so a caller killed mid-request leaves no request running.
+
   A request that sets no `retry:` option is sent once, whatever its method and whatever comes
   back. Req's own default, `:safe_transient`, would send a GET or HEAD that gets a 408, 429, 500,
   502, 503 or 504, or whose connection times out, is refused or closes, up to three more times,
@@ -305,6 +308,8 @@ defmodule Cinder.HTTPPolicy do
 
     task =
       Task.Supervisor.async_nolink(Cinder.HTTPPolicy.TaskSupervisor, fn ->
+        watch_owner(owner)
+
         receive do
           {^gate, :run} -> run_bounded_request(request, max_bytes, timeout_ms)
         end
@@ -326,6 +331,28 @@ defmodule Cinder.HTTPPolicy do
     emit_http_telemetry(request, result, started_at)
     PollerProgress.beat()
     result
+  end
+
+  # The request task ends with the process that called `bounded_request/2,3`. A watcher under the
+  # same supervisor monitors both and kills the request task once the caller is gone, whether the
+  # task still waits for its gate message or runs the request. So a caller killed at its own
+  # deadline, such as a search process of `Cinder.Acquisition.IndexerSource.Native`, leaves no
+  # request behind. The watcher ends with the request task.
+  defp watch_owner(owner) do
+    request = self()
+
+    {:ok, _watcher} =
+      Task.Supervisor.start_child(Cinder.HTTPPolicy.TaskSupervisor, fn ->
+        owner_ref = Process.monitor(owner)
+        request_ref = Process.monitor(request)
+
+        receive do
+          {:DOWN, ^owner_ref, :process, _pid, _reason} -> Process.exit(request, :kill)
+          {:DOWN, ^request_ref, :process, _pid, _reason} -> :ok
+        end
+      end)
+
+    :ok
   end
 
   # `[:cinder, :http, :request_task]` fires once per `bounded_request/2,3` call, in the caller,

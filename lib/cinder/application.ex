@@ -47,6 +47,9 @@ defmodule Cinder.Application do
         {Phoenix.PubSub, name: Cinder.PubSub},
         # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
         {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
+        # Owns the built-in indexer source's per-indexer searches, each under a heap cap, so a
+        # search past its deadline or its heap is killed without touching the caller.
+        {Task.Supervisor, name: Cinder.Acquisition.IndexerSource.Native.TaskSupervisor},
         # Owns notifier deliveries so a slow transport (e.g. SMTP) runs off the emitting pipeline's
         # critical path instead of wedging a poller tick (Cinder.Notifier.Dispatcher).
         {Task.Supervisor, name: Cinder.Notifier.TaskSupervisor},

@@ -1,10 +1,12 @@
 defmodule Cinder.Acquisition.IndexerSource do
   @moduledoc """
   The indexer source seam: the behaviour a search across indexers runs through, as `GLOSSARY.md`
-  "Indexer source" defines it. Prowlarr (`Cinder.Acquisition.IndexerSource.Prowlarr`) is the one
-  source today. The app env key `:indexer_source` names the configured source: `configured/0`
-  returns it, each search reads it once ("One source per search" below), and the `"indexer"`
-  target of `Cinder.Health` calls it.
+  "Indexer source" defines it. Two sources implement it: Prowlarr
+  (`Cinder.Acquisition.IndexerSource.Prowlarr`) and the built-in one
+  (`Cinder.Acquisition.IndexerSource.Native`). The app env key `:indexer_source` names the
+  configured source: the `indexer_source` setting's overlay writes it
+  (`Cinder.Settings.Shape.running_indexer_source/3`), `configured/0` returns it, each search reads
+  it once ("One source per search" below), and the `"indexer"` target of `Cinder.Health` calls it.
 
   A download client fetches a grab's http(s) link through `fetch_download/3` of the source its
   download intent recorded, not the configured one (`Cinder.Download.fetch_source/1`). A magnet

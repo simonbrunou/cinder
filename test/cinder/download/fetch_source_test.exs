@@ -8,7 +8,7 @@ defmodule Cinder.Download.FetchSourceTest do
   import Mox
 
   alias Cinder.Acquisition.IndexerMock
-  alias Cinder.Acquisition.IndexerSource.Prowlarr
+  alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.Acquisition.Release
   alias Cinder.Download
   alias Cinder.Download.{ClientMock, Intent}
@@ -40,8 +40,17 @@ defmodule Cinder.Download.FetchSourceTest do
                 [indexer_source: "prowlarr", indexer_id: nil, credentials_version: nil]}
     end
 
+    test "an intent that records native fetches through Native with its provenance" do
+      intent = %Intent{
+        release: %{"indexer_source" => "native", "indexer_id" => 7, "credentials_version" => 3}
+      }
+
+      assert Download.fetch_source(intent) ==
+               {:ok, Native, [indexer_source: "native", indexer_id: 7, credentials_version: 3]}
+    end
+
     test "an intent that records any other source has no fetch source" do
-      for source <- ["native", "torznab", ""] do
+      for source <- ["torznab", "Native", ""] do
         intent = %Intent{release: %{"indexer_source" => source, "indexer_id" => 7}}
 
         assert {source, Download.fetch_source(intent)} ==
@@ -106,11 +115,40 @@ defmodule Cinder.Download.FetchSourceTest do
       assert Repo.reload!(movie).download_id == "remote-1"
     end
 
-    test "is never called for an intent that records an unknown source, which retries" do
+    test "gets a fetch: function that reaches Native's fetch_download/3 for a native intent" do
       test_pid = self()
       movie = movie_fixture(%{status: :searching})
       assert {:ok, intent} = reserve(movie, "native")
       assert intent.release["indexer_source"] == "native"
+
+      stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+      stub(ClientMock, :add, fn release, opts ->
+        answer =
+          Keyword.fetch!(opts, :fetch).(release.download_url, release.download_url_origin,
+            max_bytes: 64,
+            error_tag: :torrent_fetch_status,
+            resolver: fn host ->
+              send(test_pid, {:dns, host})
+              {:ok, [{93, 184, 216, 34}]}
+            end
+          )
+
+        send(test_pid, {:added, answer})
+        answer
+      end)
+
+      Download.reconcile_pending_intents([:movie])
+
+      assert_received {:added, {:error, :not_supported}}
+      refute_received {:dns, _host}
+    end
+
+    test "is never called for an intent that records an unknown source, which retries" do
+      test_pid = self()
+      movie = movie_fixture(%{status: :searching})
+      assert {:ok, intent} = reserve(movie, "torznab")
+      assert intent.release["indexer_source"] == "torznab"
 
       stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
