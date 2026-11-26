@@ -71,6 +71,19 @@
   in under half a second. On #1670 (PR #1712) the Spec review found `\C`, and the re-check then
   found `\c\\C` hiding a real `\C` from the first fix's scan, a second fix round the sweep would
   have saved.
+- When review finds a second bug of one kind in the same code, the fix commit adds a sweep: a test
+  over every combination of the inputs the bugs differ in, as `Cinder.Books.IdentityCollisionTest`
+  enumerates its folds after six review rounds found one collision each. A streaming decoder gets
+  its sweep in the commit that adds or changes it, before any review. A loop over
+  `:zlib.safeInflate/2` reads at most 8 KiB of input a call (`INFLATE_IN_CHUNKSIZE` in OTP's
+  `zlib.erl`), so its test runs every compressed length across several multiples of 8,192 bytes. Its
+  input is built from bytes that do not compress, so the compressed length follows the input length,
+  and each length gets each tail the code handles (none, a second member, a newline). Near those
+  multiples zlib can answer an empty `{:continue, []}` before `{:finished, []}`. On #1658 a gzip NZB
+  with a second member or a trailing newline was refused at 50 of 40,001 lengths, those whose
+  compressed member ended 1 to 10 bytes past a multiple of 8,192. Two fix rounds each tested one
+  length, and the re-check that swept the lengths stopped the branch under the two-round rule of
+  `.agents/skills/fan-out-issue-threads/brief-template.md`.
 - A Cardigann engine rule that copies Prowlarr's .NET behaviour, such as a regex, a date format or
   the replacement syntax, takes its expected values from a `dotnet fsi` run. The test names the rows
   that came from it, the .NET call with its options and the SDK version, as the header comment of
