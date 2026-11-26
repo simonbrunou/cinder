@@ -236,6 +236,16 @@
   It puts each named file back as the merge base holds it and restores it afterwards, also on a
   signal. Its header gives the lib files to name and the exit codes. On #788 and #1322 the swap
   and the restore were done by hand: about 6 minutes on #788, and three hand swaps on #1322.
+- Before a change to what a parser or check accepts (a link, a date, a host), add the input
+  shapes the old check accepts to a test of their own, apart from the refused inputs, then run
+  that test file through `scripts/test-at-base` against the last commit that holds the old
+  check: the merge base, or the branch's commit before the change when the branch added the
+  check. Every accept row that passes there must pass on the branch, unless the change means to
+  refuse it. For an indexer link, those shapes are the accept rows of
+  `Cinder.Acquisition.Indexer.Newznab.ItemsTest`. On #1653 (PR #1755) the link check went from a
+  regex to `URI.new/1` with a host pattern. The pattern refused `http://prowlarr_app:9696/...`,
+  and `URI.new/1` refused a query holding `|`, `[`, `]` or raw UTF-8, which the regex took. A
+  re-check round found both.
 - A throwaway test, one that only reports what the code does, runs with `mix test.unchecked`.
   Before you edit an existing test file, copy it outside `test/` and restore it after the run;
   delete a new file. Report from the test body with

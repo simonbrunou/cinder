@@ -197,7 +197,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab.ItemsTest do
       assert [%{download_url: "https://indexer.example/t/1.torrent"}] = rows(:torznab, xml)
     end
 
-    test "a link needs an http(s) URL with a host, an IPv6 one included" do
+    test "a link that is no http(s) URL with a host is refused" do
       for url <- [
             "http://@",
             "http://%zz",
@@ -217,7 +217,11 @@ defmodule Cinder.Acquisition.Indexer.Newznab.ItemsTest do
           ] do
         assert {url, rows(:newznab, nzb_item("N", url))} == {url, []}
       end
+    end
 
+    # The input shapes the link check takes, apart from the refused ones, so a change to the
+    # check can run them against the old one (docs/agents/testing.md, `scripts/test-at-base`).
+    test "an http(s) link with a host is kept, an IPv6 one included" do
       for url <- [
             "HTTPS://Indexer.example:8443/1.nzb?x=1",
             "http://[::1]/1.nzb",
