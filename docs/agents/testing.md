@@ -246,6 +246,16 @@
   window, and the cap test filled the store to `max = PasskeyChallenges.max_entries()`. Mutants
   that set the TTL and the window to a day and the cap to ten times its value survived until the
   Spec review, and closing them took a test per limit.
+- When a test fixture or helper defaults a value to equal another value the code compares with,
+  a test sets them apart with an input that one value admits and the other refuses, and asserts
+  the result. The mutant list holds a mutant that reads the other value. Every test that keeps
+  the default passes that mutant, and so does one with no input that one value admits and the
+  other refuses. On #1731 (PR #1787), `answer/3` in `Cinder.Indexers.DefinitionsTest` defaults
+  its `:max` option, the answer's `MAX_VERSION`, to 12, the engine's schema version. The Spec
+  review's mutant that took the count's ceiling from `MAX_VERSION` instead of the engine's
+  version survived every test, an older one with `MAX_VERSION` 11 and files only in v11 and v13
+  included. The fix took a test with files in v13 under `MAX_VERSION` 13 and in v12 under 11,
+  a fix commit and a re-check.
 - A negative test of code that rescues every raise, such as `Subtitles.fetch_missing/3` (its
   `fetch_one/6`) or a poller's `poll/1` (`isolate/2` in `Cinder.Download.PollerSkeleton`), stubs
   the action to succeed and to send the test process a message, then runs `refute_received` on
