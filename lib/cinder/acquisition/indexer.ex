@@ -70,6 +70,19 @@ defmodule Cinder.Acquisition.Indexer do
   @callback search(ConfiguredIndexer.t(), query(), context()) ::
               {[map()], Report.outcome() | {:failed, :deadline}}
 
+  @doc """
+  The per-indexer Test of one configured indexer (#1657): asks it whatever its backoff state
+  holds, in `context`'s class, and calls `record` with the Test's answer (`:test_success`, or
+  the failure class or tag) while it still holds the indexer's slot. Answers `{:ran, value}`
+  with `record`'s value, or `{:not_run, outcome}` when no request left the slot queue, with
+  nothing recorded.
+  """
+  @callback test(
+              ConfiguredIndexer.t(),
+              context(),
+              record :: (IndexerStatus.answer() -> term())
+            ) :: {:ran, term()} | {:not_run, Report.outcome()}
+
   # Newznab and Torznab give each request 30 s of its own.
   @request_timeout_ms 30_000
   @max_response_bytes 4 * 1024 * 1024

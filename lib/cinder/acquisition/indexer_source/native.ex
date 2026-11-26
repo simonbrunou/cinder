@@ -66,8 +66,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   - `{:error, {:no_indexer_answered, report}}` when none was asked and one or more failed.
   - `{:ok, rows, report}` otherwise, a failed indexer's rows included.
 
-  `fetch_download/3` answers `{:error, :not_supported}` and `health/0` `{:error,
-  :not_supported}`, neither with a request.
+  `fetch_download/3` answers `{:error, :not_supported}`, with no request. `health/0` answers
+  from the recorded state (`IndexerState.health/2`), with no request either.
 
   `config :cinder, #{inspect(__MODULE__)}` may set `deadline_ms` (a shorter deadline for a test)
   and `clock`, a 0-arity function returning the `DateTime` that `retry_at`, the backoff check
@@ -76,7 +76,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   @behaviour Cinder.Acquisition.IndexerSource
 
   alias Cinder.Acquisition.IndexerSource
-  alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus}
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Download.PollerProgress
   alias Cinder.Indexers
@@ -86,6 +86,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
 
   @source "native"
   @deadline_ms 90_000
+  @test_budget_ms 90_000
   @retry_after_s 60
 
   # How long past the deadline a search process may take to answer before it is killed. Its
@@ -126,11 +127,69 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   @impl true
   def search_audiobook_query(query, opts), do: run({:search_audiobook_query, query, opts})
 
+  @doc """
+  The source's health from what Native recorded, with no request: `IndexerState.health/2` of
+  `IndexerState.list/1`, both at one reading of the clock (#1657).
+  """
   @impl true
-  def health, do: {:error, :not_supported}
+  def health do
+    now = now()
+    now |> IndexerState.list() |> IndexerState.health(now)
+  end
 
   @impl true
   def fetch_download(_url, _source_origin, _opts), do: {:error, :not_supported}
+
+  @doc """
+  The per-indexer Test of the configured indexer `id` (#1657, #1619 point 11): a plain call
+  that #1660 runs in a supervised task. It reads the indexer by id, enabled or not
+  (`Cinder.Indexers.fetch_with_secrets/1`), and refuses with no request `{:error, :not_found}`,
+  `{:error, :undecryptable_secrets}` or `{:error, {:not_supported, feature}}`
+  (`not_supported/2`). Otherwise its adapter's `test/3` asks the indexer whatever its backoff
+  state holds, in the interactive class, under a 90 s budget, and
+  `IndexerStatus.record_test/3` stores the answer. Answers:
+
+  - `{:ok, last_test}`: the outcome and time it stored;
+  - `{:error, :dropped}`: the indexer's `config_version` rose or the indexer went while the
+    Test ran, so neither the status nor the last Test changed;
+  - `{:error, :not_written}`: the write failed (`IndexerStatus.record_test/3`);
+  - `{:error, :deadline}`: a request never left the slot queue inside the budget, and nothing
+    was stored.
+
+  `config :cinder, #{inspect(__MODULE__)}` may set `test_budget_ms` (a shorter budget for a
+  test).
+  """
+  @spec test_indexer(pos_integer()) :: {:ok, IndexerStatus.last_test()} | {:error, term()}
+  def test_indexer(id) do
+    context = %{
+      deadline_at: System.monotonic_time(:millisecond) + test_budget_ms(),
+      priority: :interactive
+    }
+
+    adapters = Application.fetch_env!(:cinder, :indexer_adapters)
+
+    with {:ok, indexer} <- Indexers.fetch_with_secrets(id),
+         :ok <- supported(indexer, adapters) do
+      record = fn answer -> IndexerStatus.record_test(indexer, answer, now()) end
+
+      case Map.fetch!(adapters, indexer.type).test(indexer, context, record) do
+        {:ran, {:written, last_test}} -> {:ok, last_test}
+        {:ran, refused} when refused in [:dropped, :not_written] -> {:error, refused}
+        {:not_run, _outcome} -> {:error, :deadline}
+      end
+    end
+  end
+
+  @doc "The Test's budget in milliseconds: 90 s unless config sets `test_budget_ms`."
+  @spec test_budget_ms() :: pos_integer()
+  def test_budget_ms, do: Keyword.get(config(), :test_budget_ms, @test_budget_ms)
+
+  defp supported(indexer, adapters) do
+    case not_supported(indexer, adapters) do
+      nil -> :ok
+      feature -> {:error, {:not_supported, feature}}
+    end
+  end
 
   # The priority is read here, in the calling process: the search processes are new ones, which
   # do not inherit the mark of `Cinder.Acquisition.IndexerSource.interactive/1`.
@@ -161,8 +220,14 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   # Each indexer's `{rows, outcome}`, by id.
   defp search_all(indexers, query, context) do
     adapters = Application.fetch_env!(:cinder, :indexer_adapters)
-    {supported, left_out} = Enum.split_with(indexers, &asked?(&1, adapters))
-    left_out = Map.new(left_out, &{&1.id, {[], not_asked(&1, adapters)}})
+    {supported, left_out} = Enum.split_with(indexers, &(not_supported(&1, adapters) == nil))
+
+    left_out =
+      Map.new(
+        left_out,
+        &{&1.id, {[], {:not_asked, {:not_supported, not_supported(&1, adapters)}}}}
+      )
+
     {asked, held} = gate(supported)
 
     asked
@@ -187,15 +252,17 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     |> then(fn {asked, held} -> {Enum.reverse(asked), held} end)
   end
 
-  defp asked?(%ConfiguredIndexer{type: type, flaresolverr: flaresolverr}, adapters),
-    do: Map.has_key?(adapters, type) and not flaresolverr
+  @doc """
+  The feature Native lacks to ask `indexer`, or nil when it can ask it: the type when `adapters`
+  (the `:indexer_adapters` map) names no adapter for it, else `:flaresolverr` when its
+  FlareSolverr toggle is on. The search, the Test and `IndexerState` read it.
+  """
+  @spec not_supported(ConfiguredIndexer.t(), map()) :: atom() | nil
+  def not_supported(%ConfiguredIndexer{type: type}, adapters) when not is_map_key(adapters, type),
+    do: type
 
-  # The type check runs first: both read "not supported".
-  defp not_asked(%ConfiguredIndexer{type: type}, adapters) when not is_map_key(adapters, type),
-    do: {:not_asked, {:not_supported, type}}
-
-  defp not_asked(%ConfiguredIndexer{flaresolverr: true}, _adapters),
-    do: {:not_asked, {:not_supported, :flaresolverr}}
+  def not_supported(%ConfiguredIndexer{flaresolverr: true}, _adapters), do: :flaresolverr
+  def not_supported(%ConfiguredIndexer{}, _adapters), do: nil
 
   defp collect([], _query, _context), do: %{}
 

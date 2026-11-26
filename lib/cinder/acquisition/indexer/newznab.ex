@@ -10,8 +10,8 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   `plan/3` reads the indexer's caps once per seam call through
   `Cinder.Acquisition.IndexerSource.Native.IndexerCaps`, which fetches `t=caps` when its row is
-  missing, 7 days old or more, or under another `config_version`. `refetch_caps/2` fetches them
-  whatever the row holds. A failed fetch answers a closed tag:
+  missing, 7 days old or more, or under another `config_version`. The Test (`test/3`) fetches
+  them whatever the row holds. A failed fetch answers a closed tag:
   `Cinder.Acquisition.Indexer.request/3`'s own tag when it answers no response, else the class
   `Cinder.Acquisition.Indexer.NewznabAnswer.classify_caps/4` gives the answer (a 2xx `<error
   code="100">` reads `:rejected_credentials`, a 503 `{:http_status, 503}`), or `:bad_response`
@@ -49,16 +49,17 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   is never sent, and stops the search with that state's outcome: `{:skipped, {:backoff, until}}`,
   which loses to an earlier query error or answer as a deadline cut does, or `{:failed,
   :rejected_credentials}`, which wins. A caps fetch the state holds back answers that outcome as
-  the search's. `refetch_caps/2` waits for the slot but asks the indexer whatever its state.
+  the search's. The Test's two requests wait for the slot but ask the indexer whatever its
+  state.
 
   ## The backoff state
 
   Each answer to a search request, and each caps fetch that fails, goes to
   `Cinder.Acquisition.IndexerSource.Native.IndexerStatus.record/3` from the process that sent
   it, as soon as it is read: `:success` for a search answer that reads, else its class or
-  transport tag. A caps fetch that succeeds records nothing, so the Test (#1657), which is to
-  refetch the caps before its search, will record one answer. A request the deadline cut never
-  answers, so it records nothing.
+  transport tag. A caps fetch that succeeds records nothing, so the Test (`test/3`), which
+  refetches the caps before its search, records one answer. A request the deadline cut never
+  answers, so a search records nothing for it.
 
   The class's `wait` and the times the answer records count from the `clock` of `config :cinder,
   Cinder.Acquisition.IndexerSource.Native`, `DateTime.utc_now/0` by default, read once the answer
@@ -124,7 +125,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   @spec plan(ConfiguredIndexer.t(), Indexer.query(), Indexer.context()) ::
           {:ok, [planned()]} | {:not_asked, :caps} | {:failed, atom() | tuple()}
   def plan(%ConfiguredIndexer{} = indexer, query, context) do
-    case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context, true) end) do
+    case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context) end) do
       {:ok, caps} -> query |> requests(caps) |> planned()
       {:error, tag} -> {:failed, tag}
     end
@@ -132,16 +133,6 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   defp planned([]), do: {:not_asked, :caps}
   defp planned(requests), do: {:ok, requests}
-
-  @doc """
-  Fetches `indexer`'s caps whatever its stored row holds, and stores them on success: the Test's
-  refetch (#1657). It waits for the indexer's slot, never past `context.deadline_at`
-  (`{:error, :deadline}`), but skips the backoff gate.
-  """
-  @spec refetch_caps(ConfiguredIndexer.t(), Indexer.context()) ::
-          {:ok, Caps.t()} | {:error, atom() | tuple()}
-  def refetch_caps(%ConfiguredIndexer{} = indexer, context),
-    do: IndexerCaps.refetch(indexer, fn -> fetch_caps(indexer, context, false) end)
 
   @doc """
   The Req options of one request to `indexer` with the query `params`: a GET to the base URL with
@@ -166,12 +157,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   defp api_key(_indexer), do: []
 
-  # A caps answer that fails is recorded in the indexer's backoff state; one that succeeds is not,
-  # so the Test (#1657), which is to refetch the caps before its search, will record one answer.
-  # The fetch holds the indexer's slot (`Indexer.leased/4`); `gate?` false, for the Test's
-  # refetch, asks the indexer whatever its backoff state holds.
-  defp fetch_caps(indexer, context, gate?),
-    do: leased(indexer, context, fn -> send_caps(indexer, context) end, gate: gate?)
+  # A search's caps fetch: an answer that fails is recorded in the indexer's backoff state, one
+  # that succeeds is not. The fetch holds the indexer's slot (`Indexer.leased/4`) behind the
+  # backoff gate. The Test fetches its caps in `test_caps/3` instead, which records through the
+  # Test's own `record`.
+  defp fetch_caps(indexer, context),
+    do: leased(indexer, context, fn -> send_caps(indexer, context) end)
 
   # `Indexer.leased/4`'s answer as the fetch or request answer: the function's own, or the
   # not-run class.
@@ -188,6 +179,15 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   defp not_run_class(not_run), do: not_run
 
   defp send_caps(indexer, context) do
+    case caps_answer(indexer, context) do
+      {:ok, caps, _now} -> {:ok, caps}
+      {:error, class, now} -> {:error, recorded(indexer, class, now)}
+    end
+  end
+
+  # One `t=caps` request and its answer read, recording nothing: `{:ok, caps, now}` or
+  # `{:error, class, now}`, `now` read once the answer came in.
+  defp caps_answer(indexer, context) do
     response = Indexer.request(context, request_options(indexer, t: "caps"), raw_body: true)
     now = now()
 
@@ -198,10 +198,88 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
       {:error, class} -> {:error, class}
     end
     |> case do
-      {:ok, caps} -> {:ok, caps}
-      {:error, class} -> {:error, recorded(indexer, class, now)}
+      {:ok, caps} -> {:ok, caps, now}
+      {:error, class} -> {:error, class, now}
     end
   end
+
+  # --- the Test ---
+
+  @test_categories %{newznab: @movie_category, torznab: @tv_category}
+
+  @doc """
+  The per-indexer Test of `indexer` (#1657), which asks it whatever its backoff state holds:
+
+  1. it refetches the caps and stores them on success (`IndexerCaps.refetch/2`);
+  2. then it sends one `t=search` with no query terms, with `apikey` when the indexer has a key
+     (`request_options/2`), scoped to the type's default category, Movies (2000) for Newznab
+     and TV (5000) for Torznab: `cat` lists the caps' ids under it (`Caps.categories/2`), and
+     is left out when the caps list none. An RSS answer, an empty one included, is a pass.
+
+  Each request holds the indexer's slot in `context`'s class (`Indexer.leased/4`, with no gate),
+  and `Indexer.request/3` gives each one its one retry after an HTTP 502, 503, 504 or 408. The
+  request that settles the Test calls `record` once, before its slot frees: a failed caps fetch
+  with its class or tag, else the search with `:test_success` for a pass or its class or tag.
+  A deadline cut reads as `:timeout`. A caps fetch that succeeds frees its slot without calling
+  `record`. Answers `{:ran, value}` with `record`'s value, or `{:not_run, {:skipped, :deadline}}`
+  when a request never left the slot queue, with nothing recorded.
+  """
+  @impl Indexer
+  @spec test(ConfiguredIndexer.t(), Indexer.context(), (IndexerStatus.answer() -> value)) ::
+          {:ran, value} | {:not_run, Report.outcome()}
+        when value: term()
+  def test(%ConfiguredIndexer{} = indexer, context, record) do
+    caps_step = fn -> test_caps(indexer, context, record) end
+
+    case Indexer.leased(indexer, context, caps_step, gate: false) do
+      {:ran, {:caps, caps}} ->
+        Indexer.leased(indexer, context, fn -> test_search(indexer, caps, context, record) end,
+          gate: false
+        )
+
+      {:ran, {:recorded, value}} ->
+        {:ran, value}
+
+      not_run ->
+        not_run
+    end
+  end
+
+  # The Test's caps refetch: the caps it stored, or the failure it recorded.
+  defp test_caps(indexer, context, record) do
+    case IndexerCaps.refetch(indexer, fn -> caps_only(indexer, context) end) do
+      {:ok, caps} -> {:caps, caps}
+      {:error, class} -> {:recorded, record.(test_answer(class))}
+    end
+  end
+
+  defp caps_only(indexer, context) do
+    case caps_answer(indexer, context) do
+      {:ok, caps, _now} -> {:ok, caps}
+      {:error, class, _now} -> {:error, class}
+    end
+  end
+
+  defp test_search(indexer, caps, context, record) do
+    params = [t: "search"] ++ test_category(indexer.type, caps)
+    response = Indexer.request(context, request_options(indexer, params), raw_body: true)
+
+    case NewznabAnswer.read(response, now()) do
+      {:ok, _items} -> record.(:test_success)
+      {:error, class} -> record.(test_answer(class))
+    end
+  end
+
+  defp test_category(type, caps) do
+    case Caps.categories(caps, [Map.fetch!(@test_categories, type)]) do
+      [] -> []
+      ids -> [cat: cat(ids)]
+    end
+  end
+
+  # A Test the budget cut ran out of time: a timeout failure, not a skipped search.
+  defp test_answer(:deadline), do: :timeout
+  defp test_answer(class), do: class
 
   # --- the search ---
 

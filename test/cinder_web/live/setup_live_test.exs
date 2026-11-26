@@ -371,6 +371,9 @@ defmodule CinderWeb.SetupLiveTest do
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")
+    # Setup reads the warning as reachable, so no reason text shows beside its badge.
+    assert has_element?(lv, "#test-target-usenet")
+    refute has_element?(lv, "#test-reason-usenet")
   end
 
   test "Save & validate checks the setup targets at once, not one after another", %{conn: conn} do
@@ -420,7 +423,7 @@ defmodule CinderWeb.SetupLiveTest do
 
     rows = [
       {"tmdb", "TMDB"},
-      {"indexer", "Prowlarr"},
+      {"indexer", "Indexers"},
       {"media_server", "Media server"},
       {"movies_library", "Movies library"},
       {"tv_library", "TV library"},
@@ -498,8 +501,10 @@ defmodule CinderWeb.SetupLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
-    lv |> element("button", "Test Prowlarr") |> render_click()
+    assert has_element?(lv, "#test-target-indexer", "Test Indexers")
+    lv |> element("#test-target-indexer") |> render_click()
     assert has_element?(lv, "#setup-check-indexer", "Timed out")
+    assert has_element?(lv, "#test-reason-indexer.text-error", "Timed out")
     assert has_element?(lv, "#finish-setup[disabled]")
 
     lv |> element("button", "Test TMDB") |> render_click()

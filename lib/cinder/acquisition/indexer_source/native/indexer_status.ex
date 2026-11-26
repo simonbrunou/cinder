@@ -15,8 +15,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   - `:success`, a search answer that reads: the level steps down one (not below 0), a failure
     backoff ends, the failure count goes to 0 and the last success is `now`. A limit backoff
     stays until its until-time; one that has ended clears. Rejected credentials stay.
-  - `:test_success`, a passing Test (#1657 is to record it): a success that also ends rejected
-    credentials.
+  - `:test_success`, a passing Test (`record_test/3` records it): a success that also ends
+    rejected credentials.
   - A failure (`{:http_status, status}`, `{:indexer_error, code}`, `:timeout`,
     `:connection_failed`, `:bad_response`, `:too_large`, `:challenge`): the level climbs one, up
     to 9, and a failure backoff runs for that step of the ladder, 1, 5, 15 and 30 min, then 1, 3,
@@ -79,6 +79,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   # Every failure reason the report can carry, so each one stores as `last_failure`.
   @failure_tags Report.failure_atoms() ++ [:http_status, :indexer_error, :limit]
 
+  # The last Test's outcome: a pass, a query error, or a failure reason the report can carry.
+  @test_tags [:success, :query_error | @failure_tags]
+  @test_fields [:last_test, :last_test_code, :last_test_at]
+
   @fields [
     :config_version,
     :backoff,
@@ -108,9 +112,20 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     field :credentials_rejected_by, Ecto.Enum, values: [:code, :http_status]
     field :credentials_rejected_code, :integer
     field :last_success_at, :utc_datetime
+    field :last_test, Ecto.Enum, values: @test_tags
+    field :last_test_code, :integer
+    field :last_test_at, :utc_datetime
   end
 
   @type t :: %__MODULE__{}
+
+  @typedoc """
+  The last Test's outcome: `:success`, `{:query_error, code}`, `:limit`, or a failure reason
+  of `Cinder.Acquisition.IndexerSource.Report` with its integer code, such as `{:http_status,
+  410}`, `:timeout` or `:rejected_credentials`.
+  """
+  @type test_outcome :: atom() | {atom(), integer()}
+  @type last_test :: %{outcome: test_outcome(), at: DateTime.t()}
   @type answer :: :success | :test_success | NewznabAnswer.class() | atom()
 
   @doc "The status of an indexer no answer has reached yet, at `config_version`."
@@ -294,6 +309,84 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
       :not_written
   end
 
+  @doc """
+  Records the answer of a per-indexer Test of `indexer` at `now` (#1657): in one write, the
+  status after `answer` (`:test_success` for a pass, else the class or tag as `record/3` takes
+  it) and the last Test, its outcome and `now`. Answers `{:written, last_test}`, `:dropped` (the
+  indexer is gone, or its `config_version` is no longer the one `indexer` carries, so neither
+  the status nor the last Test changes) or `:not_written`, as `record/3` does on an
+  `Exqlite.Error`. A query error leaves the status as `transition/3` does and still stores the
+  last Test.
+  """
+  @spec record_test(ConfiguredIndexer.t(), answer(), DateTime.t()) ::
+          {:written, last_test()} | :dropped | :not_written
+  def record_test(%ConfiguredIndexer{id: id} = indexer, answer, %DateTime{} = now)
+      when is_integer(id) do
+    now = DateTime.truncate(now, :second)
+    last_test = %{outcome: test_outcome(answer), at: now}
+
+    case Repo.transact(fn -> {:ok, write_test(indexer, answer, last_test, now)} end) do
+      {:ok, result} -> result
+    end
+  rescue
+    error in Exqlite.Error ->
+      Logger.warning(
+        "native indexer Test of indexer #{id} not recorded: #{inspect(error.__struct__)}"
+      )
+
+      :not_written
+  end
+
+  @doc "The last Test `status` holds, or nil when no Test reached it."
+  @spec last_test(t()) :: last_test() | nil
+  def last_test(%__MODULE__{last_test_at: nil}), do: nil
+
+  def last_test(%__MODULE__{} = status) do
+    outcome =
+      if status.last_test_code,
+        do: {status.last_test, status.last_test_code},
+        else: status.last_test
+
+    %{outcome: outcome, at: status.last_test_at}
+  end
+
+  defp test_outcome(:test_success), do: :success
+  defp test_outcome({:query_error, code}), do: {:query_error, code}
+  defp test_outcome({:limit, _wait}), do: :limit
+
+  defp test_outcome(answer) do
+    case NewznabAnswer.reason(answer) do
+      {tag, code} when is_integer(code) -> {tag, code}
+      tag when is_atom(tag) -> tag
+    end
+  end
+
+  defp write_test(indexer, answer, last_test, now) do
+    case transitioned(indexer, answer, now) do
+      {:ok, _stored, status} ->
+        {tag, code} = outcome_columns(last_test.outcome)
+
+        row =
+          status
+          |> struct!(last_test: tag, last_test_code: code, last_test_at: now)
+          |> Map.take([:configured_indexer_id | @fields ++ @test_fields])
+
+        Repo.insert_all(__MODULE__, [row],
+          on_conflict: {:replace, @fields ++ @test_fields},
+          conflict_target: :configured_indexer_id
+        )
+
+        {:written, last_test}
+
+      :dropped ->
+        :dropped
+    end
+  end
+
+  # A last Test's outcome as its two columns: the tag, and the code when it carries one.
+  defp outcome_columns({tag, code}), do: {tag, code}
+  defp outcome_columns(tag), do: {tag, nil}
+
   defp record_now(indexer, answer, now) do
     # The common case, a clean success on a clean indexer, decides with no transaction.
     case outcome(indexer, answer, now) do
@@ -321,7 +414,20 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     end
   end
 
-  defp outcome(%ConfiguredIndexer{id: id, config_version: started}, answer, now) do
+  defp outcome(indexer, answer, now) do
+    case transitioned(indexer, answer, now) do
+      {:ok, stored, changed} ->
+        if write?(stored, changed), do: {:write, changed}, else: :unchanged
+
+      :dropped ->
+        :dropped
+    end
+  end
+
+  # The stored row and the status after `answer`, from the row `indexer`'s `config_version`
+  # resets, or `:dropped` when the indexer is gone or its `config_version` is no longer the one
+  # `indexer` carries.
+  defp transitioned(%ConfiguredIndexer{id: id, config_version: started}, answer, now) do
     case current_version(id) do
       ^started ->
         stored = Repo.get(__MODULE__, id)
@@ -331,8 +437,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
           |> stored_or_new(stored)
           |> reset(started)
 
-        changed = transition(status, answer, now)
-        if write?(stored, changed), do: {:write, changed}, else: :unchanged
+        {:ok, stored, transition(status, answer, now)}
 
       _gone_or_edited ->
         :dropped

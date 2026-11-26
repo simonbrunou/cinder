@@ -669,11 +669,11 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
       assert for({_m, %{caller: caller}} <- events, caller == self(), do: caller) == []
     end
 
-    test "health/0 answers a closed tag with no request" do
+    test "health/0 answers from the recorded state with no request" do
       {result, events} =
         Cinder.TelemetryHelpers.capture([:cinder, :http, :request_task], fn -> Native.health() end)
 
-      assert result == {:error, :not_supported}
+      assert result == {:error, :no_indexer_added}
       assert for({_m, %{caller: caller}} <- events, caller == self(), do: caller) == []
     end
   end

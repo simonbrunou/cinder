@@ -1441,6 +1441,7 @@ msgid "Connection closed"
 msgstr "Connexion fermée"
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
 msgid "Connection refused"
 msgstr "Connexion refusée"
@@ -1549,11 +1550,13 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex
 #: lib/cinder_web/components/search_report_components.ex
+#: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
 msgid "HTTP %{status}"
 msgstr "HTTP %{status}"
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
 msgid "Host not found"
 msgstr "Hôte introuvable"
@@ -1740,6 +1743,7 @@ msgid "Theme"
 msgstr "Thème"
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
 msgid "Timed out"
 msgstr "Délai dépassé"
@@ -2219,6 +2223,7 @@ msgstr ""
 msgid "Completed"
 msgstr "Terminé"
 
+#: lib/cinder_web/indexer_state_text.ex
 #: lib/cinder_web/live/dashboard_live.ex
 #, elixir-autogen
 msgid "Failed"
@@ -6129,6 +6134,7 @@ msgstr ""
 "les releases jusqu’à leur import."
 
 #: lib/cinder_web/domain_labels.ex
+#: lib/cinder_web/indexer_state_text.ex
 #, elixir-autogen
 msgid "Disabled"
 msgstr "Désactivé"
@@ -8190,3 +8196,209 @@ msgstr "L'indexeur de cette version a changé après la recherche. Relancez une 
 #, elixir-autogen, elixir-format
 msgid "Cinder couldn't search the indexers or hand a release to the download client. Open it to retry."
 msgstr "Cinder n’a pas pu interroger les indexeurs ni transmettre une version au client de téléchargement. Ouvrez sa page pour réessayer."
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{count} failure in a row"
+msgid_plural "%{count} failures in a row"
+msgstr[0] "%{count} échec d'affilée"
+msgstr[1] "%{count} échecs d'affilée"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "API key rejected"
+msgstr "Clé API refusée"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "API key rejected (HTTP %{status}): update it in Settings"
+msgstr "Clé API refusée (HTTP %{status}) : mettez-la à jour dans les Paramètres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "API key rejected (code %{code}): update it in Settings"
+msgstr "Clé API refusée (code %{code}) : mettez-la à jour dans les Paramètres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "API key rejected: update it in Settings"
+msgstr "Clé API refusée : mettez-la à jour dans les Paramètres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Backing off %{until} (%{wait}): %{cause}, %{failures}"
+msgstr "En pause %{until} (%{wait}) : %{cause}, %{failures}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Backoff ended %{at}: %{cause}, %{failures}. The next search asks it again"
+msgstr "Pause terminée %{at} : %{cause}, %{failures}. La prochaine recherche l'interroge à nouveau"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Blocked by a challenge page"
+msgstr "Bloqué par une page de vérification"
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Built-in"
+msgstr "Intégré"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Connection failed"
+msgstr "Échec de la connexion"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Credentials can't be decrypted: re-enter them"
+msgstr "Les identifiants ne peuvent pas être déchiffrés : saisissez-les à nouveau"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Disabled in Prowlarr"
+msgstr "Désactivé dans Prowlarr"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer error %{code}"
+msgstr "Erreur de l'indexeur %{code}"
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Indexers"
+msgstr "Indexeurs"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Last answered %{at}"
+msgstr "Dernière réponse %{at}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Limit ended %{at}, after %{failures}: the next search asks it again"
+msgstr "Limite terminée %{at}, après %{failures} : la prochaine recherche l'interroge à nouveau"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Limit reached"
+msgstr "Limite atteinte"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Limit reached: searching again %{at} (%{wait})"
+msgstr "Limite atteinte : nouvelle recherche %{at} (%{wait})"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer added"
+msgstr "Aucun indexeur ajouté"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "No indexer is enabled"
+msgstr "Aucun indexeur n'est activé"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Not checked yet: press Test in Settings"
+msgstr "Pas encore vérifié : appuyez sur Tester dans les Paramètres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Not found in Prowlarr"
+msgstr "Introuvable dans Prowlarr"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Not supported: %{feature}"
+msgstr "Non pris en charge : %{feature}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Query refused (code %{code})"
+msgstr "Requête refusée (code %{code})"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer could not be read"
+msgstr "La réponse est illisible"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer was too large"
+msgstr "La réponse était trop volumineuse"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The search crashed"
+msgstr "La recherche a planté"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "and %{count} more"
+msgid_plural "and %{count} more"
+msgstr[0] "et %{count} autre"
+msgstr[1] "et %{count} autres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "at %{time}"
+msgstr "à %{time}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "in %{hours} h"
+msgstr "dans %{hours} h"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "in %{hours} h %{minutes} min"
+msgstr "dans %{hours} h %{minutes} min"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "in %{minutes} min"
+msgstr "dans %{minutes} min"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "in under a minute"
+msgstr "dans moins d'une minute"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "on %{date} at %{time}"
+msgstr "le %{date} à %{time}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "until %{date} at %{time}"
+msgstr "jusqu'au %{date} à %{time}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "until %{time}"
+msgstr "jusqu'à %{time}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: %{detail}"
+msgstr "%{name} : %{detail}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{earlier}; %{next}"
+msgstr "%{earlier} ; %{next}"
+
+#: lib/cinder_web/components/core_components.ex
+#, elixir-autogen, elixir-format
+msgid "1 indexer's credentials can't be decrypted. Re-enter them for that indexer in Settings, under Indexers."
+msgid_plural "%{count} indexers' credentials can't be decrypted. Re-enter them for each indexer in Settings, under Indexers."
+msgstr[0] "Les identifiants de %{count} indexeur ne peuvent pas être déchiffrés. Saisissez-les à nouveau pour cet indexeur dans les Paramètres, sous Indexeurs."
+msgstr[1] "Les identifiants de %{count} indexeurs ne peuvent pas être déchiffrés. Saisissez-les à nouveau pour chaque indexeur dans les Paramètres, sous Indexeurs."
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Limit ended %{at}: the next search asks it again"
+msgstr "Limite terminée %{at} : la prochaine recherche l'interroge à nouveau"

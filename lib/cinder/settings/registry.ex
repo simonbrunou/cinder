@@ -588,7 +588,9 @@ defmodule Cinder.Settings.Registry do
   # `Cinder.Settings.put/2` and the upgrade migration until #1662 renders it: a `save: :form` key
   # is planned from any submitted param, input or not. Each option's `os_env` lists the variables
   # whose value, set and not blank, makes it the bootstrap choice; `default` is the fresh-install
-  # choice. `Cinder.Settings.Shape.running_indexer_source/3` picks the module.
+  # choice. `Cinder.Settings.Shape.running_indexer_source/3` picks the module. Each option's
+  # `label` is an English msgid: the select's option text (#1623 point 8) and the parenthesis of
+  # the dashboard's indexer row (`Cinder.Health`).
   @indexer_source new(
                     "indexer_source",
                     {:indexer_source,
@@ -596,11 +598,13 @@ defmodule Cinder.Settings.Registry do
                        options: [
                          %{
                            value: "prowlarr",
+                           label: "Prowlarr",
                            module: Cinder.Acquisition.IndexerSource.Prowlarr,
                            os_env: ["PROWLARR_URL", "PROWLARR_API_KEY"]
                          },
                          %{
                            value: "native",
+                           label: "Built-in",
                            module: Cinder.Acquisition.IndexerSource.Native,
                            os_env: []
                          }
@@ -616,6 +620,8 @@ defmodule Cinder.Settings.Registry do
 
   unless Enum.any?(spec.options, &(&1.value == spec.default)),
     do: raise(ArgumentError, "indexer_source default #{inspect(spec.default)} is no option")
+
+  @indexer_source_options spec.options
 
   @definitions [
                  field("tmdb_token", {Cinder.Catalog.TMDB.HTTP, :token},
@@ -670,7 +676,8 @@ defmodule Cinder.Settings.Registry do
              Enum.flat_map(@download_client_choices, fn choice ->
                Enum.map(choice.options, & &1.label)
              end) ++
-             Enum.map(@library_kinds, & &1.label))
+             Enum.map(@library_kinds, & &1.label) ++
+             Enum.map(@indexer_source_options, & &1.label))
           |> Enum.flat_map(fn
             nil -> []
             {template, bindings} -> [template | Keyword.values(bindings)]
@@ -755,6 +762,18 @@ defmodule Cinder.Settings.Registry do
   `name`, `module` and the `os_env` variable that makes it the bootstrap choice (or nil).
   """
   def media_servers, do: @media_servers
+
+  @doc """
+  The English label of the `indexer_source` option whose module is `module` ("Prowlarr",
+  "Built-in"), or nil for a module no option lists, such as the test mock.
+  """
+  @spec indexer_source_label(module()) :: String.t() | nil
+  def indexer_source_label(module) do
+    case Enum.find(@indexer_source_options, &(&1.module == module)) do
+      nil -> nil
+      option -> option.label
+    end
+  end
 
   @doc "The media server types the form offers."
   def media_server_options, do: Enum.map(@media_servers, & &1.value)

@@ -25,7 +25,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
   test "the seam and its Prowlarr adapter load under the IndexerSource names, and the old seam name is the per-type seam" do
     assert Code.ensure_loaded?(IndexerSource)
     assert Code.ensure_loaded?(IndexerSource.Prowlarr)
-    assert @old_behaviour.behaviour_info(:callbacks) == [search: 3]
+    assert Enum.sort(@old_behaviour.behaviour_info(:callbacks)) == [search: 3, test: 3]
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 

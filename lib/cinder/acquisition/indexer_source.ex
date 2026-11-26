@@ -140,8 +140,13 @@ defmodule Cinder.Acquisition.IndexerSource do
   @callback search_audiobook_query(query :: String.t(), opts :: keyword()) ::
               result()
 
-  @doc "Lightweight reachability check — `:ok` if the indexer answers, else `{:error, reason}`."
-  @callback health() :: :ok | {:error, term()}
+  @doc """
+  The source's health: `:ok` when it can search, `{:warning, reason}` when it can search with
+  some indexers but not all (the built-in source), else `{:error, reason}`. Prowlarr's asks
+  Prowlarr's `/api/v1/health`; the built-in source's reads what it recorded of each indexer's
+  answers and sends no request.
+  """
+  @callback health() :: :ok | {:warning, term()} | {:error, term()}
 
   @doc """
   Fetches a grab's download link for a download client: `{:ok, bytes}`, `{:magnet, link}` for a

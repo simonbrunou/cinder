@@ -27,7 +27,7 @@ defmodule CinderWeb.DashboardLive do
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Library.BoundedWalk
   alias Cinder.Subtitles.Sweeper
-  alias CinderWeb.DomainLabels
+  alias CinderWeb.{DomainLabels, IndexerStateText}
 
   require Logger
 
@@ -43,13 +43,14 @@ defmodule CinderWeb.DashboardLive do
     {:ok,
      socket
      |> assign(
-       health: :loading,
+       health_loading?: true,
        disk: :loading,
        denying: nil,
        maintenance_actions: maintenance_actions(),
        running_maintenance: [],
        maintenance_results: %{}
      )
+     |> stream(:health, [])
      |> load()
      |> check_health()
      |> check_disk()}
@@ -63,7 +64,7 @@ defmodule CinderWeb.DashboardLive do
 
   @impl true
   def handle_async(:health, {:ok, results}, socket),
-    do: {:noreply, assign(socket, health: results)}
+    do: {:noreply, show_health(socket, results)}
 
   def handle_async(:disk, {:ok, results}, socket),
     do: {:noreply, assign(socket, disk: results)}
@@ -88,7 +89,7 @@ defmodule CinderWeb.DashboardLive do
       status: {:error, reason}
     }
 
-    {:noreply, assign(socket, health: [row])}
+    {:noreply, show_health(socket, [row])}
   end
 
   def handle_async({:maintenance, key}, {:ok, :ok}, socket) do
@@ -104,7 +105,9 @@ defmodule CinderWeb.DashboardLive do
 
   @impl true
   def handle_event("recheck_health", _params, socket),
-    do: {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
+    do:
+      {:noreply,
+       socket |> cancel_async(:health) |> assign(health_loading?: true) |> check_health()}
 
   def handle_event("approve", %{"_id" => id, "profile_id" => raw_profile}, socket) do
     case find_pending(socket, id) do
@@ -202,6 +205,11 @@ defmodule CinderWeb.DashboardLive do
     )
   end
 
+  # Every health answer replaces the whole list. The list leaves the page while a check runs, so
+  # each answer streams every row again with `reset: true`.
+  defp show_health(socket, rows),
+    do: socket |> stream(:health, rows, reset: true) |> assign(health_loading?: false)
+
   defp check_health(socket) do
     if connected?(socket),
       do: start_async(socket, :health, &health_rows/0),
@@ -252,6 +260,19 @@ defmodule CinderWeb.DashboardLive do
 
   defp stuck_row(id, label, reason),
     do: %{id: id, label: label, adapter: nil, help: nil, status: {:warning, reason}}
+
+  # A per-indexer row of the built-in source (#1657): its label is the indexer's own name, never
+  # a msgid, and it shows its detail line for every colour, green included.
+  defp indexer_row?(row), do: Map.has_key?(row, :indexer_state)
+
+  defp health_label(row) do
+    if indexer_row?(row), do: row.label, else: DomainLabels.t(row.label)
+  end
+
+  # `{:msgid, label}` is an option label of a setting, which translates; any other adapter is a
+  # module's short name, which does not.
+  defp health_adapter({:msgid, label}), do: DomainLabels.t(label)
+  defp health_adapter(name), do: name
 
   defp check_disk(socket) do
     if connected?(socket),
@@ -619,16 +640,32 @@ defmodule CinderWeb.DashboardLive do
                 {gettext("Recheck")}
               </.button>
             </div>
-            <.spinner :if={@health == :loading} label={gettext("Checking services…")} />
+            <.spinner :if={@health_loading?} label={gettext("Checking services…")} />
             <ul
-              :if={@health != :loading}
+              :if={not @health_loading?}
               id="dashboard-health"
+              phx-update="stream"
               class="w-full divide-y divide-base-300 overflow-hidden rounded-box border border-base-300 bg-base-200"
             >
-              <li :for={h <- @health} class="flex items-center justify-between gap-3 px-4 py-2.5">
+              <li
+                :for={{dom_id, h} <- @streams.health}
+                id={dom_id}
+                class={[
+                  "flex items-center justify-between gap-3 py-2.5 pr-4",
+                  if(indexer_row?(h), do: "pl-8", else: "pl-4")
+                ]}
+              >
                 <div class="min-w-0">
-                  <span>{DomainLabels.t(h.label)}</span>
-                  <span :if={h.adapter} class="text-sm text-base-content/70">({h.adapter})</span>
+                  <span>{health_label(h)}</span>
+                  <span :if={h.adapter} class="text-sm text-base-content/70">
+                    ({health_adapter(h.adapter)})
+                  </span>
+                  <p
+                    :if={indexer_row?(h) and h.status == :ok}
+                    class="text-xs text-success break-words"
+                  >
+                    {IndexerStateText.detail(h.indexer_state, h.checked_at)}
+                  </p>
                   <p
                     :if={h.help}
                     id={"dash-health-help-#{h.id}"}

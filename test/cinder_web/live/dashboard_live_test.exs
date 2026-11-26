@@ -310,7 +310,7 @@ defmodule CinderWeb.DashboardLiveTest do
       render_async(lv)
 
       assert has_element?(lv, "#dash-health-status-tmdb")
-      assert has_element?(lv, "#dashboard-health li", "Prowlarr")
+      assert has_element?(lv, "#dashboard-health li:has(#dash-health-status-indexer)", "Indexers")
       assert has_element?(lv, "#dashboard-health li", "Open Library")
       assert has_element?(lv, "#dashboard-health li", "Movies library")
 
@@ -994,5 +994,242 @@ defmodule CinderWeb.DashboardLiveTest do
     assert CinderWeb.UserAuth.signed_in_path(%{assigns: %{current_scope: admin}}) == "/dashboard"
     assert CinderWeb.UserAuth.signed_in_path(%{assigns: %{current_scope: user}}) == "/"
     assert CinderWeb.UserAuth.signed_in_path(%{assigns: %{}}) == "/"
+  end
+
+  describe "native indexer rows (#1657)" do
+    alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
+    alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
+
+    setup :register_and_log_in_admin
+
+    @now ~U[2026-11-26 12:00:00Z]
+
+    setup do
+      put_env(Native, clock: fn -> @now end)
+      put_env(:indexer_source, Native)
+      :ok
+    end
+
+    defp indexer!(name, overrides \\ %{}) do
+      host = name |> String.downcase() |> String.replace(" ", "-")
+
+      Cinder.NewznabFixtures.indexer!(
+        :newznab,
+        "#{host}.example",
+        Map.put(overrides, :name, name)
+      )
+    end
+
+    defp at(seconds), do: DateTime.add(@now, seconds, :second)
+
+    defp rows(conn) do
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+      lv
+    end
+
+    defp indexer_row(indexer),
+      do: "#dashboard-health li:has(#dash-health-status-indexer-#{indexer.id})"
+
+    test "the source row reads Indexers and names the source by its option label", %{conn: conn} do
+      lv = rows(conn)
+      assert has_element?(lv, "#dashboard-health li:has(#dash-health-status-indexer)", "Indexers")
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-indexer)",
+               "(Built-in)"
+             )
+
+      Req.Test.stub(Cinder.ProwlarrStub, &Plug.Conn.send_resp(&1, 200, "[]"))
+      put_env(:indexer_source, Prowlarr)
+      lv = rows(conn)
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-indexer)",
+               "(Prowlarr)"
+             )
+
+      put_env(:indexer_source, Cinder.Acquisition.IndexerMock)
+      lv = rows(conn)
+      assert has_element?(lv, "#dashboard-health li:has(#dash-health-status-indexer)", "Indexers")
+      refute has_element?(lv, "#dashboard-health li:has(#dash-health-status-indexer)", "(")
+    end
+
+    test "with no indexer added, the source row is red and says so", %{conn: conn} do
+      lv = rows(conn)
+      row = "#dashboard-health li:has(#dash-health-status-indexer)"
+      assert has_element?(lv, row <> " p.text-error", "No indexer added")
+      assert has_element?(lv, "#dash-health-status-indexer.badge-error")
+    end
+
+    test "each state shows its detail line and colour, in the household's zone", %{conn: conn} do
+      # 12:00 UTC is 21:00 in Tokyo, so an until-time from 15:00 UTC falls on Nov 27 there.
+      put_env(:household_timezone, "Asia/Tokyo")
+      usable = indexer!("Usable")
+      :written = IndexerStatus.record(usable, :success, at(-3_600))
+      fresh = indexer!("Fresh")
+      failing = indexer!("Failing")
+      # Level 1 ends at 11:54:20; the second failure climbs to level 2, 5 minutes from 11:59:30.
+      :written = IndexerStatus.record(failing, :timeout, at(-400))
+      :written = IndexerStatus.record(failing, :timeout, at(-30))
+      limited = indexer!("Limited")
+      :written = IndexerStatus.record(limited, {:limit, at(6_720)}, @now)
+      tomorrow = indexer!("Tomorrow")
+      :written = IndexerStatus.record(tomorrow, {:limit, at(43_200)}, @now)
+      rejected = indexer!("Rejected")
+      :written = IndexerStatus.record(rejected, {:rejected_credentials, {:code, 101}}, @now)
+      unauthorized = indexer!("Unauthorized")
+
+      :written =
+        IndexerStatus.record(unauthorized, {:rejected_credentials, {:http_status, 401}}, @now)
+
+      flare = indexer!("Flare", %{flaresolverr: true})
+      locked = indexer!("Locked")
+      :ok = Cinder.NewznabFixtures.undecryptable!(locked)
+
+      lv = rows(conn)
+
+      for {indexer, class, text} <- [
+            {usable, "text-success", "Last answered at 20:00"},
+            {fresh, "text-warning", "Not checked yet: press Test in Settings"},
+            {failing, "text-warning",
+             "Backing off until 21:04 (in 4 min): Timed out, 2 failures in a row"},
+            {limited, "text-warning", "Limit reached: searching again at 22:52 (in 1 h 52 min)"},
+            {tomorrow, "text-warning",
+             "Limit reached: searching again on Nov 27 at 09:00 (in 12 h)"},
+            {rejected, "text-error", "API key rejected (code 101): update it in Settings"},
+            {unauthorized, "text-error", "API key rejected (HTTP 401): update it in Settings"},
+            {flare, "text-error", "Not supported: FlareSolverr"},
+            {locked, "text-error", "Credentials can't be decrypted: re-enter them"}
+          ] do
+        assert has_element?(lv, indexer_row(indexer), indexer.name)
+        assert has_element?(lv, indexer_row(indexer) <> " p.#{class}", text)
+      end
+
+      assert has_element?(lv, "#dash-health-status-indexer-#{usable.id}.badge-success")
+      assert has_element?(lv, "#dash-health-status-indexer-#{fresh.id}.badge-warning")
+
+      for indexer <- [fresh, failing, limited, tomorrow],
+          do: assert(has_element?(lv, "#dash-health-status-indexer-#{indexer.id}.badge-warning"))
+
+      for indexer <- [rejected, unauthorized, flare, locked],
+          do: assert(has_element?(lv, "#dash-health-status-indexer-#{indexer.id}.badge-error"))
+    end
+
+    test "every line counts its wait from the instant the check judged the states",
+         %{conn: conn} do
+      limited = indexer!("Limited")
+      :written = IndexerStatus.record(limited, {:limit, at(1_500)}, @now)
+      # One usable indexer makes the source row a warning that lists the limited one.
+      :written = "Usable" |> indexer!() |> IndexerStatus.record(:success, @now)
+
+      # The check reads the clock first and gets 12:00; any later read, such as one at render,
+      # gets 13:00, past the limit's end.
+      reads = :counters.new(1, [])
+
+      put_env(Native,
+        clock: fn ->
+          :counters.add(reads, 1, 1)
+          if :counters.get(reads, 1) == 1, do: @now, else: at(3_600)
+        end
+      )
+
+      lv = rows(conn)
+      waiting = "Limit reached: searching again at 12:25 (in 25 min)"
+      assert has_element?(lv, indexer_row(limited) <> " p.text-warning", waiting)
+
+      assert has_element?(
+               lv,
+               "#dashboard-health li:has(#dash-health-status-indexer) p.text-warning",
+               "Limited: " <> waiting
+             )
+
+      assert :counters.get(reads, 1) == 1
+    end
+
+    test "a backoff that ended says the next search asks the indexer again", %{conn: conn} do
+      due = indexer!("Due")
+      :written = IndexerStatus.record(due, :timeout, at(-120))
+      ended = indexer!("Ended")
+      :written = IndexerStatus.record(ended, :timeout, at(-7_200))
+      :written = IndexerStatus.record(ended, {:limit, at(-3_000)}, at(-3_600))
+
+      lv = rows(conn)
+
+      assert has_element?(
+               lv,
+               indexer_row(due) <> " p.text-warning",
+               "Backoff ended at 11:59: Timed out, 1 failure in a row. The next search asks it again"
+             )
+
+      assert has_element?(
+               lv,
+               indexer_row(ended) <> " p.text-warning",
+               "Limit ended at 11:10, after 1 failure in a row: the next search asks it again"
+             )
+    end
+
+    test "a failure backoff after HTTP 410 or 404 names its Prowlarr cause", %{conn: conn} do
+      gone = indexer!("Gone")
+      :written = IndexerStatus.record(gone, {:http_status, 410}, @now)
+      missing = indexer!("Missing")
+      :written = IndexerStatus.record(missing, {:http_status, 404}, @now)
+      other = indexer!("Other")
+      :written = IndexerStatus.record(other, {:http_status, 503}, @now)
+
+      lv = rows(conn)
+      assert has_element?(lv, indexer_row(gone), "Disabled in Prowlarr, 1 failure in a row")
+      assert has_element?(lv, indexer_row(missing), "Not found in Prowlarr, 1 failure in a row")
+      assert has_element?(lv, indexer_row(other), "HTTP 503, 1 failure in a row")
+    end
+
+    test "times show in the household's zone, with the date when not today", %{conn: conn} do
+      put_env(:household_timezone, "Asia/Tokyo")
+      today = indexer!("Today")
+      :written = IndexerStatus.record(today, :success, at(-3_600))
+      earlier = indexer!("Earlier")
+      :written = IndexerStatus.record(earlier, :success, at(-86_400))
+
+      lv = rows(conn)
+      assert has_element?(lv, indexer_row(today), "Last answered at 20:00")
+      assert has_element?(lv, indexer_row(earlier), "Last answered on Nov 25 at 21:00")
+    end
+
+    test "a disabled indexer gets no row", %{conn: conn} do
+      on = indexer!("On")
+      off = indexer!("Off")
+      {:ok, _off} = Cinder.Indexers.set_enabled(nil, off.id, off.lock_version, false)
+
+      lv = rows(conn)
+      assert has_element?(lv, "#dash-health-status-indexer-#{on.id}")
+      refute has_element?(lv, "#dash-health-status-indexer-#{off.id}")
+    end
+
+    test "the French page translates the source label and keeps the indexer's name", %{
+      conn: conn,
+      user: admin
+    } do
+      assert {:ok, _admin} = Accounts.update_user_locale(admin, %{locale: "fr"})
+      movies = indexer!("Movies")
+      :written = IndexerStatus.record(movies, :success, at(-3_600))
+      indexer!("Shows")
+
+      lv = rows(conn)
+      source = "#dashboard-health li:has(#dash-health-status-indexer)"
+      assert has_element?(lv, source, "Indexeurs")
+      assert has_element?(lv, source, "(Intégré)")
+
+      assert has_element?(
+               lv,
+               source <> " p.text-warning",
+               "Shows : Pas encore vérifié : appuyez sur Tester dans les Paramètres"
+             )
+
+      assert has_element?(lv, indexer_row(movies), "Movies")
+      refute has_element?(lv, indexer_row(movies), "Films")
+      assert has_element?(lv, indexer_row(movies), "Dernière réponse à 11:00")
+    end
   end
 end

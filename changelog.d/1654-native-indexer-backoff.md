@@ -17,8 +17,8 @@
   limit and its end, and climbs one step for the next failure. A success steps the ladder down one
   and ends a failure backoff, but not a running limit. `<error>` codes 100 to 102 and 910 and
   HTTP 401 mark the credentials rejected, with no backoff: later searches send that indexer no
-  request and report it failed, until a passing Test (`:test_success`, which #1657 is to
-  record) or a rise of its `config_version`. Codes 200 to 203 and 300 change nothing. Each
+  request and report it failed, until a passing Test (`:test_success`, #1657) or a rise of its
+  `config_version`. Codes 200 to 203 and 300 change nothing. Each
   answer's times count from when it came in. A search skips an indexer in backoff and reports it
   skipped with the time its backoff ends; when it skips every indexer that could take the query,
   it answers `{:error, {:indexers_backing_off, retry_at}}` with the earliest such time, or 60 s

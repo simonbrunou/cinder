@@ -397,12 +397,34 @@ defmodule CinderWeb.SettingsLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
-    lv |> element("button", "Test Prowlarr") |> render_click()
-    # The badge reads Unreachable and names the reason in its title.
+    assert has_element?(lv, "#test-target-indexer", "Test Indexers")
+    lv |> element("#test-target-indexer") |> render_click()
+    # The badge reads Unreachable and names the reason in its title, and the reason shows as text.
     assert has_element?(lv, ~s|#settings-group-indexer .badge-error[title="Timed out"]|)
+
+    assert has_element?(
+             lv,
+             "#settings-group-indexer #test-reason-indexer.text-error",
+             "Timed out"
+           )
 
     lv |> element("button", "Test TMDB") |> render_click()
     assert has_element?(lv, "#settings-group-tmdb .badge-success", "OK")
+    refute has_element?(lv, "#test-reason-tmdb")
+  end
+
+  test "a Test that answers a warning shows its reason as text in the warning colour",
+       %{conn: conn} do
+    stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:warning, :none_reachable} end)
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("#test-target-indexer") |> render_click()
+
+    assert has_element?(
+             lv,
+             "#settings-group-indexer #test-reason-indexer.text-warning",
+             "None reachable"
+           )
   end
 
   test "the media server group tests Plex sign-in with its own button", %{conn: conn} do
@@ -432,8 +454,11 @@ defmodule CinderWeb.SettingsLiveTest do
              ~s|#settings-group-media_server .badge-error[title="plex.tv rejected the Plex token"]|
            )
 
+    assert has_element?(lv, "#test-reason-plex_signin", "plex.tv rejected the Plex token")
+
     lv |> element(button) |> render_click()
     assert has_element?(lv, "#settings-group-media_server .badge-success", "OK")
+    refute has_element?(lv, "#test-reason-plex_signin")
   end
 
   test "a Test event for an id no probe target has changes nothing", %{conn: conn} do

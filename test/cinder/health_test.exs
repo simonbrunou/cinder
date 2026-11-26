@@ -166,7 +166,7 @@ defmodule Cinder.HealthTest do
     test "the dashboard names the adapter only where the operator picks it" do
       ids = Enum.map(Health.targets(names_adapter: true), & &1.id)
 
-      assert ids == ["torrent", "usenet", "media_server"]
+      assert ids == ["indexer", "torrent", "usenet", "media_server"]
     end
 
     test "every production books provider has a target" do
@@ -542,7 +542,7 @@ defmodule Cinder.HealthTest do
 
       assert Enum.map(rows, &Map.delete(&1, :help)) == [
                %{id: "tmdb", label: "TMDB", adapter: nil, status: :ok},
-               %{id: "indexer", label: "Prowlarr", adapter: nil, status: :ok},
+               %{id: "indexer", label: "Indexers", adapter: nil, status: :ok},
                %{
                  id: "torrent",
                  label: "Torrent client",
@@ -758,6 +758,147 @@ defmodule Cinder.HealthTest do
 
       refute row(Health.check_all(), "sidecar_files")
       assert Repo.all(SidecarQuarantine) == []
+    end
+  end
+
+  describe "the indexer rows (#1657)" do
+    alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
+    alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
+
+    @now ~U[2026-11-26 12:00:00Z]
+
+    setup do
+      put_env(Native, clock: fn -> @now end)
+      stub_check_all_services()
+      # The Prowlarr source's own probe, for the cases that select it.
+      Req.Test.stub(Cinder.ProwlarrStub, &Plug.Conn.send_resp(&1, 200, "[]"))
+      :ok
+    end
+
+    defp indexer!(host, overrides \\ %{}),
+      do: Cinder.NewznabFixtures.indexer!(:newznab, host, overrides)
+
+    defp ids_after_indexer(rows) do
+      rows
+      |> Enum.map(& &1.id)
+      |> Enum.drop_while(&(&1 != "indexer"))
+      |> Enum.take_while(&(&1 == "indexer" or String.starts_with?(&1, "indexer-")))
+    end
+
+    test "the indexer row names the source by its option label, and the mock by none" do
+      assert row(Health.check_all(), "indexer").adapter == nil
+
+      put_env(:indexer_source, Prowlarr)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> flunk("the mock was probed") end)
+      assert row(Health.check_all(), "indexer").adapter == {:msgid, "Prowlarr"}
+
+      put_env(:indexer_source, Native)
+      assert row(Health.check_all(), "indexer").adapter == {:msgid, "Built-in"}
+    end
+
+    test "under Native, one row per enabled indexer follows the source row, by priority" do
+      put_env(:indexer_source, Native)
+      ok = indexer!("ok.example", %{priority: 1})
+      :written = IndexerStatus.record(ok, :success, @now)
+      fresh = indexer!("fresh.example", %{priority: 2})
+      rejected = indexer!("rejected.example", %{priority: 3})
+      :written = IndexerStatus.record(rejected, {:rejected_credentials, {:code, 101}}, @now)
+      off = indexer!("off.example", %{priority: 4})
+      {:ok, _off} = Cinder.Indexers.set_enabled(nil, off.id, off.lock_version, false)
+
+      rows = Health.check_all()
+
+      assert ids_after_indexer(rows) ==
+               ["indexer", "indexer-#{ok.id}", "indexer-#{fresh.id}", "indexer-#{rejected.id}"]
+
+      assert row(rows, "indexer").status ==
+               {:warning,
+                {:native_indexers,
+                 [
+                   %{name: fresh.name, state: :never_checked},
+                   %{name: rejected.name, state: {:credentials_rejected, {:code, 101}}}
+                 ], 0, @now}}
+
+      assert row(rows, "indexer-#{ok.id}") == %{
+               id: "indexer-#{ok.id}",
+               label: ok.name,
+               adapter: nil,
+               help: nil,
+               status: :ok,
+               indexer_state: {:usable, @now},
+               checked_at: @now
+             }
+
+      assert row(rows, "indexer-#{fresh.id}").status ==
+               {:warning, {:native_indexer, :never_checked, @now}}
+
+      assert row(rows, "indexer-#{rejected.id}").status ==
+               {:error, {:native_indexer, {:credentials_rejected, {:code, 101}}, @now}}
+    end
+
+    test "each state takes its colour: red for the admin, yellow while it waits, green usable" do
+      put_env(:indexer_source, Native)
+      flare = indexer!("flare.example", %{flaresolverr: true})
+      locked = indexer!("locked.example")
+      :ok = Cinder.NewznabFixtures.undecryptable!(locked)
+      limited = indexer!("limit.example")
+      :written = IndexerStatus.record(limited, {:limit, DateTime.add(@now, 600)}, @now)
+      failing = indexer!("fail.example")
+      :written = IndexerStatus.record(failing, :timeout, @now)
+      due = indexer!("due.example")
+      :written = IndexerStatus.record(due, :timeout, DateTime.add(@now, -120))
+
+      rows = Health.check_all()
+      colour = &(row(rows, "indexer-#{&1.id}").status |> elem(0))
+
+      assert Enum.map([flare, locked, limited, failing, due], colour) ==
+               [:error, :error, :warning, :warning, :warning]
+    end
+
+    test "under Prowlarr or the mock, no per-indexer row" do
+      indexer!("ok.example")
+      assert ids_after_indexer(Health.check_all()) == ["indexer"]
+
+      put_env(:indexer_source, Prowlarr)
+      assert ids_after_indexer(Health.check_all()) == ["indexer"]
+    end
+
+    test "Health.check/1 reads Native's recorded state" do
+      put_env(:indexer_source, Native)
+      assert Health.check("indexer") == {:error, :no_indexer_added}
+    end
+  end
+
+  describe "the stored-credentials row (#1657)" do
+    setup do
+      stub_check_all_services()
+      :ok
+    end
+
+    test "counts configured indexers whose secrets do not decrypt, disabled ones included" do
+      a = Cinder.NewznabFixtures.indexer!(:newznab, "a.example")
+      b = Cinder.NewznabFixtures.indexer!(:newznab, "b.example")
+      Cinder.NewznabFixtures.indexer!(:newznab, "ok.example")
+      :ok = Cinder.NewznabFixtures.undecryptable!(a)
+      :ok = Cinder.NewznabFixtures.undecryptable!(b)
+      {:ok, _off} = Cinder.Indexers.set_enabled(nil, b.id, b.lock_version, false)
+
+      assert row(Health.check_all(), "stored_credentials").status ==
+               {:error, {:undecryptable_indexer_secrets, 2}}
+    end
+
+    test "with settings secrets and indexer secrets both failing, reports both counts" do
+      a = Cinder.NewznabFixtures.indexer!(:newznab, "a.example")
+      :ok = Cinder.NewznabFixtures.undecryptable!(a)
+      Repo.insert!(%Cinder.Settings.Setting{key: "tmdb_token", value: "garbage", is_secret: true})
+
+      assert row(Health.check_all(), "stored_credentials").status ==
+               {:error, {:undecryptable_secrets, 1, 1}}
+    end
+
+    test "with every secret readable, no row" do
+      Cinder.NewznabFixtures.indexer!(:newznab, "ok.example")
+      refute row(Health.check_all(), "stored_credentials")
     end
   end
 end

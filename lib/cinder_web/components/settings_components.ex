@@ -9,7 +9,8 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
+  import CinderWeb.CoreComponents,
+    only: [status_badge: 1, button: 1, icon: 1, input: 1, health_reason: 1]
 
   alias Cinder.{Health, LibraryKind, Settings}
   alias Cinder.Settings.Definition
@@ -486,7 +487,11 @@ defmodule CinderWeb.SettingsComponents do
             >
               {gettext("Test %{service}", service: DomainLabels.t(target.label))}
             </.button>
-            <.test_badge :if={@health[target.id]} result={@health[target.id]} />
+            <.test_badge
+              :if={@health[target.id]}
+              id={"test-reason-#{target.id}"}
+              result={@health[target.id]}
+            />
           </div>
         </div>
       </div>
@@ -789,11 +794,24 @@ defmodule CinderWeb.SettingsComponents do
     """
   end
 
+  attr :id, :string, required: true
   attr :result, :any, required: true
 
+  # A failed or partial Test shows its reason as text beside the badge, inside the target's
+  # polite status region, since the badge's `title` reaches neither keyboard nor touch users.
   defp test_badge(assigns) do
     ~H"""
     <.status_badge kind={:health} status={@result} />
+    <span
+      :if={match?({level, _reason} when level in [:error, :warning], @result)}
+      id={@id}
+      class={[
+        "text-xs break-words",
+        if(match?({:error, _}, @result), do: "text-error", else: "text-warning")
+      ]}
+    >
+      {health_reason(elem(@result, 1))}
+    </span>
     """
   end
 

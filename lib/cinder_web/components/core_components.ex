@@ -922,6 +922,31 @@ defmodule CinderWeb.CoreComponents do
   end
 
   # Placed above the generic integer-tuple clauses below for the same reason as
+  # {:undecryptable_secrets, _}: `count` counts configured indexers (#1657).
+  def health_reason({:undecryptable_indexer_secrets, count}) do
+    ngettext(
+      "1 indexer's credentials can't be decrypted. Re-enter them for that indexer in Settings, under Indexers.",
+      "%{count} indexers' credentials can't be decrypted. Re-enter them for each indexer in Settings, under Indexers.",
+      count
+    )
+  end
+
+  def health_reason({:undecryptable_secrets, settings, indexers}),
+    do:
+      health_reason({:undecryptable_secrets, settings}) <>
+        " " <> health_reason({:undecryptable_indexer_secrets, indexers})
+
+  # The built-in indexer source (#1657): its reasons and each per-indexer row's state.
+  def health_reason(:no_indexer_added), do: gettext("No indexer added")
+  def health_reason(:no_indexer_enabled), do: gettext("No indexer is enabled")
+
+  def health_reason({:native_indexers, listed, more, at}),
+    do: CinderWeb.IndexerStateText.indexers(listed, more, at)
+
+  def health_reason({:native_indexer, state, at}),
+    do: CinderWeb.IndexerStateText.detail(state, at)
+
+  # Placed above the generic integer-tuple clauses below for the same reason as
   # {:undecryptable_secrets, _}: `paths` is a list, not an HTTP status.
   def health_reason({:retained_sidecars, paths}) do
     intro =

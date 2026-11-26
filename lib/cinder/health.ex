@@ -3,7 +3,9 @@ defmodule Cinder.Health do
   Reachability checks for the probe targets the pipeline depends on: external services (metadata
   providers, indexer, download clients, media servers, migration sources, notifiers), library
   roots and local tools. Each check resolves the configured impl behind its behaviour at check
-  time and calls its `health/0`; a library root is checked by writing to it.
+  time and calls its `health/0`; a library root is checked by writing to it. One exception: in
+  `check_all/0`, while the indexer source is the built-in one, the indexer row reads
+  `IndexerState.list/1` once for its own status and the per-indexer rows under it.
 
   `targets/1` is the one list of targets. The `/settings` Test buttons, the `/setup` gate and the
   `/dashboard` service-health rows all read it, so a new adapter with a `health/0` is one entry
@@ -22,9 +24,12 @@ defmodule Cinder.Health do
   the target's `id`; in `check_all/0` it is the row's `id`, which also names the finding rows
   `stored_credentials` and `sidecar_files`.
   """
+  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.Native.IndexerState
   alias Cinder.Books.Metadata
   alias Cinder.Download
   alias Cinder.Health.Target
+  alias Cinder.Indexers
   alias Cinder.Library.SidecarQuarantine
   alias Cinder.LibraryKind
   alias Cinder.Settings.Registry
@@ -43,9 +48,10 @@ defmodule Cinder.Health do
     %Target{
       id: "indexer",
       group: :indexer,
-      label: "Prowlarr",
+      label: "Indexers",
       probe: {:env, :indexer_source},
-      setup: :required
+      setup: :required,
+      names_adapter: true
     }
   ]
 
@@ -200,17 +206,31 @@ defmodule Cinder.Health do
 
   @doc """
   Checks every dashboard target concurrently and returns a list of
-  `%{id: String.t(), label: String.t(), adapter: String.t() | nil, status: status}` in
-  `targets/0` order, followed by the stored-credentials and retained-sidecar findings. `label` is
-  an English msgid. `adapter` names the wired module of a `names_adapter` target, even when its
-  probe fails or times out, and is `nil` elsewhere. A `:configured` target that is not
+  `%{id: String.t(), label: String.t(), adapter: String.t() | {:msgid, String.t()} | nil,
+  status: status}` in `targets/0` order, followed by the stored-credentials and retained-sidecar
+  findings. `label` is an English msgid. `adapter` names the wired module of a `names_adapter`
+  target, even when its probe fails or times out, and is `nil` elsewhere. For the indexer target
+  it is `{:msgid, label}`, the `indexer_source` option label of the wired module ("Prowlarr",
+  "Built-in"), or `nil` for a module no option lists. A `:configured` target that is not
   configured, and a finding with nothing to report, have no row. A probe that exceeds its timeout
   budget (moduledoc) reports `{:error, :timeout}` for its row without affecting any other row.
+
+  While the indexer source is `Cinder.Acquisition.IndexerSource.Native`, the indexer row is
+  followed by one row per enabled configured indexer, `%{id: "indexer-<id>", label: name,
+  adapter: nil, help: nil, status: status, indexer_state: state, checked_at: at}`: `label` is
+  the indexer's own name, not a msgid, `state` is its `IndexerState` state and `at` the instant
+  every state was judged at. `status` is `:ok` for a usable indexer,
+  `{:error, {:native_indexer, state, at}}` for one the admin must act on (undecryptable, not
+  supported, credentials rejected), else `{:warning, {:native_indexer, state, at}}`. The rows
+  come from the indexer probe's one state read; when that probe times out, only the indexer row
+  shows, with its timeout.
   """
   def check_all do
-    for {row, status} <- concurrently(dashboard_probes()), status != :skip do
-      Map.put(row, :status, status)
-    end
+    Enum.flat_map(concurrently(dashboard_probes()), fn
+      {_row, :skip} -> []
+      {row, {:expand, status, rows}} -> [Map.put(row, :status, status) | rows]
+      {row, status} -> [Map.put(row, :status, status)]
+    end)
   end
 
   @doc """
@@ -292,7 +312,8 @@ defmodule Cinder.Health do
   end
 
   # Ordered `{row, fun}` pairs: the row's id, label and adapter are known upfront (cheap, no
-  # network); `fun` is a 0-arity closure that runs the probe and returns `status | :skip`.
+  # network); `fun` is a 0-arity closure that runs the probe and returns `status`, `:skip`, or
+  # `{:expand, status, rows}` for the built-in source's indexer row (`dashboard_rows/1`).
   # `check_all/0` fans these out through `concurrently/1`.
   defp dashboard_probes do
     for(
@@ -300,7 +321,7 @@ defmodule Cinder.Health do
       policy != :never,
       do:
         {row(target.id, target.label, adapter_name(target), target.help),
-         fn -> dashboard_status(target) end}
+         fn -> dashboard_rows(target) end}
     ) ++
       [
         {row(@stored_credentials.id, @stored_credentials.label, nil, nil), &stored_credentials/0},
@@ -309,6 +330,46 @@ defmodule Cinder.Health do
   end
 
   defp row(id, label, adapter, help), do: %{id: id, label: label, adapter: adapter, help: help}
+
+  # While the indexer source is Native, its row expands into one row per enabled configured
+  # indexer, right under it, all from one read of `IndexerState.list/1` (#1657, #1619 point 13).
+  # A disabled indexer gets no row.
+  defp dashboard_rows(%Target{id: "indexer", probe: probe} = target) do
+    case safely(fn -> resolve(probe) end) do
+      {:ok, Native} -> safely(&native_rows/0)
+      _other -> dashboard_status(target)
+    end
+  end
+
+  defp dashboard_rows(target), do: dashboard_status(target)
+
+  # The source row and every per-indexer row judge the states at one reading of Native's clock,
+  # and carry it, so each text counts its waits and dates from the instant its state was judged.
+  defp native_rows do
+    now = Native.now()
+    entries = IndexerState.list(now)
+
+    {:expand, IndexerState.health(entries, now),
+     for(%{enabled: true} = e <- entries, do: native_row(e, now))}
+  end
+
+  # A per-indexer row: its label is the indexer's name, never a msgid, and `indexer_state` and
+  # `checked_at` hold the state its detail line reads and the instant it was judged at, green
+  # rows included. Red when the admin must act, yellow while it waits itself out, green when
+  # usable.
+  defp native_row(%{id: id, name: name, state: state}, now) do
+    row("indexer-#{id}", name, nil, nil)
+    |> Map.merge(%{status: native_status(state, now), indexer_state: state, checked_at: now})
+  end
+
+  defp native_status({:usable, _at}, _now), do: :ok
+
+  defp native_status(state, now)
+       when state == :undecryptable or
+              (is_tuple(state) and elem(state, 0) in [:not_supported, :credentials_rejected]),
+       do: {:error, {:native_indexer, state, now}}
+
+  defp native_status(state, now), do: {:warning, {:native_indexer, state, now}}
 
   defp dashboard_status(%Target{dashboard: policy} = target) do
     case run_target(target) do
@@ -320,6 +381,17 @@ defmodule Cinder.Health do
   # Resolved before the probe runs, so the row names the wired adapter even when its probe times
   # out. Resolving a `names_adapter` target only reads config.
   defp adapter_name(%Target{names_adapter: false}), do: nil
+
+  # The indexer source's option label, an English msgid the view translates (#1623 point 8); a
+  # module no option lists, such as the test mock, has none.
+  defp adapter_name(%Target{probe: {:env, :indexer_source} = probe}) do
+    with {:ok, mod} <- safely(fn -> resolve(probe) end),
+         label when is_binary(label) <- Registry.indexer_source_label(mod) do
+      {:msgid, label}
+    else
+      _none -> nil
+    end
+  end
 
   defp adapter_name(%Target{probe: probe}) do
     case safely(fn -> resolve(probe) end) do
@@ -381,15 +453,23 @@ defmodule Cinder.Health do
   # checked-out connection through the `$callers` process-dictionary chain that `Task` sets on the
   # spawned process — the same mechanism Mox's private mode already relies on for `run/1`'s
   # network probes — so no sandbox allowance is needed here.
+  #
+  # A configured indexer whose secrets do not decrypt counts too, enabled or not (#1620 point 7):
+  # the row names the settings secrets, the indexers, or both counts.
   defp stored_credentials do
-    case safely(fn -> Cinder.Settings.undecryptable_secret_keys() end) do
-      keys when is_list(keys) and keys != [] ->
-        {:error, {:undecryptable_secrets, length(keys)}}
+    settings = count(safely(fn -> Cinder.Settings.undecryptable_secret_keys() end))
+    indexers = count(safely(fn -> Enum.reject(Indexers.list(), & &1.secrets_readable) end))
 
-      _ ->
-        :skip
+    case {settings, indexers} do
+      {0, 0} -> :skip
+      {settings, 0} -> {:error, {:undecryptable_secrets, settings}}
+      {0, indexers} -> {:error, {:undecryptable_indexer_secrets, indexers}}
+      {settings, indexers} -> {:error, {:undecryptable_secrets, settings, indexers}}
     end
   end
+
+  defp count(list) when is_list(list), do: length(list)
+  defp count(_error), do: 0
 
   # Issue #585: `Cinder.Library.Sidecars` retains a sidecar it can't prove it owns by renaming it
   # to an unguessable `.cinder-sidecar-quarantine-*` name and logging it, but nothing sweeps that

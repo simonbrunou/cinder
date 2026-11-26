@@ -14,7 +14,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
   alias Cinder.Acquisition.Indexer
   alias Cinder.Acquisition.Indexer.{Newznab, Torznab}
   alias Cinder.Acquisition.IndexerSource.Native
-  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaps, IndexerStatus}
+  alias Cinder.Acquisition.IndexerSource.Native.IndexerCaps
   alias Cinder.ConfigCase
   alias Cinder.Indexers
 
@@ -479,37 +479,6 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
       assert :ok = Indexers.delete(nil, indexer.id)
       refute Repo.get(IndexerCaps, indexer.id)
-    end
-
-    test "refetch_caps/2 fetches whatever the row holds and stores the answer" do
-      indexer = indexer!(:torznab)
-      stub(caps_body())
-      assert {:ok, _planned} = Torznab.plan(indexer, {:search, "tt0133093"}, context())
-      assert caps_requests() == 1
-
-      stub(caps_body(categories: [5000]))
-      assert {:ok, %{"categories" => [5000]}} = Torznab.refetch_caps(indexer, context())
-      assert caps_requests() == 1
-      assert %IndexerCaps{caps: %{"categories" => [5000]}} = Repo.get!(IndexerCaps, indexer.id)
-    end
-
-    test "refetch_caps/2 asks an indexer that rejected its credentials and is backing off", %{
-      now: now
-    } do
-      indexer = indexer!(:torznab)
-      stub(caps_body())
-      assert {:ok, _planned} = Torznab.plan(indexer, {:search, "tt0133093"}, context())
-      assert caps_requests() == 1
-      :written = IndexerStatus.record(indexer, {:http_status, 500}, now)
-      :written = IndexerStatus.record(indexer, {:rejected_credentials, {:http_status, 401}}, now)
-      # The control: the gate a search goes through holds this indexer back.
-      assert {:failed, :rejected_credentials} =
-               IndexerStatus.gate(IndexerStatus.read([indexer])[indexer.id], now)
-
-      stub(caps_body(categories: [5000]))
-      assert {:ok, %{"categories" => [5000]}} = Torznab.refetch_caps(indexer, context())
-      assert caps_requests() == 1
-      assert %IndexerCaps{caps: %{"categories" => [5000]}} = Repo.get!(IndexerCaps, indexer.id)
     end
 
     for {name, answer, tag} <- [

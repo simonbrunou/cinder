@@ -16,8 +16,9 @@ defmodule Cinder.Health.Target do
     and not checked yet otherwise.
   - `dashboard`: `:always`, `:configured` (no row while it is not configured) or `:never`.
   - `names_adapter`: `true` where the operator picks the adapter in `/settings` (the download
-    clients, the media server), so the dashboard row names the wired one. Every other target has
-    one adapter, which its label already names.
+    clients, the media server, the indexer source), so the dashboard row names the wired one.
+    The indexer source is named by its option label, a msgid. Every other target has one
+    adapter, which its label already names.
   - `help`: `nil`, or an English msgid saying what the check covers when the label alone would
     promise more. The dashboard row shows it under the label.
   """

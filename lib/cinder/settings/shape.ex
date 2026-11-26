@@ -10,7 +10,7 @@ defmodule Cinder.Settings.Shape do
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
   # | {:list, :downcase | :groups} | :timezone | :hours
-  # | {:indexer_source, %{options: [%{value, module, os_env}], default}}
+  # | {:indexer_source, %{options: [%{value, module, os_env, label}], default}}
 
   alias Cinder.Acquisition.{AnimePreferences, Parser}
 

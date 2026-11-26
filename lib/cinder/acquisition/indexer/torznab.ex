@@ -16,6 +16,8 @@ defmodule Cinder.Acquisition.Indexer.Torznab do
   defdelegate search(indexer, query, context), to: Newznab
 
   defdelegate plan(indexer, query, context), to: Newznab
-  defdelegate refetch_caps(indexer, context), to: Newznab
+
+  @impl true
+  defdelegate test(indexer, context, record), to: Newznab
   defdelegate request_options(indexer, params), to: Newznab
 end

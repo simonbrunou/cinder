@@ -17,6 +17,7 @@ defmodule Cinder.NewznabFixtures do
 
   alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
   alias Cinder.Indexers
+  alias Cinder.Indexers.{ConfiguredIndexer, Secrets}
   alias Cinder.Repo
 
   @key "nzb-key-0123456789"
@@ -52,6 +53,21 @@ defmodule Cinder.NewznabFixtures do
     {:ok, row} = Indexers.create(nil, attrs, %{"api_key" => @key})
     {:ok, indexer} = Indexers.fetch_with_secrets(row.id)
     indexer
+  end
+
+  @doc """
+  Replaces `indexer`'s stored secrets with a ciphertext sealed for another id, which
+  `Cinder.Indexers.Secrets.open/1` refuses, as a changed `SECRET_KEY_BASE` makes it refuse.
+  """
+  def undecryptable!(indexer) do
+    ciphertext = Secrets.seal(indexer.id + 1_000_000, %{"api_key" => @key})
+
+    {1, _} =
+      Repo.update_all(from(c in ConfiguredIndexer, where: c.id == ^indexer.id),
+        set: [secrets_ciphertext: ciphertext]
+      )
+
+    :ok
   end
 
   @doc """

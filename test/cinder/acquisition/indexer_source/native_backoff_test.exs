@@ -115,7 +115,7 @@ defmodule Cinder.Acquisition.IndexerSource.NativeBackoffTest do
 
       assert {:error, {:no_indexer_answered, _report}} = Native.search("tt0133093")
 
-      # A passing Test records `:test_success` through the same transitions (#1657 is to call them).
+      # A passing Test records `:test_success` through the same transitions.
       :written = IndexerStatus.record(rejected, :test_success, @now)
       route(%{"bad.example" => fn _conn, _query -> :default end})
       _drained = requests("bad.example")

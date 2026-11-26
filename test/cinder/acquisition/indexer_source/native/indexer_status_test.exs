@@ -537,6 +537,102 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatusTest do
     end
   end
 
+  describe "record_test/3" do
+    test "a passing Test ends rejected credentials and stores its outcome and time" do
+      indexer = indexer!()
+      :written = IndexerStatus.record(indexer, {:rejected_credentials, {:code, 101}}, @now)
+
+      assert IndexerStatus.record_test(indexer, :test_success, at(60)) ==
+               {:written, %{outcome: :success, at: ~U[2026-11-26 12:01:00Z]}}
+
+      status = IndexerStatus.read([indexer])[indexer.id]
+
+      assert {status.credentials_rejected, status.last_success_at,
+              IndexerStatus.last_test(status)} ==
+               {false, ~U[2026-11-26 12:01:00Z],
+                %{outcome: :success, at: ~U[2026-11-26 12:01:00Z]}}
+    end
+
+    test "a failing Test climbs one step and stores the reason the report carries" do
+      indexer = indexer!()
+
+      for {answer, outcome} <- [
+            {{:http_status, 410}, {:http_status, 410}},
+            {{:indexer_error, 900}, {:indexer_error, 900}},
+            {{:disabled_till, nil}, {:http_status, 429}},
+            {{:rejected_credentials, {:code, 100}}, :rejected_credentials},
+            {:timeout, :timeout}
+          ] do
+        assert {answer, IndexerStatus.record_test(indexer, answer, @now)} ==
+                 {answer, {:written, %{outcome: outcome, at: @now}}}
+      end
+
+      status = IndexerStatus.read([indexer])[indexer.id]
+      # Three failures climbed the ladder; the rejection climbed nothing.
+      assert {status.level, status.failures_in_row, status.credentials_rejected} == {4, 4, true}
+    end
+
+    test "a limit answer starts a limit backoff and stores :limit" do
+      indexer = indexer!()
+
+      assert IndexerStatus.record_test(indexer, {:limit, at(600)}, @now) ==
+               {:written, %{outcome: :limit, at: @now}}
+
+      assert %{backoff: :limit, backoff_until: ~U[2026-11-26 12:10:00Z]} =
+               IndexerStatus.read([indexer])[indexer.id]
+    end
+
+    test "a query error leaves the status and stores the code" do
+      indexer = indexer!()
+      :written = IndexerStatus.record(indexer, :timeout, @now)
+      before = raw_row(indexer.id)
+
+      assert IndexerStatus.record_test(indexer, {:query_error, 201}, at(30)) ==
+               {:written, %{outcome: {:query_error, 201}, at: ~U[2026-11-26 12:00:30Z]}}
+
+      assert raw_row(indexer.id) == before
+    end
+
+    test "a search's write afterwards keeps the last Test" do
+      indexer = indexer!()
+      {:written, _last_test} = IndexerStatus.record_test(indexer, :test_success, @now)
+      :written = IndexerStatus.record(indexer, :timeout, at(60))
+
+      assert IndexerStatus.last_test(IndexerStatus.read([indexer])[indexer.id]) ==
+               %{outcome: :success, at: @now}
+    end
+
+    test "a status no Test reached has no last Test" do
+      indexer = indexer!()
+      :written = IndexerStatus.record(indexer, :timeout, @now)
+      assert IndexerStatus.last_test(IndexerStatus.read([indexer])[indexer.id]) == nil
+    end
+
+    test "a Test started under an older config_version changes neither the row nor the last Test" do
+      indexer = indexer!()
+      {:written, _last_test} = IndexerStatus.record_test(indexer, {:http_status, 503}, @now)
+      before = raw_row(indexer.id)
+      before_test = IndexerStatus.last_test(IndexerStatus.read([indexer])[indexer.id])
+
+      {:ok, edited} =
+        Indexers.update(nil, indexer.id, indexer.lock_version, %{api_path: "/newznab/api"})
+
+      assert IndexerStatus.record_test(indexer, :test_success, at(60)) == :dropped
+      assert raw_row(indexer.id) == before
+      assert IndexerStatus.last_test(IndexerStatus.read([edited])[edited.id]) == before_test
+
+      # The control: a Test under the new version writes.
+      assert {:written, %{outcome: :success}} =
+               IndexerStatus.record_test(edited, :test_success, at(60))
+    end
+
+    test "a Test of a deleted indexer is dropped" do
+      indexer = indexer!()
+      :ok = Indexers.delete(nil, indexer.id)
+      assert IndexerStatus.record_test(indexer, :test_success, @now) == :dropped
+    end
+  end
+
   defp last_success(indexer), do: IndexerStatus.read([indexer])[indexer.id].last_success_at
 
   # The row as SQLite stores it, every column in table order.
