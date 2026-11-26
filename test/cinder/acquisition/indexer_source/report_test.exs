@@ -104,6 +104,7 @@ defmodule Cinder.Acquisition.IndexerSource.ReportTest do
       {:failed, :too_large},
       {:failed, {:indexer_error, 900}},
       {:failed, {:limit, @later}},
+      {:failed, {:limit, nil}},
       {:failed, :rejected_credentials},
       {:failed, :challenge},
       {:failed, :crashed}
@@ -126,6 +127,8 @@ defmodule Cinder.Acquisition.IndexerSource.ReportTest do
       {:failed, {:http_status, 600}},
       {:failed, {:indexer_error, "900"}},
       {:failed, {:limit, 1_900_000_000}},
+      {:failed, {:limit, "2030-01-01"}},
+      {:skipped, {:limit, nil}},
       {:failed, {:backoff, @until}},
       {:failed, "https://indexer.example/api?apikey=secret"},
       {:failed, {:bad_response, "<html>body</html>"}}

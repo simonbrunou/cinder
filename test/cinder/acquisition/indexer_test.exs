@@ -94,6 +94,30 @@ defmodule Cinder.Acquisition.IndexerTest do
       end
     end
 
+    test "with raw_body: true, a body labelled JSON comes back as its bytes, on any status" do
+      options = stubbed(&respond(&1, :bad_json))
+
+      assert {:ok, %Req.Response{status: 200, body: "{apikey=secret"} = response} =
+               Indexer.request(context(90_000), options, raw_body: true)
+
+      assert Req.Response.get_header(response, "content-type") == []
+
+      for status <- [401, 429] do
+        options =
+          stubbed(fn conn ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.put_resp_header("retry-after", "60")
+            |> Plug.Conn.send_resp(status, ~s({"x": 1}))
+          end)
+
+        assert {:ok, %Req.Response{status: ^status, body: ~s({"x": 1})} = response} =
+                 Indexer.request(context(90_000), options, raw_body: true)
+
+        assert Req.Response.get_header(response, "retry-after") == ["60"]
+      end
+    end
+
     test "a body of exactly the 4 MiB cap comes back" do
       options = stubbed(&Plug.Conn.send_resp(&1, 200, String.duplicate("x", 4_194_304)))
       assert {:ok, %Req.Response{status: 200}} = Indexer.request(context(90_000), options)

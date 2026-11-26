@@ -8,8 +8,9 @@
   stores `native`. `IndexerSource.Native` asks each enabled configured indexer whose secrets
   decrypt and whose FlareSolverr toggle is off in a process of its own, through the adapter its
   type maps to in the `:indexer_adapters` app env, under one 90 s deadline for the whole search.
-  It kills a search still running 1 s past that deadline. No type maps to an adapter yet, so a
-  native search answers no rows: with such indexers it reports each one as not supported, and
-  with none it answers `{:error, :no_indexers}`. `Native.fetch_download/3` and `Native.health/0`
-  answer `{:error, :not_supported}`. `Cinder.HTTPPolicy.bounded_request/2,3` now kills its
-  request task once the process that called it exits.
+  It kills a search still running 1 s past that deadline. It reports an indexer whose type maps
+  to no adapter as not supported, and with no enabled configured indexer whose secrets decrypt
+  it answers `{:error, :no_indexers}`. #1653 maps the Newznab and Torznab types.
+  `Native.fetch_download/3` and `Native.health/0` answer `{:error, :not_supported}`.
+  `Cinder.HTTPPolicy.bounded_request/2,3` now kills its request task once the process that
+  called it exits.

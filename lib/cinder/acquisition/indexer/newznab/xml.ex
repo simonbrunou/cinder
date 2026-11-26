@@ -59,4 +59,25 @@ defmodule Cinder.Acquisition.Indexer.Newznab.XML do
       nil -> nil
     end
   end
+
+  @max_digits 18
+
+  @doc """
+  `text`, trimmed, as a non-negative integer of at most 18 digits, else nil. A longer number is
+  none, so no digit run is converted whole: past the BEAM's integer limit `Integer.parse/1`
+  raises.
+  """
+  @spec integer(term()) :: non_neg_integer() | nil
+  def integer(text) when is_binary(text) do
+    text = String.trim(text)
+
+    with true <- byte_size(text) <= @max_digits + 1,
+         {value, ""} when value >= 0 and value < 1_000_000_000_000_000_000 <- Integer.parse(text) do
+      value
+    else
+      _invalid -> nil
+    end
+  end
+
+  def integer(_text), do: nil
 end

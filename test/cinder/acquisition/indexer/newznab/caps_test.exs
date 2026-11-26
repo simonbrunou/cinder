@@ -247,7 +247,9 @@ defmodule Cinder.Acquisition.Indexer.Newznab.CapsTest do
         "1e3",
         <<0xFF>>,
         "&amp;",
-        String.duplicate("9", 400)
+        String.duplicate("9", 400),
+        # Past the BEAM's integer limit, where `Integer.parse/1` raises (#1653 review).
+        String.duplicate("9", 2_000_000)
       ]
 
       mode_slots =

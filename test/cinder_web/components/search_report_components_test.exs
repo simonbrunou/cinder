@@ -180,6 +180,13 @@ defmodule CinderWeb.SearchReportComponentsTest do
       refute html =~ "some_new_reason"
       refute html =~ "not_a_datetime"
     end
+
+    # A Newznab limit that states no wait (#1653) is in the report's set; #1654 gives it a time.
+    test "a limit with no stated wait shows the name alone" do
+      html = render_line(report([{1, "One", {:failed, {:limit, nil}}}]))
+
+      assert texts(html, "#line") == ["Not every indexer answered: One."]
+    end
   end
 
   describe "search_error_text/2" do

@@ -19,7 +19,8 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Caps do
   not one of the six modes above, a mode with an attribute other than `available`,
   `supportedParams` and `searchEngine`, one of the five modes read with no `available` attribute,
   an element under `categories` other than `category`, or under a `category` other than `subcat`,
-  and an id or limit that is not a non-negative integer. Of `music-search`, only the name and its
+  and an id or limit that is not a non-negative integer of at most 18 digits
+  (`Cinder.Acquisition.Indexer.Newznab.XML.integer/1`). Of `music-search`, only the name and its
   attributes' names are checked. A body that reads wrong fails the indexer instead of leaving it
   out of searches it would take: a renamed mode or `supportedParams` would otherwise read as a
   mode the indexer lacks, or as one that takes only `q`.
@@ -50,7 +51,20 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Caps do
   @doc "Parses a `t=caps` answer body; see the moduledoc."
   @spec parse(term()) :: {:ok, t()} | {:error, :bad_response}
   def parse(body) do
-    with {:ok, {"caps", _attributes, _children} = caps} <- XML.parse(body),
+    case XML.parse(body) do
+      {:ok, element} -> read(element)
+      {:error, :bad_response} -> {:error, :bad_response}
+    end
+  end
+
+  @doc """
+  Reads a `t=caps` answer already parsed, as
+  `Cinder.Acquisition.Indexer.NewznabAnswer.classify_caps/4` answers it, by the rules of
+  `parse/1`.
+  """
+  @spec read(XML.element()) :: {:ok, t()} | {:error, :bad_response}
+  def read(element) do
+    with {"caps", _attributes, _children} = caps <- element,
          {:ok, modes} <- modes(XML.child(caps, "searching")),
          {:ok, categories} <- categories(XML.child(caps, "categories")),
          {:ok, limits} <- limits(XML.child(caps, "limits")) do
@@ -145,14 +159,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Caps do
   defp optional_integer(nil), do: {:ok, nil}
   defp optional_integer(text), do: integer(text)
 
-  defp integer(text) when is_binary(text) do
-    case Integer.parse(String.trim(text)) do
-      {value, ""} when value >= 0 -> {:ok, value}
-      _other -> :error
+  defp integer(text) do
+    case XML.integer(text) do
+      nil -> :error
+      value -> {:ok, value}
     end
   end
-
-  defp integer(_text), do: :error
 
   # `{:ok, results}` when `fun` answers `{:ok, result}` for every item, else `:error`.
   defp collect(items, fun) do

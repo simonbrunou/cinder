@@ -1,9 +1,10 @@
 defmodule Cinder.Acquisition.Indexer.Newznab do
   @moduledoc """
-  The request half of the Newznab adapter (#1652), which `Cinder.Acquisition.Indexer.Torznab`
-  shares, as Prowlarr's `Torznab.cs` reuses Newznab's request generator. `plan/3` turns one seam
-  call into the requests to send one configured indexer, read from its caps. Parsing the answers,
-  `search/3` and the registration in Native's adapter map are #1653's.
+  The Newznab adapter of `Cinder.Acquisition.Indexer` (#1652, #1653), which
+  `Cinder.Acquisition.Indexer.Torznab` shares, as Prowlarr's `Torznab.cs` reuses Newznab's request
+  generator. `plan/3` turns one seam call into the requests to send one configured indexer, read
+  from its caps, and `search/3` sends them and reads the answers. Native's adapter map
+  (`config :cinder, :indexer_adapters`) names this module for the `newznab` type.
 
   ## Caps
 
@@ -11,10 +12,31 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   `Cinder.Acquisition.IndexerSource.Native.IndexerCaps`, which fetches `t=caps` when its row is
   missing, 7 days old or more, or under another `config_version`. `refetch_caps/2` fetches them
   whatever the row holds. A failed fetch answers a closed tag:
-  `Cinder.Acquisition.Indexer.request/3`'s own tag when it answers no response (a body labelled
-  JSON that does not decode reads `:bad_response` there, whatever its status),
-  `{:http_status, status}` for a response with a status outside 2xx, or `:bad_response` for a 2xx
-  body `Cinder.Acquisition.Indexer.Newznab.Caps` refuses (an `<error>` answer included).
+  `Cinder.Acquisition.Indexer.request/3`'s own tag when it answers no response, else the class
+  `Cinder.Acquisition.Indexer.NewznabAnswer.classify_caps/4` gives the answer (a 2xx `<error
+  code="100">` reads `:rejected_credentials`, a 503 `{:http_status, 503}`), or `:bad_response`
+  for a 2xx `caps` body `Cinder.Acquisition.Indexer.Newznab.Caps` refuses.
+
+  ## The search
+
+  `search/3` answers Native's `{rows, outcome}`:
+
+  - `{[], {:not_asked, :caps}}` when the caps take none of the call's requests.
+  - `{[], {:failed, reason}}` when the caps could not be read, `reason` the fetch's class read
+    through `Cinder.Acquisition.Indexer.NewznabAnswer.reason/1`.
+  - Otherwise it sends the planned requests one after another, id-scoped first, each once, with
+    no `limit` or `offset`. Each answer is read by `Cinder.Acquisition.Indexer.NewznabAnswer.read/2`
+    and its items by `Cinder.Acquisition.Indexer.Newznab.Items.rows/2`, every row tagged with its
+    request's query origin. A `{:query_error, code}` answer fails that query only: the next one is
+    still sent. Any other failure stops the search, the rows of the answers before it kept. The
+    outcome is `:asked` when no request failed, else `{:failed, reason}` of the stopping failure,
+    or of the first query error when there is none. A request the search deadline cut
+    (`{:failed, :deadline}`, which Native reads as skipped) loses to an earlier query error, so
+    the search still reads incomplete.
+
+  The class's `wait` counts from the `clock` of `config :cinder,
+  Cinder.Acquisition.IndexerSource.Native`, `DateTime.utc_now/0` by default. No error, outcome or
+  log line carries a URL, a header or a body.
 
   ## The requests
 
@@ -50,8 +72,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   req_options: [...]` at runtime, which the tests point at a `Req.Test` stub.
   """
 
+  @behaviour Cinder.Acquisition.Indexer
+
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Newznab.Caps
+  alias Cinder.Acquisition.Indexer.Newznab.{Caps, Items}
+  alias Cinder.Acquisition.Indexer.NewznabAnswer
+  alias Cinder.Acquisition.IndexerSource.{Native, Report}
   alias Cinder.Acquisition.IndexerSource.Native.IndexerCaps
   alias Cinder.HTTPPolicy
   alias Cinder.Indexers.ConfiguredIndexer
@@ -114,11 +140,76 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   defp api_key(_indexer), do: []
 
   defp fetch_caps(indexer, context) do
-    case Indexer.request(context, request_options(indexer, t: "caps")) do
-      {:ok, %Req.Response{status: status, body: body}} when status in 200..299 -> Caps.parse(body)
-      {:ok, %Req.Response{status: status}} -> {:error, {:http_status, status}}
-      {:error, tag} -> {:error, tag}
+    context
+    |> Indexer.request(request_options(indexer, t: "caps"), raw_body: true)
+    |> NewznabAnswer.read_caps(now())
+    |> case do
+      {:ok, element} -> Caps.read(element)
+      {:error, class} -> {:error, class}
     end
+  end
+
+  # --- the search ---
+
+  @typedoc "A row of `Cinder.Acquisition.Indexer.Newznab.Items.rows/2` tagged with its query origin."
+  @type row :: %{
+          required(:query_origins) => [:id_scoped | :free_text],
+          optional(atom()) => term()
+        }
+
+  @doc "Searches `indexer` for `query`; see the moduledoc."
+  @impl Indexer
+  @spec search(ConfiguredIndexer.t(), Indexer.query(), Indexer.context()) ::
+          {[row()], Report.outcome() | {:failed, :deadline}}
+  def search(%ConfiguredIndexer{} = indexer, query, context) do
+    case plan(indexer, query, context) do
+      {:ok, planned} -> send_planned(indexer, planned, context)
+      {:not_asked, :caps} -> {[], {:not_asked, :caps}}
+      {:failed, class} -> {[], {:failed, NewznabAnswer.reason(class)}}
+    end
+  end
+
+  defp send_planned(indexer, planned, context) do
+    {row_lists, query_error, stop} =
+      Enum.reduce_while(planned, {[], nil, nil}, fn request, {row_lists, query_error, nil} ->
+        case answer(indexer, request, context) do
+          {:ok, rows} ->
+            {:cont, {[rows | row_lists], query_error, nil}}
+
+          {:error, {:query_error, _code} = class} ->
+            {:cont, {row_lists, query_error || class, nil}}
+
+          {:error, class} ->
+            {:halt, {row_lists, query_error, class}}
+        end
+      end)
+
+    {row_lists |> Enum.reverse() |> Enum.concat(), outcome(query_error, stop)}
+  end
+
+  defp answer(indexer, %{params: params, origin: origin}, context) do
+    context
+    |> Indexer.request(request_options(indexer, params), raw_body: true)
+    |> NewznabAnswer.read(now())
+    |> case do
+      {:ok, items} ->
+        {:ok, for(row <- Items.rows(items, indexer), do: Map.put(row, :query_origins, [origin]))}
+
+      {:error, class} ->
+        {:error, class}
+    end
+  end
+
+  defp outcome(nil, nil), do: :asked
+  defp outcome(query_error, :deadline) when query_error != nil, do: failed(query_error)
+  defp outcome(query_error, nil), do: failed(query_error)
+  defp outcome(_query_error, stop), do: failed(stop)
+
+  defp failed(class), do: {:failed, NewznabAnswer.reason(class)}
+
+  defp now do
+    clock = :cinder |> Application.get_env(Native, []) |> Keyword.get(:clock, &DateTime.utc_now/0)
+    clock.()
   end
 
   # --- the request table ---

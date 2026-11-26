@@ -12,8 +12,7 @@
   `Download.start/1` searches again after it, and Cinder holds a book target as it does for its
   other dropped grabs. A grab whose fetch through the selected source answers
   `:indexer_auth_failed`, which no indexer source returns yet, is dropped too, blocks no release
-  and counts as a failed grab where the grab call counts failures. No native search returns a
-  result yet, since Cinder ships no indexer adapter, so no native grab exists. A manual movie or
+  and counts as a failed grab where the grab call counts failures. A manual movie or
   TV grab shows its own message for each of the two failures, and a held book target reads a
   sentence for them and for `grab_retries_exhausted` and `bad_download_file`, which no code
   stores yet. The pass over waiting grabs that each download poller runs now stamps the poller's

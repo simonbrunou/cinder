@@ -62,6 +62,10 @@ defmodule Cinder.Acquisition.Indexer do
   @request_timeout_ms 30_000
   @max_response_bytes 4 * 1024 * 1024
 
+  @doc "The largest response body in bytes `request/3` reads, 4 MiB."
+  @spec max_response_bytes() :: pos_integer()
+  def max_response_bytes, do: @max_response_bytes
+
   @doc """
   Sends one adapter request through `Cinder.HTTPPolicy.bounded_request/3` with Req's retry and
   redirects off. The request gets the smaller of its own timeout (`opts[:timeout_ms]`, 30 s by
@@ -78,6 +82,11 @@ defmodule Cinder.Acquisition.Indexer do
   - `:dns`, `:connection_refused`, `:connection_failed`, `:too_large` or `:bad_response` (a body
     labelled JSON that does not decode), as `Cinder.Acquisition.IndexerSource.Report` defines
     them.
+
+  With `raw_body: true` the response's `content-type` header is dropped before
+  `Cinder.HTTPPolicy.bounded_request/3` reads it, so a body labelled JSON comes back as its bytes,
+  whatever its status, and never reads `:bad_response` here. The Newznab and Torznab adapters
+  read every body themselves (`Cinder.Acquisition.Indexer.NewznabAnswer`).
   """
   @spec request(context(), keyword(), keyword()) ::
           {:ok, Req.Response.t()} | {:error, atom()}
@@ -91,10 +100,19 @@ defmodule Cinder.Acquisition.Indexer do
       request_options
       |> Keyword.merge(receive_timeout: min(own_ms, left_ms), retry: false, redirect: false)
       |> Req.new()
+      |> raw_body(Keyword.get(opts, :raw_body, false))
       |> HTTPPolicy.bounded_request(@max_response_bytes, min(own_ms, left_ms))
       |> classify(own_ms > left_ms, deadline_at)
     end
   end
+
+  defp raw_body(request, true),
+    do: Req.Request.append_response_steps(request, raw_body: &drop_content_type/1)
+
+  defp raw_body(request, false), do: request
+
+  defp drop_content_type({request, response}),
+    do: {request, Req.Response.delete_header(response, "content-type")}
 
   defp classify({:ok, response}, _cut_by_deadline?, _deadline_at), do: {:ok, response}
 

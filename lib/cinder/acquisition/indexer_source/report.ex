@@ -24,7 +24,9 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
     - `:too_large`.
     - `{:indexer_error, code}`: an integer Newznab `<error>` code that is neither a limit nor a
       credentials code.
-    - `{:limit, until}`: the indexer reported a limit, which lasts until the `DateTime` `until`.
+    - `{:limit, until}`: the indexer reported a limit, which lasts until the `DateTime` `until`,
+      or nil when the answer stated no wait (#1653). Nothing gives a nil limit a default yet:
+      #1654 adds one.
     - `:rejected_credentials`: a failure, not a skip.
     - `:challenge`: a Cloudflare challenge or a FlareSolverr failure.
     - `:crashed`: the search process or parser worker died, or a regex limit hit.
@@ -60,7 +62,7 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
           | :bad_response
           | :too_large
           | {:indexer_error, integer()}
-          | {:limit, DateTime.t()}
+          | {:limit, DateTime.t() | nil}
           | :rejected_credentials
           | :challenge
           | :crashed
@@ -118,6 +120,7 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
 
   def outcome?({:failed, {:indexer_error, code}}) when is_integer(code), do: true
   def outcome?({:failed, {:limit, %DateTime{}}}), do: true
+  def outcome?({:failed, {:limit, nil}}), do: true
   def outcome?(_outcome), do: false
 
   defp feature?(feature) when is_atom(feature), do: true

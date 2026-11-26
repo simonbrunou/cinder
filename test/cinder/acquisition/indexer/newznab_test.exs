@@ -499,7 +499,11 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
           {"a redirect", {:status, 302, ""}, {:http_status, 302}},
           {"an <error> answer on HTTP 200",
            {:status, 200, ~s(<error code="100" description="Incorrect user credentials"/>)},
+           :rejected_credentials},
+          {"an RSS answer to a caps request", {:status, 200, ~s(<rss><channel/></rss>)},
            :bad_response},
+          {"a JSON body labelled JSON on HTTP 401", {:json_status, 401, "{apikey=x"},
+           :rejected_credentials},
           {"an HTML page on HTTP 200", {:status, 200, "<html><body>Login</body></html>"},
            :bad_response},
           {"a body that is not XML", {:status, 200, "oops"}, :bad_response},
@@ -518,6 +522,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
             {:transport, reason} -> Req.Test.transport_error(conn, reason)
             {:status, status, body} -> Plug.Conn.send_resp(conn, status, body)
             {:json, body} -> Req.Test.json(conn, body)
+            {:json_status, status, body} -> json_resp(conn, status, body)
           end
         end)
 
@@ -558,6 +563,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
       refute_received {:request, _path, _query}
     end
+  end
+
+  defp json_resp(conn, status, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json")
+    |> Plug.Conn.send_resp(status, body)
   end
 
   defp age(indexer, now, seconds) do
