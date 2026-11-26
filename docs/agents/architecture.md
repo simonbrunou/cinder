@@ -387,6 +387,13 @@ itself.
 Download polling, import and the book/audiobook pollers run under the supervision tree, not in
 the request path. Crash recovery is a feature: prove it with a test.
 
+A guard that keeps a worker alive catches a throw and an exit beside a raise, since `rescue` alone
+lets both through, and its tests raise, throw and exit. A `Task.async_stream` child that raises,
+throws or exits kills a caller that does not trap exits, whatever the caller rescues or catches, so
+the child catches its own crash, as `run_check/2`, the stream child of
+`Cinder.Indexers.Definitions.check_copies/2`, does. On #1669 a rescue-only guard passed its raise
+test, and the Spec review found that a load check that exits skipped the boot fetch.
+
 A poller's per-unit `isolate/2` (`Cinder.Download.PollerSkeleton`) only logs a raise: it counts
 no attempt and parks nothing, so a path that raises runs again on every tick. An error path a
 download poller reaches returns an error value instead, which that poller's failure handling
