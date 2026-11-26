@@ -34,6 +34,14 @@
   dropped the new removal line. The fragment named that path as an exception, the Spec review
   flagged the requirement as partial, and the fix took a second full suite and a re-check:
   29 minutes from the run that proved it to the fix commit.
+- A change that makes a predicate, such as a gate, accept one more state tests each path into
+  that state, a reset that runs on a later read included, with the predicate asserted after
+  each. On #1657 (PR #1780) a re-check fix let `IndexerState.passes_gate?/1` pass an ended limit
+  with no failure in a row, tested on a limit after a success and on one after a timeout, never
+  on one kept across an edit. The reset that a `config_version` rise applies on the next read
+  keeps a running limit and zeroes the failures, so an indexer edited during a limit passed
+  once the limit ended, with no answer under its new settings. The next re-check found it,
+  and a third fix commit took the clause out.
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
