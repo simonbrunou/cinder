@@ -321,6 +321,14 @@
   that message is still on its way, so read what the server decided from its state instead,
   as that test's `holder_pid/2` reads the slot's holder. On #1770 (for #1655) the Standards
   review found both in the first `LeaseTest`, and the fix took a review round and a re-check.
+- `Native.Lease` runs once per test process, one per partition of a bare `mix test`, and keys
+  each slot by indexer id. A test's sandbox rollback lets the next test's first indexer take the
+  same id. A test that leaves a spacing longer than the test config's `spacing_ms` on an indexer
+  restarts the lease in `on_exit`, from an `async: false` module, with
+  `Supervisor.terminate_child(Cinder.Supervisor, Native.Lease)` and then
+  `Supervisor.restart_child/2`, so no test of another module asks the lease meanwhile. On #1671
+  (PR #1836) a test of a 60 s `requestDelay` left that gap behind, and the next test with an
+  indexer of that id timed out at 60 s.
 - A test that sends a LiveView a message with `send(view.pid, msg)`, where the view's
   `handle_info/2` passes it on to a component with `send_update/3`, calls `render(view)` once
   before the call that checks the component. Each `render/1` or `has_element?` call pings the view,
