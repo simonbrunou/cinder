@@ -147,9 +147,11 @@ defmodule Cinder.Indexers.ProwlarrImport.AnswerTest do
     end
 
     test "a Cardigann or C# indexer needs no generic field" do
-      assert {:ok, [%{fields: %{"baseUrl" => nil}}, %{fields: fields}]} =
+      assert {:ok, [%{fields: cardigann_fields}, %{fields: fields}]} =
                Answer.indexers([cardigann(1, "nyaasi"), csharp(2, "BroadcastheNet")])
 
+      # A Cardigann indexer's values travel only in its redacted `cardigann` struct (#1675).
+      assert cardigann_fields == %{}
       assert fields == %{"baseUrl" => nil, "apiKey" => masked()}
     end
 

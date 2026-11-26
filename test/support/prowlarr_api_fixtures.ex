@@ -46,14 +46,37 @@ defmodule Cinder.ProwlarrApiFixtures do
     ])
   end
 
-  @doc "A Cardigann indexer for definition `definition`."
+  @doc """
+  A Cardigann indexer for definition `definition`. `opts` override its top-level keys, and
+  `:file` its `definitionFile` (default `definition`), `:base_url` its `baseUrl` (default unset)
+  and `:fields` appends `fields` entries, such as a definition's settings.
+  """
   def cardigann(id, definition, opts \\ []) do
+    {file, opts} = Keyword.pop(opts, :file, definition)
+    {base_url, opts} = Keyword.pop(opts, :base_url)
+
     indexer("Cardigann", "torrent", id, Keyword.put_new(opts, :definitionName, definition), [
-      field("definitionFile", definition),
-      field("baseUrl", nil),
+      field("definitionFile", file),
+      field("baseUrl", base_url),
       field("baseSettings.queryLimit", nil),
       field("torrentBaseSettings.seedRatio", nil)
     ])
+  end
+
+  @doc """
+  A Cardigann `select` field as Prowlarr answers it: `selectOptions` numbers `labels` from 0, in
+  the order given, and `value` is the stored position (left out when nil).
+  """
+  def select_field(name, position, labels) do
+    name
+    |> field(position)
+    |> Map.merge(%{
+      "type" => "select",
+      "selectOptions" =>
+        labels
+        |> Enum.with_index()
+        |> Enum.map(fn {label, i} -> %{"value" => i, "name" => label} end)
+    })
   end
 
   @doc "A C# indexer, such as `BroadcastheNet`."

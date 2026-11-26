@@ -2,22 +2,30 @@ defmodule Cinder.Indexers.ProwlarrImport.Row do
   @moduledoc """
   One Prowlarr indexer in a Prowlarr import preview, as codes the dialog words (#1674).
 
-    * `state`: `:direct` (a Newznab or Torznab indexer Cinder searches itself), `:via_prowlarr`
-      (one that cannot go direct, offered unticked as a configured indexer at Prowlarr's
-      `/<id>/api`), `:held` (a Cardigann indexer), `:already_imported` (linked to a configured
-      indexer by an earlier import) or `:refused` (its settings fail the configured indexer's
-      checks, or a through-Prowlarr row's protocol is `unknown`).
+    * `state`: `:direct` (an indexer Cinder searches itself: Newznab, Torznab, or Cardigann
+      with its definition), `:via_prowlarr` (one that cannot go direct, offered unticked as a
+      configured indexer at Prowlarr's `/<id>/api`), `:held` (a Cardigann indexer while no
+      definition set is loaded, or while its definition's copy has no load result yet),
+      `:already_imported` (linked to a configured indexer by an
+      earlier import) or `:refused` (its settings fail the configured indexer's checks, or a
+      through-Prowlarr row's protocol is `unknown`).
     * `reasons`: for `:via_prowlarr`, why it cannot go direct (`:implementation`, `:http_proxy`,
       `:socks_proxy`, `:flaresolverr`, `:other_proxy`, `:global_proxy`,
-      `:additional_parameters` for a Torznab indexer that has some); for `:held`,
+      `:additional_parameters` for a Torznab indexer that has some, and for a Cardigann
+      indexer the codes of `Cinder.Indexers.ProwlarrImport.Cardigann`); for `:held`,
       `[:definitions_not_loaded]`; for `:refused`, each failed check as `{field, validation}`,
       such as `{:base_url, :base_url_userinfo}` or `{:settings, :credential_parameter}`, or
       `:protocol_unknown`; `[]` otherwise.
-    * `type`: the configured indexer type it would be created as, `:newznab` or `:torznab`, or
-      nil for a held, already imported or refused row.
-    * `key`: for a direct row, `:masked` when Prowlarr answers a key that is not blank, which
-      the admin types again, or `:none`; `:prowlarr` for a through-Prowlarr row, which gets the
-      stored Prowlarr key at commit; nil otherwise.
+    * `type`: the configured indexer type it would be created as, `:newznab`, `:torznab` or
+      `:cardigann`, or nil for a held, already imported or refused row.
+    * `key`: for a direct Newznab or Torznab row, `:masked` when Prowlarr answers a key that is
+      not blank, which the admin types again, or `:none`; `:prowlarr` for a through-Prowlarr
+      row, which gets the stored Prowlarr key at commit; nil otherwise.
+    * `secret_inputs`: for a direct Cardigann row, each secret setting Prowlarr masks, as
+      `%{field:, label:}` with the label the definition gives it, which the admin types again;
+      `[]` otherwise.
+    * `notes`: for a direct Cardigann row, `{:took_default, label}` for each select that takes
+      its default; `[]` otherwise.
     * `not_carried`: the Prowlarr settings set on it that the import does not carry:
       `:query_limit`, `:grab_limit`, `:query_timeout`, `:app_profile`, `:seed_settings`.
     * `tickable`: whether a commit can create it; `default_ticked`: whether the dialog ticks it
@@ -42,6 +50,8 @@ defmodule Cinder.Indexers.ProwlarrImport.Row do
     :plan,
     reasons: [],
     not_carried: [],
+    secret_inputs: [],
+    notes: [],
     tickable: false,
     default_ticked: false
   ]

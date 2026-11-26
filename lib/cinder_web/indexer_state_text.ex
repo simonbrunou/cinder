@@ -151,12 +151,22 @@ defmodule CinderWeb.IndexerStateText do
   defp failures(count),
     do: ngettext("%{count} failure in a row", "%{count} failures in a row", count)
 
-  defp feature(:flaresolverr), do: "FlareSolverr"
-  defp feature(:newznab), do: "Newznab"
-  defp feature(:torznab), do: "Torznab"
-  defp feature(:cardigann), do: "Cardigann"
-  defp feature(feature) when is_atom(feature), do: Atom.to_string(feature)
-  defp feature(feature), do: inspect(feature)
+  @doc """
+  The name of a feature code, as "Not supported: %{feature}" shows it: an indexer state's, and
+  a definition load result's in the Prowlarr import (`CinderWeb.ProwlarrImportText`).
+  """
+  @spec feature(term()) :: String.t()
+  def feature(:flaresolverr), do: "FlareSolverr"
+  def feature(:newznab), do: "Newznab"
+  def feature(:torznab), do: "Torznab"
+  def feature(:cardigann), do: "Cardigann"
+  def feature(feature) when is_atom(feature), do: Atom.to_string(feature)
+
+  # A load result's code that names its kind and the one it uses, such as `{:login, "form"}`.
+  def feature({kind, used}) when is_atom(kind) and (is_atom(used) or is_binary(used)),
+    do: "#{feature(kind)} #{used}"
+
+  def feature(feature), do: inspect(feature)
 
   # "at 14:35", or "on Nov 27 at 14:35" when the instant falls on another household day.
   defp at_phrase(datetime, now) do

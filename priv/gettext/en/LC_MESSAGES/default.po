@@ -7954,6 +7954,7 @@ msgid "Not found in Prowlarr"
 msgstr ""
 
 #: lib/cinder_web/indexer_state_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Not supported: %{feature}"
 msgstr ""
@@ -8650,4 +8651,39 @@ msgstr ""
 #: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Cinder is testing %{names}."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: %{settings} not entered: created disabled"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{setting} has no default value"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{setting} took its default value"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Base URL is not one of the definition's links"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Definition not available: add it through Prowlarr"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Needs a newer Cinder"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter each setting as plain text."
 msgstr ""

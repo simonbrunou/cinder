@@ -8,7 +8,7 @@ defmodule CinderWeb.ProwlarrImportText do
   use Gettext, backend: CinderWeb.Gettext
 
   alias Cinder.Indexers.ProwlarrImport.Row
-  alias CinderWeb.IndexerFormText
+  alias CinderWeb.{IndexerFormText, IndexerStateText}
 
   @doc "The text of an error tag of `preview/0` or `commit/3`."
   @spec error(term()) :: String.t()
@@ -55,6 +55,7 @@ defmodule CinderWeb.ProwlarrImportText do
 
   defp kind(:newznab), do: "Newznab"
   defp kind(:torznab), do: "Torznab"
+  defp kind(:cardigann), do: "Cardigann"
 
   @doc "Each reason of a through-Prowlarr or refused row, in order."
   @spec reasons(Row.t()) :: [String.t()]
@@ -85,6 +86,22 @@ defmodule CinderWeb.ProwlarrImportText do
 
   defp reason(:protocol_unknown, _row),
     do: gettext("Prowlarr doesn't say whether it is a Usenet or a torrent indexer.")
+
+  # A Cardigann row's reasons (#1675). A setting's label comes from the definition: it is text,
+  # never translated.
+  defp reason(:definition_not_available, _row),
+    do: gettext("Definition not available: add it through Prowlarr")
+
+  defp reason({:not_supported, feature}, _row),
+    do: gettext("Not supported: %{feature}", feature: IndexerStateText.feature(feature))
+
+  defp reason(:needs_newer_cinder, _row), do: gettext("Needs a newer Cinder")
+
+  defp reason(:base_url_not_in_links, _row),
+    do: gettext("Base URL is not one of the definition's links")
+
+  defp reason({:select_no_default, label}, _row) when is_binary(label),
+    do: gettext("%{setting} has no default value", setting: label)
 
   defp reason({field, validation}, _row) when is_atom(field), do: field_refusal(field, validation)
   defp reason(_reason, _row), do: gettext("Cinder can't import this indexer as it is set up.")
@@ -118,6 +135,16 @@ defmodule CinderWeb.ProwlarrImportText do
   defp setting(:app_profile), do: gettext("app profile")
   defp setting(:seed_settings), do: gettext("seed settings")
 
+  @doc """
+  The lines naming what a direct Cardigann row, or the indexer the import created from it, took
+  in Prowlarr's place: each select that took its default.
+  """
+  @spec notes(%{notes: list()}) :: [String.t()]
+  def notes(%{notes: notes}) do
+    for {:took_default, label} <- notes,
+        do: gettext("%{setting} took its default value", setting: label)
+  end
+
   @doc "The text of an error code a refused commit gave a row."
   @spec row_error(term()) :: String.t()
   def row_error(:not_importable), do: gettext("This indexer can't be imported.")
@@ -133,18 +160,35 @@ defmodule CinderWeb.ProwlarrImportText do
   def row_error(:name_conflict), do: gettext("Another indexer already has this name.")
   def row_error(:name_duplicate), do: gettext("Another ticked indexer has this name.")
   def row_error(:secret_invalid), do: gettext("Enter the API key as plain text.")
+  def row_error(:settings_invalid), do: gettext("Enter each setting as plain text.")
   def row_error(:already_imported), do: gettext("This indexer was imported meanwhile.")
   def row_error(:link_conflict), do: gettext("This indexer was imported meanwhile.")
+
+  # The create checks a Cardigann row's pinned copy again inside its transaction.
+  def row_error({:definition, _validation}), do: error(:changed)
   def row_error({field, validation}) when is_atom(field), do: field_refusal(field, validation)
   def row_error(_code), do: gettext("This indexer can't be imported.")
 
   @doc "The report's line for one indexer the import created."
   @spec created(map()) :: String.t()
   def created(%{name: name, notes: notes}) do
-    if :created_disabled_no_key in notes,
-      do: gettext("%{name}: API key not entered: created disabled", name: name),
-      else: gettext("%{name}: created", name: name)
+    cond do
+      :created_disabled_no_key in notes ->
+        gettext("%{name}: API key not entered: created disabled", name: name)
+
+      labels = Enum.find_value(notes, &secrets_not_entered/1) ->
+        gettext("%{name}: %{settings} not entered: created disabled",
+          name: name,
+          settings: Enum.join(labels, ", ")
+        )
+
+      true ->
+        gettext("%{name}: created", name: name)
+    end
   end
+
+  defp secrets_not_entered({:secrets_not_entered, labels}), do: labels
+  defp secrets_not_entered(_note), do: nil
 
   @doc """
   The report's line on the Tests the import started: one sentence for all the enabled indexers it

@@ -19,14 +19,21 @@ defmodule CinderWeb.ProwlarrImportDialog do
   (`secret_id/2`), and carries `phx-update="ignore"`: the browser keeps what it holds across the
   `phx-change` re-renders, and a new preview renders new, empty inputs.
 
+  A direct Cardigann row renders one input per secret setting Prowlarr masks
+  (`Cinder.Indexers.ProwlarrImport.Row`'s `secret_inputs`, #1675), named
+  `secrets[<Prowlarr id>][<setting>]`, each with an id built from the token, the row and its
+  place (`cardigann_secret_id/3`), and `phx-update="ignore"` too.
+
   No secret value enters the dialog. `change/2` reads only the `rows` params. `submit/3` reads
   the `api_key` of `secrets[<Prowlarr id>]` straight from the submit's params, for each ticked
-  direct row whose key Prowlarr masks, the rows that render a key input, and hands it to
-  `ProwlarrImport.commit/3`. No other row's secrets are read. Each payload is client-controlled:
-  the params are read under the ids of the held preview's tickable rows, so another id changes
-  nothing, and so does a value that is not a map where a map goes or text where text goes, save
-  the secrets of a ticked row with a key input: a `secrets` param or a row's secrets that are
-  not a map, or an `api_key` that is not text, the commit refuses on that row.
+  direct row whose key Prowlarr masks, the rows that render a key input, and the masked
+  settings of each ticked Cardigann row with secret inputs, and hands them to
+  `ProwlarrImport.commit/3`. No other row's secrets, and no other setting's, are read. Each
+  payload is client-controlled: the params are read under the ids of the held preview's tickable
+  rows, so another id changes nothing, and so does a value that is not a map where a map goes or
+  text where text goes, save the secrets of a ticked row with a key or secret input: a `secrets`
+  param or a row's secrets that are not a map, or an `api_key` or masked setting that is not
+  text, the commit refuses on that row.
   """
 
   alias Cinder.Indexers.ProwlarrImport
@@ -51,6 +58,7 @@ defmodule CinderWeb.ProwlarrImportDialog do
       choices: %{},
       via_ids: MapSet.new(),
       key_ids: MapSet.new(),
+      secret_fields: %{},
       row_errors: %{},
       alert: nil,
       report: nil,
@@ -71,6 +79,13 @@ defmodule CinderWeb.ProwlarrImportDialog do
           end),
         via_ids: ids(tickable, &via_input?/1),
         key_ids: ids(tickable, &key_input?/1),
+        secret_fields:
+          for(
+            row <- tickable,
+            row.secret_inputs != [],
+            into: %{},
+            do: {row.prowlarr_id, Enum.map(row.secret_inputs, & &1.field)}
+          ),
         alert: alert
     }
   end
@@ -93,6 +108,15 @@ defmodule CinderWeb.ProwlarrImportDialog do
   @doc "The id of the API key input of the row `prowlarr_id`, new with each preview."
   @spec secret_id(map(), pos_integer()) :: String.t()
   def secret_id(dialog, prowlarr_id), do: "import-key-#{dialog.token}-#{prowlarr_id}"
+
+  @doc """
+  The id of the input of the row `prowlarr_id`'s secret setting at `index` in its
+  `secret_inputs`, new with each preview. A setting's name comes from the definition, so the id
+  uses its place.
+  """
+  @spec cardigann_secret_id(map(), pos_integer(), non_neg_integer()) :: String.t()
+  def cardigann_secret_id(dialog, prowlarr_id, index),
+    do: "import-secret-#{dialog.token}-#{prowlarr_id}-#{index}"
 
   @doc "The id of the name input of the row `prowlarr_id`."
   @spec name_id(pos_integer()) :: String.t()
@@ -185,17 +209,32 @@ defmodule CinderWeb.ProwlarrImportDialog do
     end
   end
 
-  # Each tickable row's choice, with the typed key of a ticked row that renders a key input.
+  # Each tickable row's choice, with the typed key of a ticked row that renders a key input and
+  # the typed secrets of a ticked Cardigann row that renders secret inputs.
   defp choices(dialog, params) do
     Map.new(dialog.choices, fn {id, choice} ->
       secrets =
-        if choice.ticked and MapSet.member?(dialog.key_ids, id),
-          do: typed_key(params, id),
-          else: %{}
+        cond do
+          not choice.ticked -> %{}
+          MapSet.member?(dialog.key_ids, id) -> typed_key(params, id)
+          fields = dialog.secret_fields[id] -> typed_secrets(params, id, fields)
+          true -> %{}
+        end
 
       {id, Map.put(choice, :secrets, secrets)}
     end)
   end
+
+  # Only the row's masked settings; a value that is not a map goes to the commit, as for a key.
+  defp typed_secrets(%{"secrets" => %{} = secrets}, id, fields) do
+    case Map.get(secrets, Integer.to_string(id), %{}) do
+      %{} = row -> Map.take(row, fields)
+      _other -> :invalid
+    end
+  end
+
+  defp typed_secrets(%{"secrets" => _not_a_map}, _id, _fields), do: :invalid
+  defp typed_secrets(_params, _id, _fields), do: %{}
 
   # Only the `api_key` posted for the row. A `secrets` param or a row's secrets that are not a
   # map go to the commit, which refuses them as `:secret_invalid`; no `secrets` param is none.

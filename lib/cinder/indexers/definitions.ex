@@ -46,6 +46,7 @@ defmodule Cinder.Indexers.Definitions do
   - `loaded/0`: the set the mirror holds.
   - `name_status/1`: what the mirror says about one file name.
   - `picker/0`: the mirror's names with their display fields and load results.
+  - `import_copy/1`: one file name's mirror copy with its load result, for the Prowlarr import.
 
   ## Configured indexers' copies (#1668)
 
@@ -812,6 +813,46 @@ defmodule Cinder.Indexers.Definitions do
          {:ok, definition} <- loaded(copy) do
       {:ok, %{definition: definition, result: result_of(copy.blob_sha)}}
     end
+  end
+
+  @typedoc "What `import_copy/1` answers for one file name."
+  @type import_copy ::
+          :never_loaded
+          | :unavailable
+          | :needs_newer_cinder
+          | {:in_mirror,
+             %{blob_sha: String.t(), definition: map() | nil, result: result() | :unchecked}}
+
+  @doc """
+  The mirror's copy of the file `name` (`"nyaasi.yml"`) as the Prowlarr import reads it (#1675):
+  `:never_loaded` before any set was applied; `{:in_mirror, copy}` with the copy's blob hash, its
+  loaded definition (nil when the loader refuses the bytes) and its load result under the current
+  fingerprint (`:unchecked` with none stored); `:needs_newer_cinder` when only folders above the
+  engine hold it; `:unavailable` when it was removed upstream, is not in the mirror, or another
+  name replaces it. Writes nothing.
+  """
+  @spec import_copy(String.t()) :: import_copy()
+  def import_copy(name) when is_binary(name) do
+    case name_status(name) do
+      :never_loaded -> :never_loaded
+      :in_mirror -> in_mirror(mirror_copy(name))
+      {:needs_newer_cinder, _version} -> :needs_newer_cinder
+      _removed_or_replaced -> :unavailable
+    end
+  end
+
+  # An apply between the two reads can drop the copy.
+  defp in_mirror(nil), do: :unavailable
+
+  defp in_mirror(%Copy{} = copy) do
+    definition =
+      case Loader.load(copy.bytes) do
+        {:ok, definition} -> definition
+        {:error, _reason} -> nil
+      end
+
+    {:in_mirror,
+     %{blob_sha: copy.blob_sha, definition: definition, result: result_of(copy.blob_sha)}}
   end
 
   defp mirror_copy(name) do

@@ -13,11 +13,23 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
   limit and seed field it reads (`@not_carried_fields`) holds a number or no value. A field
   `value` of JSON `null` reads as unset.
 
+  A Cardigann indexer also holds a `definitionFile` field whose value is a non-empty string, the
+  definition's file name without `.yml` as Prowlarr stores it (#1675), and a `baseUrl` field with
+  a string value or none. A field's `selectOptions` reads as `{position, label}` pairs when it is
+  a list of maps, each with an integer `value` and a string `name`; any other `selectOptions`
+  reads as no options, as if Prowlarr named no label for the select. Such an indexer reads with
+  `cardigann` set to a `Cinder.Indexers.ProwlarrImport.CardigannFields`: the file name, every
+  field's value by name, and each select's options as `{position, label}` pairs. Its `fields` is
+  empty, so its values show only in that struct, which `inspect` leaves out. Any other indexer
+  reads without the `cardigann` key.
+
   `/api/v1/indexerproxy` is a list of proxies, each with an integer `id`, a string
   `implementation` and `tags` as a list of integers. `/api/v1/config/host` is a map whose
   `proxyEnabled` is a boolean; the rest of it, Prowlarr's own API key and the global proxy's
   password among it, is dropped.
   """
+
+  alias Cinder.Indexers.ProwlarrImport.CardigannFields
 
   @generic ["Newznab", "Torznab"]
   @generic_fields ["baseUrl", "apiPath", "apiKey", "additionalParameters"]
@@ -35,6 +47,7 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
   }
 
   @type indexer :: %{
+          optional(:cardigann) => CardigannFields.t(),
           id: pos_integer(),
           name: String.t(),
           implementation: String.t(),
@@ -100,28 +113,30 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
          "priority" => priority,
          "appProfileId" => app_profile_id,
          "tags" => tags,
-         "fields" => fields
+         "fields" => entries
        })
        when is_integer(id) and id > 0 and is_binary(name) and is_binary(implementation) and
               protocol in @protocols and is_boolean(enable) and is_integer(priority) and
-              is_integer(app_profile_id) and is_list(fields) do
+              is_integer(app_profile_id) and is_list(entries) do
     with true <- integers?(tags),
-         {:ok, fields} <- fields(fields),
+         {:ok, fields} <- fields(entries),
          true <- generic_fields?(implementation, fields),
+         {:ok, cardigann} <- cardigann(implementation, fields, entries),
          {:ok, not_carried} <- not_carried(fields) do
-      {:ok,
-       %{
-         id: id,
-         name: name,
-         implementation: implementation,
-         protocol: protocol,
-         enable: enable,
-         priority: priority,
-         tags: tags,
-         app_profile_id: app_profile_id,
-         fields: Map.take(fields, @generic_fields),
-         not_carried: not_carried
-       }}
+      read = %{
+        id: id,
+        name: name,
+        implementation: implementation,
+        protocol: protocol,
+        enable: enable,
+        priority: priority,
+        tags: tags,
+        app_profile_id: app_profile_id,
+        fields: Map.take(fields, @generic_fields),
+        not_carried: not_carried
+      }
+
+      {:ok, Map.merge(read, cardigann)}
     else
       _ -> :error
     end
@@ -152,6 +167,49 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
   end
 
   defp generic_fields?(_implementation, _fields), do: true
+
+  # A Cardigann indexer names its definition file and may hold a base URL; its selects carry
+  # their options. The values stay raw: the definition the import pins gives each its type. Any
+  # other indexer reads without the `cardigann` key.
+  defp cardigann("Cardigann", fields, entries) do
+    file = fields["definitionFile"]
+    url = fields["baseUrl"]
+
+    if is_binary(file) and file != "" and (is_nil(url) or is_binary(url)) do
+      cardigann = %CardigannFields{
+        file: file,
+        values: fields,
+        select_options: select_options(entries)
+      }
+
+      # Its values travel only in the struct, which `inspect` redacts.
+      {:ok, %{cardigann: cardigann, fields: %{}}}
+    else
+      :error
+    end
+  end
+
+  defp cardigann(_implementation, _fields, _entries), do: {:ok, %{}}
+
+  # Prowlarr sends `selectOptions` on its own fields too; only a select's are read.
+  defp select_options(entries) do
+    for entry <- entries,
+        {:ok, options} <- [options(Map.get(entry, "selectOptions"))],
+        into: %{},
+        do: {entry["name"], options}
+  end
+
+  defp options(list) when is_list(list) do
+    all(list, fn
+      %{"value" => value, "name" => name} when is_integer(value) and is_binary(name) ->
+        {:ok, {value, name}}
+
+      _option ->
+        :error
+    end)
+  end
+
+  defp options(_other), do: :error
 
   defp not_carried(fields) do
     Enum.reduce_while(@not_carried_fields, {:ok, []}, fn {name, note}, {:ok, notes} ->

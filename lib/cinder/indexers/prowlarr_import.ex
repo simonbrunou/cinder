@@ -1,9 +1,9 @@
 defmodule Cinder.Indexers.ProwlarrImport do
   @moduledoc """
-  Imports Prowlarr's Newznab and Torznab indexers as configured indexers (#1673, part of #1610):
-  `preview/0` reads Prowlarr's API and maps each indexer to a row, and `commit/3` creates the
-  rows the admin ticked in one audited transaction. Every row state, note, error and report line
-  is an atom or a tagged tuple; the dialog words them (#1674).
+  Imports Prowlarr's Newznab, Torznab and Cardigann indexers as configured indexers (#1673 and
+  #1675, part of #1610): `preview/0` reads Prowlarr's API and maps each indexer to a row, and
+  `commit/3` creates the rows the admin ticked in one audited transaction. Every row state,
+  note, error and report line is an atom or a tagged tuple; the dialog words them (#1674).
 
   ## Preview
 
@@ -15,7 +15,12 @@ defmodule Cinder.Indexers.ProwlarrImport do
   whose `state` the first of these rules that holds gives:
 
     1. An indexer an earlier import linked (`prowlarr_indexer_id`) is `:already_imported`.
-    2. A Cardigann indexer is `:held` until the definitions bring it in (#1675), whatever its tags.
+    2. A Cardigann indexer follows `Cinder.Indexers.ProwlarrImport.Cardigann`: `:held` while no
+       definition set is loaded or its copy has no load result yet, whatever its tags;
+       `:direct` as a Cardigann configured indexer pinned to the mirror's copy of its
+       definition file, its FlareSolverr toggle on when a FlareSolverr proxy shares a tag, or
+       `:refused` when what it would store fails the configured indexer's checks; else
+       `:via_prowlarr` as rule 4 creates it, with that module's reasons in place of rule 4's.
     3. A Newznab or Torznab indexer whose own settings fail `Cinder.Indexers.ConfiguredIndexer`'s
        checks, run on what a direct row would store, is `:refused` with each failed check, the
        name's aside. So is a Torznab indexer whose additional parameters fail the checks a
@@ -39,7 +44,9 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
   The preview keeps no secret value. Prowlarr answers a Newznab or Torznab key as `********`;
   any key value that is not blank, masked or not, reads as `key: :masked`, and the row's plan
-  holds an HMAC of that value under a random key made for this preview.
+  holds an HMAC of that value under a random key made for this preview. A direct Cardigann row's
+  plan also holds the pinned copy's blob hash, the names of its secret settings Prowlarr answers
+  in clear and masked, its notes, and an HMAC of those secrets' values.
 
   ## Commit
 
@@ -58,11 +65,21 @@ defmodule Cinder.Indexers.ProwlarrImport do
       preview), `:via_prowlarr_not_chosen` (a through-Prowlarr row ticked without
       `via_prowlarr: true`), `:via_prowlarr_not_offered` (a direct row ticked with it),
       `:name_required`, `:name_taken` (another configured indexer holds it), `:name_duplicate`
-      (two ticked rows share it), `:secret_invalid`, `:already_imported` (linked meanwhile,
+      (two ticked rows share it), `:secret_invalid` (a key row's typed key),
+      `:settings_invalid` (a Cardigann row's typed secrets), `:already_imported` (linked meanwhile,
       checked again inside the transaction), and `:name_conflict`, `:link_conflict` or
       `{field, validation}` for an insert the database or the checks refuse;
     * `{:error, :audit_refused}` when the audit row is refused, which rolls the import back;
     * `{:ok, report}`.
+
+  A direct Cardigann row takes the secret values Prowlarr answers in clear from the commit's own
+  read of Prowlarr, and a typed value only for each secret Prowlarr masks; secrets that are not a
+  map, a key that is not a masked setting's name, or a value that is not text is
+  `:settings_invalid`. A masked secret left blank creates the indexer disabled, the setting at
+  the copy's default, or empty text with none, and the report notes
+  `{:secrets_not_entered, labels}`. Its notes also carry the row's `{:took_default, label}`.
+  The create pins the copy again inside the transaction, and a copy the mirror no longer holds
+  refuses the batch with `{:definition, validation}` on that row.
 
   Names are trimmed, as the configured indexer stores them. A direct row with a masked key and a
   typed key is created with Prowlarr's enabled state and that key; left blank, it is created
@@ -81,9 +98,9 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
   alias Cinder.Acquisition.IndexerSource.Native.TestRunner
   alias Cinder.Indexers
-  alias Cinder.Indexers.{ConfiguredIndexer, ProwlarrApi, Secrets}
+  alias Cinder.Indexers.{ConfiguredIndexer, Definitions, ProwlarrApi, Secrets}
   alias Cinder.Indexers.ProwlarrApi.Connection
-  alias Cinder.Indexers.ProwlarrImport.{Answer, Preview, Row}
+  alias Cinder.Indexers.ProwlarrImport.{Answer, Cardigann, Preview, Row}
 
   @generic %{"Newznab" => :newznab, "Torznab" => :torznab}
   @through_types %{"usenet" => :newznab, "torrent" => :torznab}
@@ -145,7 +162,7 @@ defmodule Cinder.Indexers.ProwlarrImport do
          {:ok, read} <- read(connection),
          fresh = build(read, connection, preview.mac_key),
          :ok <- unchanged(preview, fresh, ticked, read, connection),
-         {:ok, entries} <- entries(preview, fresh, choices, ticked, read.names, connection),
+         {:ok, entries} <- entries(preview, fresh, choices, ticked, read, connection),
          {:ok, created} <- create(actor, entries) do
       {:ok, report(created, entries)}
     end
@@ -210,11 +227,58 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
     cond do
       indexer.id in read.linked -> planned(%{base | state: :already_imported})
-      indexer.implementation == "Cardigann" -> held(base)
+      Map.has_key?(indexer, :cardigann) -> cardigann(base, indexer, read, connection, mac_key)
       own != [] -> planned(%{base | state: :refused, reasons: own})
       via != [] -> through(base, indexer, via, connection, mac_key)
       true -> direct(base, indexer, mac_key)
     end
+  end
+
+  # The mirror decides a Cardigann row (#1675): held while no set is loaded or its copy has no
+  # load result yet, direct with its definition when it can go direct, else the through-Prowlarr
+  # offer with Cardigann's reasons. Either of the last two is refused when the configured
+  # indexer's checks refuse what it would store.
+  defp cardigann(base, indexer, read, connection, mac_key) do
+    copy = indexer.cardigann.file |> Cardigann.file_name() |> Definitions.import_copy()
+
+    case Cardigann.plan(indexer, copy, proxy_codes(indexer, read)) do
+      :held -> held(base)
+      {:via_prowlarr, reasons} -> through(base, indexer, reasons, connection, mac_key)
+      {:direct, plan} -> cardigann_direct(base, indexer, plan, mac_key)
+    end
+  end
+
+  defp proxy_codes(indexer, read) do
+    proxies =
+      for proxy <- read.proxies,
+          Enum.any?(proxy.tags, &(&1 in indexer.tags)),
+          do: Map.get(@proxy_reasons, proxy.implementation, :other_proxy)
+
+    if read.global_proxy, do: [:global_proxy | proxies], else: proxies
+  end
+
+  defp cardigann_direct(base, indexer, plan, mac_key) do
+    row = %{
+      base
+      | state: :direct,
+        type: :cardigann,
+        default_ticked: true,
+        secret_inputs: plan.masked,
+        notes: plan.notes
+    }
+
+    checked(row, plan.attrs, indexer, mac_key, %{
+      clear: plan.clear,
+      masked: Enum.map(plan.masked, & &1.field),
+      notes: plan.notes,
+      secrets_mac: mac(mac_key, secret_values(indexer, plan))
+    })
+  end
+
+  # The values of every secret field the plan names, as Prowlarr answered them.
+  defp secret_values(indexer, plan) do
+    fields = plan.clear ++ Enum.map(plan.masked, & &1.field)
+    Map.take(indexer.cardigann.values, fields)
   end
 
   # A Newznab or Torznab indexer's own settings pass the configured indexer's checks whatever
@@ -257,13 +321,6 @@ defmodule Cinder.Indexers.ProwlarrImport do
     implementation =
       if Map.has_key?(@generic, indexer.implementation), do: [], else: [:implementation]
 
-    proxies =
-      for proxy <- read.proxies,
-          Enum.any?(proxy.tags, &(&1 in indexer.tags)),
-          do: Map.get(@proxy_reasons, proxy.implementation, :other_proxy)
-
-    global = if read.global_proxy, do: [:global_proxy], else: []
-
     # A Torznab configured indexer stores no additional parameters; Prowlarr adds them itself.
     parameters =
       if indexer.implementation == "Torznab" and
@@ -271,7 +328,7 @@ defmodule Cinder.Indexers.ProwlarrImport do
          do: [:additional_parameters],
          else: []
 
-    (implementation ++ proxies ++ global ++ parameters) |> Enum.uniq() |> Enum.sort()
+    (implementation ++ proxy_codes(indexer, read) ++ parameters) |> Enum.uniq() |> Enum.sort()
   end
 
   defp through(base, indexer, via, connection, mac_key) do
@@ -349,18 +406,22 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
   # The configured indexer's checks, run with Prowlarr's name, which the admin replaces at
   # commit: a name error is the commit's. A refused row keeps only the failed checks.
-  defp checked(row, attrs, indexer, mac_key) do
+  defp checked(row, attrs, indexer, mac_key, extra \\ nil) do
     refusals =
       attrs |> Map.put("name", row.name) |> ConfiguredIndexer.create_changeset() |> refusals()
 
     if refusals == [] do
-      plan = %{
-        state: row.state,
-        reasons: row.reasons,
-        key: row.key,
-        attrs: attrs,
-        secrets_mac: mac(mac_key, Map.get(indexer.fields, "apiKey"))
-      }
+      plan =
+        Map.merge(
+          %{
+            state: row.state,
+            reasons: row.reasons,
+            key: row.key,
+            attrs: attrs,
+            secrets_mac: mac(mac_key, Map.get(indexer.fields, "apiKey"))
+          },
+          extra || %{}
+        )
 
       %{row | plan: plan, tickable: true}
     else
@@ -370,7 +431,9 @@ defmodule Cinder.Indexers.ProwlarrImport do
           reasons: refusals |> Enum.uniq() |> Enum.sort(),
           type: nil,
           key: nil,
-          default_ticked: false
+          default_ticked: false,
+          secret_inputs: [],
+          notes: []
       })
     end
   end
@@ -391,7 +454,7 @@ defmodule Cinder.Indexers.ProwlarrImport do
   end
 
   # A ticked id the preview did not show is not importable, even once Prowlarr lists it.
-  defp entries(preview, fresh, choices, ticked, names, connection) do
+  defp entries(preview, fresh, choices, ticked, read, connection) do
     shown = MapSet.new(preview.rows, & &1.prowlarr_id)
     rows = for row <- fresh.rows, row.prowlarr_id in shown, into: %{}, do: {row.prowlarr_id, row}
     order = Map.new(Enum.with_index(fresh.rows), fn {row, index} -> {row.prowlarr_id, index} end)
@@ -400,7 +463,7 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
     results =
       for id <- ticked do
-        {id, entry(rows[id], choices[id], names, chosen_names, connection)}
+        {id, entry(rows[id], choices[id], read, chosen_names, connection)}
       end
 
     case for({id, {:error, codes}} <- results, into: %{}, do: {id, codes}) do
@@ -412,14 +475,16 @@ defmodule Cinder.Indexers.ProwlarrImport do
   defp name(%{name: name}) when is_binary(name), do: String.trim(name)
   defp name(_choice), do: ""
 
-  defp entry(%Row{tickable: true} = row, choice, names, chosen_names, connection) do
+  defp entry(%Row{tickable: true} = row, choice, read, chosen_names, connection) do
     name = name(choice)
 
     codes =
       mode_errors(row, choice) ++
-        name_errors(name, names, chosen_names) ++ secret_errors(row, choice)
+        name_errors(name, read.names, chosen_names) ++ secret_errors(row, choice)
 
-    if codes == [], do: {:ok, build_entry(row, choice, name, connection)}, else: {:error, codes}
+    if codes == [],
+      do: {:ok, build_entry(row, choice, name, {read, connection})},
+      else: {:error, codes}
   end
 
   defp entry(_row, _choice, _names, _chosen_names, _connection), do: {:error, [:not_importable]}
@@ -436,7 +501,15 @@ defmodule Cinder.Indexers.ProwlarrImport do
       if Map.get(chosen, name, 0) > 1, do: [:name_duplicate], else: []
   end
 
-  # A through-Prowlarr row takes the stored Prowlarr key, so its typed secrets are not read.
+  # A through-Prowlarr row takes the stored Prowlarr key, so its typed secrets are not read. A
+  # Cardigann row reads only the secrets Prowlarr masks.
+  defp secret_errors(%Row{state: :direct, type: :cardigann} = row, choice) do
+    case typed_secrets(row, choice) do
+      {:ok, _values} -> []
+      {:error, :invalid} -> [:settings_invalid]
+    end
+  end
+
   defp secret_errors(%Row{state: :direct}, choice) do
     case typed_key(choice) do
       {:error, :invalid} -> [:secret_invalid]
@@ -458,7 +531,23 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
   defp merged_key(_secrets), do: {:error, :invalid}
 
-  defp build_entry(%Row{state: :via_prowlarr} = row, _choice, name, connection) do
+  defp typed_secrets(row, choice),
+    do: choice |> Map.get(:secrets, %{}) |> merged_secrets(row.plan.masked)
+
+  # Each key a masked setting and each value text; a blank value is no value.
+  defp merged_secrets(secrets, fields) when is_map(secrets) do
+    if Enum.all?(secrets, fn {field, value} -> field in fields and text?(value) end),
+      do:
+        {:ok,
+         for({field, value} <- secrets, String.trim(value) != "", into: %{}, do: {field, value})},
+      else: {:error, :invalid}
+  end
+
+  defp merged_secrets(_secrets, _fields), do: {:error, :invalid}
+
+  defp text?(value), do: is_binary(value) and String.valid?(value)
+
+  defp build_entry(%Row{state: :via_prowlarr} = row, _choice, name, {_read, connection}) do
     %{
       prowlarr_id: row.prowlarr_id,
       attrs: Map.put(row.plan.attrs, "name", name),
@@ -467,7 +556,29 @@ defmodule Cinder.Indexers.ProwlarrImport do
     }
   end
 
-  defp build_entry(%Row{state: :direct} = row, choice, name, _connection) do
+  # The clear secrets come from the commit's own read of Prowlarr, whose plan matched the
+  # preview's; a masked one left blank creates the indexer disabled.
+  defp build_entry(%Row{state: :direct, type: :cardigann} = row, choice, name, {read, _conn}) do
+    {:ok, typed} = typed_secrets(row, choice)
+    values = Enum.find(read.indexers, &(&1.id == row.prowlarr_id)).cardigann.values
+    secrets = Map.merge(Map.take(values, row.plan.clear), typed)
+
+    missing =
+      for %{field: field, label: label} <- row.secret_inputs,
+          field not in Map.keys(typed),
+          do: label
+
+    attrs = Map.put(row.plan.attrs, "name", name)
+
+    {attrs, disabled} =
+      if missing == [],
+        do: {attrs, []},
+        else: {Map.put(attrs, "enabled", false), [{:secrets_not_entered, missing}]}
+
+    %{prowlarr_id: row.prowlarr_id, attrs: attrs, secrets: secrets, notes: disabled ++ row.notes}
+  end
+
+  defp build_entry(%Row{state: :direct} = row, choice, name, _read_connection) do
     attrs = Map.put(row.plan.attrs, "name", name)
 
     case {row.key, typed_key(choice)} do

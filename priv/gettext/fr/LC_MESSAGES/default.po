@@ -8305,6 +8305,7 @@ msgid "Not found in Prowlarr"
 msgstr "Introuvable dans Prowlarr"
 
 #: lib/cinder_web/indexer_state_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Not supported: %{feature}"
 msgstr "Non pris en charge : %{feature}"
@@ -9002,3 +9003,38 @@ msgstr "réglages de partage"
 #, elixir-autogen, elixir-format
 msgid "Cinder is testing %{names}."
 msgstr "Cinder teste %{names}."
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: %{settings} not entered: created disabled"
+msgstr "%{name} : %{settings} à saisir : créé désactivé"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{setting} has no default value"
+msgstr "%{setting} n'a pas de valeur par défaut"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{setting} took its default value"
+msgstr "%{setting} a pris sa valeur par défaut"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Base URL is not one of the definition's links"
+msgstr "L'URL de base ne fait pas partie des liens de la définition"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Definition not available: add it through Prowlarr"
+msgstr "Définition indisponible : ajoutez-le via Prowlarr"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Needs a newer Cinder"
+msgstr "Nécessite une version plus récente de Cinder"
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter each setting as plain text."
+msgstr "Saisissez chaque paramètre en texte brut."

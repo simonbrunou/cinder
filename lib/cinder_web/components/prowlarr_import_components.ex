@@ -9,7 +9,9 @@ defmodule CinderWeb.ProwlarrImportComponents do
   direct row's "Import", a through-Prowlarr row's unticked "Add it through Prowlarr"), its
   name, and, for a direct row whose key Prowlarr masks, its API key input
   `secrets[<Prowlarr id>][api_key]` with `phx-update="ignore"` and an id new with each preview
-  (`CinderWeb.ProwlarrImportDialog.secret_id/2`). A greyed row (held, already imported or
+  (`CinderWeb.ProwlarrImportDialog.secret_id/2`). A direct Cardigann row has one such input per
+  secret setting Prowlarr masks, `secrets[<Prowlarr id>][<setting>]` labelled by the definition,
+  and lists each select that took its default; the report lists those again under the indexer. A greyed row (held, already imported or
   refused) has no input. Each box posts the hidden `false` that `CinderWeb.CoreComponents.input/1`
   puts before it, so an unticked box still says so.
   """
@@ -45,6 +47,9 @@ defmodule CinderWeb.ProwlarrImportComponents do
       <ul id="import-report" class="list-disc space-y-1 pl-5 text-sm">
         <li :for={row <- @dialog.report.created} id={"import-report-#{row.prowlarr_id}"}>
           {ProwlarrImportText.created(row)}
+          <ul :if={ProwlarrImportText.notes(row) != []} class="list-disc pl-5">
+            <li :for={note <- ProwlarrImportText.notes(row)}>{note}</li>
+          </ul>
         </li>
         <li :for={name <- @dialog.skipped} class="import-report-skipped">
           {ProwlarrImportText.skipped(name)}
@@ -131,6 +136,7 @@ defmodule CinderWeb.ProwlarrImportComponents do
       assign(assigns,
         id: id,
         reasons: ProwlarrImportText.reasons(row),
+        notes: ProwlarrImportText.notes(row),
         not_carried: ProwlarrImportText.not_carried(row),
         via?: ProwlarrImportDialog.via_input?(row),
         key?: ProwlarrImportDialog.key_input?(row),
@@ -151,6 +157,9 @@ defmodule CinderWeb.ProwlarrImportComponents do
       <p id={"import-row-#{@id}-becomes"} class="text-sm">{ProwlarrImportText.becomes(@row)}</p>
       <ul :if={@reasons != []} id={"import-row-#{@id}-reasons"} class="list-disc pl-5 text-sm">
         <li :for={reason <- @reasons}>{reason}</li>
+      </ul>
+      <ul :if={@notes != []} id={"import-row-#{@id}-defaults"} class="list-disc pl-5 text-sm">
+        <li :for={note <- @notes}>{note}</li>
       </ul>
       <p :if={@not_carried} id={"import-row-#{@id}-notes"} class="text-xs text-base-content/70">
         {@not_carried}
@@ -189,6 +198,17 @@ defmodule CinderWeb.ProwlarrImportComponents do
           name={"secrets[#{@id}][api_key]"}
           value={nil}
           label={gettext("API key")}
+          placeholder={gettext("Leave blank to create it disabled")}
+          autocomplete="off"
+          phx-update="ignore"
+        />
+        <.input
+          :for={{input, index} <- Enum.with_index(@row.secret_inputs)}
+          type="password"
+          id={ProwlarrImportDialog.cardigann_secret_id(@dialog, @id, index)}
+          name={"secrets[#{@id}][#{input.field}]"}
+          value={nil}
+          label={input.label}
           placeholder={gettext("Leave blank to create it disabled")}
           autocomplete="off"
           phx-update="ignore"
