@@ -1,4 +1,4 @@
-# Runs one movie search through `Cinder.Acquisition.IndexerSource.Native` over real HTTP, against
+# Runs movie searches through `Cinder.Acquisition.IndexerSource.Native` over real HTTP, against
 # a Newznab and Torznab listener this script serves on 127.0.0.1, for a native-indexer PR's test
 # path. Run it from the repo root, with MIX_ENV=dev (any other env stops it before it writes):
 #
@@ -6,14 +6,16 @@
 #
 # It migrates the dev database, starts the app (with no web server while `PHX_SERVER` is unset)
 # with the log level at `:warning`, and serves the listener on port 4199 (`DEV_NATIVE_PORT` sets
-# another). It then deletes any configured indexer named "Dev NZB", "Dev Torznab" or "Dev
-# limited", which drops its stored caps row with it and writes a `delete_configured_indexer` row
-# to `admin_audit`, and creates the three again on the listener:
+# another). It then deletes any configured indexer named as below, which drops its stored caps
+# and backoff rows with it and writes a `delete_configured_indexer` row to `admin_audit`, and
+# creates them again on the listener:
 #
 # - "Dev NZB" (Newznab): one NZB item for `t=movie&imdbid=0000001`, whose link `/nzb/get/1.nzb`
 #   answers a one-file NZB;
 # - "Dev Torznab" (Torznab): one magnet item for `t=movie&imdbid=0000001`;
-# - "Dev limited" (Newznab): 429 with `Retry-After: 3600` to every request.
+# - "Dev limited" (Newznab): 429 with `Retry-After: 3600` to every request;
+# - "Dev rejected" (Newznab): `<error code="100">`, rejected credentials, to every request;
+# - "Dev flaky" (Newznab): 502 to the run's first request to it, then Dev NZB's answers.
 #
 # A `t=caps` request to Dev NZB or Dev Torznab gets caps with `search`, `movie-search` and
 # `tv-search`, and any other request to them an empty feed. Native also searches every other
@@ -24,8 +26,14 @@
 # - `ROWS`: `Native.search("tt1")`'s rows, each with its title, indexer name, protocol,
 #   indexer source, link and link origin, or the error it answered;
 # - `REPORT`: that search's report, one outcome per indexer;
+# - `STATUS`: each dev indexer's backoff state after it (`IndexerStatus.read/1`);
+# - `REPORT2`: a second `Native.search("tt1")`'s report, where an indexer in backoff reads
+#   skipped and one with rejected credentials failed, with no request sent to either;
 # - `BEST_RELEASE`: `Cinder.Acquisition.best_release/3`'s pick through Native;
-# - `REQUESTS`: each request the listener received, in order, with the status it answered.
+# - `REQUESTS`: each request the listener received, in the order it answered them, with the
+#   milliseconds from the script starting the listener to the request's arrival and the status it
+#   answered, and a `--` line where REPORT2's and BEST_RELEASE's searches start. Dev flaky's 502
+#   and the retry 2 s later show here.
 #
 # Edit `DevNativeSearch.Listener.answer/3` for another answer: an `<error>` code, another status,
 # caps without `movie-search`, or a download link that redirects or answers 429. A grab through
@@ -55,10 +63,11 @@ defmodule DevNativeSearch.Listener do
   def call(conn, _opts) do
     conn = fetch_query_params(conn)
     line = conn.request_path <> "?" <> conn.query_string
+    at = System.monotonic_time(:millisecond) - :persistent_term.get(:dev_native_search_t0)
 
     conn
     |> register_before_send(fn conn ->
-      Agent.update(DevNativeSearch.Log, &["#{conn.status} #{conn.method} #{line}" | &1])
+      Agent.update(DevNativeSearch.Log, &["+#{at}ms #{conn.status} #{conn.method} #{line}" | &1])
       conn
     end)
     |> answer(conn.path_info, conn.query_params)
@@ -66,6 +75,17 @@ defmodule DevNativeSearch.Listener do
 
   defp answer(conn, ["limited" | _], _query) do
     conn |> put_resp_header("retry-after", "3600") |> send_resp(429, "")
+  end
+
+  defp answer(conn, ["rejected" | _], _query) do
+    xml(conn, ~s(<?xml version="1.0" encoding="UTF-8"?><error code="100" description="Bad key"/>))
+  end
+
+  # Dev flaky's first request of the run gets a 502; its later ones answer as Dev NZB's do.
+  defp answer(conn, ["flaky" | rest], query) do
+    if Agent.get_and_update(DevNativeSearch.Flaky, &{&1, false}),
+      do: send_resp(conn, 502, ""),
+      else: answer(conn, ["nzb" | rest], query)
   end
 
   defp answer(conn, ["nzb", "get" | _], _query) do
@@ -116,6 +136,8 @@ Logger.configure(level: :warning)
 {:ok, _, _} = Ecto.Migrator.with_repo(Cinder.Repo, &Ecto.Migrator.run(&1, :up, all: true))
 {:ok, _} = Application.ensure_all_started(:cinder)
 {:ok, _} = Agent.start_link(fn -> [] end, name: DevNativeSearch.Log)
+{:ok, _} = Agent.start_link(fn -> true end, name: DevNativeSearch.Flaky)
+:persistent_term.put(:dev_native_search_t0, System.monotonic_time(:millisecond))
 
 {:ok, _} =
   Bandit.start_link(
@@ -127,12 +149,15 @@ Logger.configure(level: :warning)
 
 alias Cinder.Acquisition
 alias Cinder.Acquisition.IndexerSource.Native
+alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
 alias Cinder.Indexers
 
 dev_indexers = [
   {"Dev NZB", :newznab, "/nzb/api"},
   {"Dev Torznab", :torznab, "/tor/api"},
-  {"Dev limited", :newznab, "/limited/api"}
+  {"Dev limited", :newznab, "/limited/api"},
+  {"Dev rejected", :newznab, "/rejected/api"},
+  {"Dev flaky", :newznab, "/flaky/api"}
 ]
 
 names = MapSet.new(dev_indexers, &elem(&1, 0))
@@ -157,6 +182,37 @@ case Native.search("tt1") do
   other ->
     IO.inspect(other, label: "ROWS", limit: :infinity)
 end
+
+dev_rows = Enum.filter(Indexers.list(), &(&1.name in names))
+
+status_fields = [
+  :backoff,
+  :backoff_until,
+  :level,
+  :failures_in_row,
+  :last_failure,
+  :last_failure_code,
+  :last_failure_at,
+  :credentials_rejected,
+  :credentials_rejected_by,
+  :credentials_rejected_code,
+  :last_success_at
+]
+
+statuses = IndexerStatus.read(dev_rows)
+
+for indexer <- dev_rows do
+  IO.inspect({indexer.name, Map.take(statuses[indexer.id], status_fields)}, label: "STATUS")
+end
+
+Agent.update(DevNativeSearch.Log, &["-- REPORT2 search" | &1])
+
+case Native.search("tt1") do
+  {:ok, _rows, report} -> IO.inspect(report, label: "REPORT2", limit: :infinity)
+  other -> IO.inspect(other, label: "REPORT2", limit: :infinity)
+end
+
+Agent.update(DevNativeSearch.Log, &["-- BEST_RELEASE search" | &1])
 
 pick =
   case Acquisition.best_release("tt1", context, indexer_source: Native) do
