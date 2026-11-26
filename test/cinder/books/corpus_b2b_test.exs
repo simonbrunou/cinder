@@ -76,7 +76,10 @@ defmodule Cinder.Books.CorpusB2bTest do
   test "no candidate is ever selected without contributor evidence in the query", ctx do
     checked =
       for {id, query, candidates} <- ctx.open_library,
-          {:ok, selected, evidence} <- [Identity.select(candidates, query)] do
+          result <- [Identity.select(candidates, query)],
+          match?({:ok, _selected, _evidence}, result) do
+        {:ok, selected, evidence} = result
+
         assert evidence.contributors_matched != [],
                "#{id} selected #{selected.title} with no contributor evidence"
 
@@ -88,8 +91,8 @@ defmodule Cinder.Books.CorpusB2bTest do
         id
       end
 
-    # The generator above skips unresolved cases, so state the sample size: without this the test
-    # would pass just as happily if the matcher resolved nothing at all.
+    # The match?/2 filter above skips unresolved cases, so state the sample size: without this the
+    # test would pass just as happily if the matcher resolved nothing at all.
     assert length(checked) == 32
   end
 
