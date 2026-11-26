@@ -523,6 +523,9 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
   @names_passkey "{{ if .Config.passkey }}{{ .Result.magnet_page }}" <>
                    "{{ else }}{{ .Result.magnet_page }}{{ end }}"
   @names_passkey_blank "{{ if .Config.passkey }}{{ else }}{{ end }}"
+  # The same templates reading `.Keywords`, for the control cases.
+  @names_keywords String.replace(@names_passkey, ".Config.passkey", ".Keywords")
+  @names_keywords_blank String.replace(@names_passkey_blank, ".Config.passkey", ".Keywords")
 
   defp with_passkey(definition),
     do: definition |> with_passkey_setting() |> with_input("k", "{{ .Config.passkey }}")
@@ -728,23 +731,27 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
                "text" => "{{ .Result.magnet_page }}",
                "filters" => [%{"name" => "append", "args" => @names_passkey_blank}]
              }, false},
-            # The controls: each such field that reads no secret keeps its magnet.
-            {"a magnet that names no secret", "magnet", "{{ .Result.magnet_page }}", true},
+            # The controls. A tracker that holds no secret keeps its magnet, and so does each
+            # `if` case above with `.Keywords` in place of the secret, so a template the engine
+            # refuses turns them red too.
+            {"a magnet with a tracker that holds no secret", "magnet",
+             "{{ .Result.magnet_page }}#{tracker}x", true},
+            {"a magnet that names no secret", "magnet", @names_keywords, true},
             {"a magnet whose default names no secret", "magnet",
              %{
                "selector" => "td.none",
                "optional" => "true",
-               "default" => "{{ .Result.magnet_page }}"
+               "default" => @names_keywords
              }, true},
             {"a magnet whose case value names no secret", "magnet",
              %{
                "selector" => "td:nth-child(3)",
-               "case" => obj([{~S|a[href^="magnet:?"]|, "{{ .Result.magnet_page }}"}])
+               "case" => obj([{~S|a[href^="magnet:?"]|, @names_keywords}])
              }, true},
             {"a magnet whose filter argument names no secret", "magnet",
              %{
                "text" => "{{ .Result.magnet_page }}",
-               "filters" => [%{"name" => "append", "args" => ""}]
+               "filters" => [%{"name" => "append", "args" => @names_keywords_blank}]
              }, true},
             # A host the keywords fill: a host the definition's text names is a credential host.
             {"a download link on another host", "download",

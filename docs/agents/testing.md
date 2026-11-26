@@ -276,6 +276,13 @@
   grab whose configured indexer was deleted during the fetch, and the foreign key would refuse
   the insert anyway. The mutant that skipped the drop survived until the test also refuted the
   `not recorded` warning that the refused insert logs.
+- A table of negative cases gives each case a control case that keeps everything but the input
+  the guard reads, so no case passes on another failure. On #1671 (PR #1836) four cases put
+  `{{ if .Config.passkey }}…{{ end }}` in a magnet field. `Template` refuses an `if` with no
+  `else`, so each row was dropped on that error, not by the secret-link guard. Three of their
+  mutants survived, and with the guard switched off each case still showed no row. The fix gave
+  each case a control with `.Keywords` in place of the secret (`@names_keywords` and
+  `@names_keywords_blank`), which a template the engine refuses turns red.
 - A limit the change adds (a lifetime, a rate-limit window, a cap) gets a test that pins the
   value the app runs with, without waiting it out: `PasskeyChallengesTest` "an entry lives 3
   minutes by default" asserts the stored expiry, and `IpRateLimiterTest` "the :passkey_options
