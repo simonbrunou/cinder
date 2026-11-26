@@ -9,8 +9,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   `add/2` fetches the release's NZB itself, through the `fetch:` function in its options, as the
   torrent clients and NZBGet do: `Cinder.Download` builds it to call the `fetch_download/3` of the
-  indexer source the grab recorded, and the Prowlarr source's is the bounded,
-  redirect-revalidated `Cinder.Download.Client.Fetch.bytes/3`. It hands
+  indexer source the grab recorded. The Prowlarr source's is the bounded,
+  redirect-revalidated `Cinder.Download.Client.Fetch.bytes/3`, and Native's Newznab and Torznab
+  fetch goes through the same `Fetch` (`Cinder.Acquisition.Indexer.Newznab.Grab`). It hands
   SABnzbd the bytes via `mode=addfile`, rather than `mode=addurl` (which would have
   SABnzbd resolve DNS and follow redirects for that URL itself, outside
   `HTTPPolicy`'s SSRF checks entirely). The returned `nzo_id` is the `download_id`

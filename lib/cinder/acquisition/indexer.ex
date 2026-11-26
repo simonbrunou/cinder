@@ -28,6 +28,10 @@ defmodule Cinder.Acquisition.Indexer do
   Every search request and caps fetch runs inside `leased/4`, which holds the indexer's slot of
   `Cinder.Acquisition.IndexerSource.Native.Lease` while the adapter sends the request and records
   its answer.
+
+  A grab's link fetch (`fetch_download/3`) is no adapter request: it goes through
+  `Cinder.Download.Client.Fetch` under the download client's options, with neither `request/3`'s
+  budget and retry nor the slot (#1659, #1619 point 8).
   """
 
   alias Cinder.Acquisition.IndexerSource.Native
@@ -82,6 +86,17 @@ defmodule Cinder.Acquisition.Indexer do
               context(),
               record :: (IndexerStatus.answer() -> term())
             ) :: {:ran, term()} | {:not_run, Report.outcome()}
+
+  @doc """
+  Fetches a grab's download link `url` from one configured indexer, read by id at grab time, for
+  the download client whose fetch options are `opts` (#1659). Answers as
+  `Cinder.Download.Client.Fetch.bytes/3` does. An adapter without it reads "not supported" for
+  a grab (`Cinder.Acquisition.IndexerSource.Native.fetch_download/3`).
+  """
+  @callback fetch_download(ConfiguredIndexer.t(), url :: String.t(), opts :: keyword()) ::
+              {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
+
+  @optional_callbacks fetch_download: 3
 
   # Newznab and Torznab give each request 30 s of its own.
   @request_timeout_ms 30_000

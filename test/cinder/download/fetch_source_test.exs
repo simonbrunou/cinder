@@ -122,7 +122,8 @@ defmodule Cinder.Download.FetchSourceTest do
     end
 
     # A native intent fetches only through a configured indexer at its credentials version
-    # (#1656), and with Native selected its failed fetch is not a source switch in flight.
+    # (#1656), and Native fetches its link through the indexer the intent recorded (#1659): a
+    # link on that indexer's base URL origin is a trusted request, with no DNS lookup.
     test "gets a fetch: function that reaches Native's fetch_download/3 for a native intent" do
       test_pid = self()
       movie = movie_fixture(%{status: :searching})
@@ -131,20 +132,27 @@ defmodule Cinder.Download.FetchSourceTest do
       {:ok, row} =
         Indexers.create(
           nil,
-          %{name: "Native", type: :newznab, base_url: "https://n.example", api_path: "/api"},
+          %{name: "Native", type: :torznab, base_url: @origin, api_path: "/api"},
           %{"api_key" => "nzb-key-0123456789"}
         )
 
       assert {:ok, intent} = reserve(movie, "native", row.id, row.credentials_version)
       assert intent.release["indexer_source"] == "native"
+      torrent = TorrentFixture.minimal()
+
+      Req.Test.stub(Cinder.FetchSourceStub, fn conn ->
+        send(test_pid, {:fetched, conn.host, conn.request_path})
+        Plug.Conn.send_resp(conn, 200, torrent)
+      end)
 
       stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
       stub(ClientMock, :add, fn release, opts ->
         answer =
           Keyword.fetch!(opts, :fetch).(release.download_url, release.download_url_origin,
-            max_bytes: 64,
+            max_bytes: 1024,
             error_tag: :torrent_fetch_status,
+            plug: {Req.Test, Cinder.FetchSourceStub},
             resolver: fn host ->
               send(test_pid, {:dns, host})
               {:ok, [{93, 184, 216, 34}]}
@@ -152,13 +160,15 @@ defmodule Cinder.Download.FetchSourceTest do
           )
 
         send(test_pid, {:added, answer})
-        answer
+        {:ok, "remote-1"}
       end)
 
-      Download.reconcile_pending_intents([:movie])
+      assert :ok = Download.reconcile_pending_intents([:movie])
 
-      assert_received {:added, {:error, :not_supported}}
+      assert_received {:added, {:ok, ^torrent}}
+      assert_received {:fetched, "indexer.example", "/dl/1.torrent"}
       refute_received {:dns, _host}
+      assert Repo.reload!(movie).download_id == "remote-1"
     end
 
     test "is never called for an intent that records an unknown source, which retries" do

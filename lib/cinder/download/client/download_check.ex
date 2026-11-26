@@ -2,7 +2,8 @@ defmodule Cinder.Download.Client.DownloadCheck do
   @moduledoc """
   Checks a download link's answer (`Cinder.Download.Client.Fetch.answer/3`) before any download
   client sees it (#1658). `Fetch.bytes/3`, the Prowlarr source's `fetch_download/3`, runs it on
-  every fetch. A client receives `{:ok, bytes}` of a recognised file, `{:magnet, link}` or
+  every fetch, and Native's Newznab and Torznab fetch (`Cinder.Acquisition.Indexer.Newznab.Grab`)
+  runs `check_classified/2`, the same check with the parser's class beside it. A client receives `{:ok, bytes}` of a recognised file, `{:magnet, link}` or
   `{:error, reason}`, and no reason carries a URL, a header or a body. A magnet and a fetch error
   pass through unchanged.
 
@@ -87,17 +88,40 @@ defmodule Cinder.Download.Client.DownloadCheck do
   @doc "Checks `result`, an answer of `Fetch.answer/3`, for a client; see the moduledoc."
   @spec check({:ok, Fetch.answer()} | {:magnet, String.t()} | {:error, term()}, keyword()) ::
           {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
-  def check({:ok, answer}, opts) do
-    with {:ok, body} <- inflate(answer.body, Keyword.fetch!(opts, :max_bytes)) do
-      answer = %{answer | body: body}
+  def check(result, opts), do: result |> check_classified(opts) |> elem(0)
 
-      if answer.status == 200 and file?(body),
-        do: {:ok, body},
-        else: {:error, sort(answer, Keyword.fetch!(opts, :error_tag), DateTime.utc_now())}
+  @doc """
+  `check/2`'s answer, beside the class `NewznabAnswer.classify/4` gave the answer the check
+  sorted, its stated wait included, or nil when the check read none: a magnet, a fetch error, a
+  body that inflates past `max_bytes`, a recognised file, a login sign, or an answer the parser
+  reads as an RSS document. The class is the parser's own, whatever host sent the answer.
+  `Cinder.Acquisition.Indexer.Newznab` reads a disabled-till wait from it for Native's backoff
+  state (#1659).
+  """
+  @spec check_classified(
+          {:ok, Fetch.answer()} | {:magnet, String.t()} | {:error, term()},
+          keyword()
+        ) ::
+          {{:ok, binary()} | {:magnet, String.t()} | {:error, term()},
+           NewznabAnswer.class() | nil}
+  def check_classified({:ok, answer}, opts) do
+    case inflate(answer.body, Keyword.fetch!(opts, :max_bytes)) do
+      {:ok, body} ->
+        answer = %{answer | body: body}
+
+        if answer.status == 200 and file?(body) do
+          {{:ok, body}, nil}
+        else
+          {reason, class} = sort(answer, Keyword.fetch!(opts, :error_tag), DateTime.utc_now())
+          {{:error, reason}, class}
+        end
+
+      too_large ->
+        {too_large, nil}
     end
   end
 
-  def check(magnet_or_error, _opts), do: magnet_or_error
+  def check_classified(magnet_or_error, _opts), do: {magnet_or_error, nil}
 
   # --- gzip ---
 
@@ -247,11 +271,18 @@ defmodule Cinder.Download.Client.DownloadCheck do
 
   # --- every other answer ---
 
+  # The reason, and the class the parser gave the answer (nil for a login sign or an RSS read).
   defp sort(answer, tag, now) do
-    if login?(answer),
-      do: :indexer_auth_failed,
-      else: answer |> classify(now) |> outcome(answer, tag, now)
+    if login?(answer) do
+      {:indexer_auth_failed, nil}
+    else
+      classified = classify(answer, now)
+      {outcome(classified, answer, tag, now), class_of(classified)}
+    end
   end
+
+  defp class_of({:error, class}), do: class
+  defp class_of({:ok, _items}), do: nil
 
   defp login?(%{trusted: true, login_redirect: true}), do: true
 

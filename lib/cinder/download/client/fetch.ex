@@ -19,7 +19,8 @@ defmodule Cinder.Download.Client.Fetch do
   `:fetch_failed`.
 
   `bytes/3` is `answer/3` followed by `Cinder.Download.Client.DownloadCheck.check/2`, which hands
-  a client only a recognised file (#1658).
+  a client only a recognised file (#1658). `attributed/3` is `answer/3`'s answer beside which host
+  gave it (#1659).
   """
 
   alias Cinder.Download.Client.DownloadCheck
@@ -47,10 +48,22 @@ defmodule Cinder.Download.Client.Fetch do
   @doc "The link's answer, before any check of its body; see the moduledoc."
   @spec answer(String.t(), String.t() | nil, keyword()) ::
           {:ok, answer()} | {:magnet, String.t()} | {:error, term()}
-  def answer(url, source_origin, opts) when is_binary(url) do
+  def answer(url, source_origin, opts) when is_binary(url),
+    do: url |> attributed(source_origin, opts) |> elem(0)
+
+  @doc """
+  `answer/3`'s answer beside `from_source`: true when the hop that gave it, and every hop before
+  it, was on the source origin. That hop is the one whose response is the answer, whose redirect
+  was refused or turned into a magnet, or whose request failed. So a refused redirect, such as an
+  `:https_downgrade`, is the source's only when the source itself sent it. A link refused before
+  any request is false. For `{:ok, answer}`, `from_source` equals `answer.trusted`.
+  """
+  @spec attributed(String.t(), String.t() | nil, keyword()) ::
+          {{:ok, answer()} | {:magnet, String.t()} | {:error, term()}, from_source :: boolean()}
+  def attributed(url, source_origin, opts) when is_binary(url) do
     case fetch(url, source_origin, Keyword.put_new(opts, :redirects, @max_redirects)) do
-      {:error, reason} -> {:error, closed_reason(reason)}
-      answer -> answer
+      {{:error, reason}, from_source} -> {{:error, closed_reason(reason)}, from_source}
+      attributed -> attributed
     end
   end
 
@@ -92,14 +105,19 @@ defmodule Cinder.Download.Client.Fetch do
     end
   end
 
+  # Each step below answers `{answer, from_source}`, as `attributed/3` does.
   defp fetch(url, source_origin, opts) do
-    with {:ok, target} <- download_url_target(url, source_origin, Keyword.get(opts, :resolver)) do
-      trust =
-        if HTTPPolicy.same_origin?(target.uri, source_origin),
-          do: {:source, source_origin},
-          else: :untrusted
+    case download_url_target(url, source_origin, Keyword.get(opts, :resolver)) do
+      {:ok, target} ->
+        trust =
+          if HTTPPolicy.same_origin?(target.uri, source_origin),
+            do: {:source, source_origin},
+            else: :untrusted
 
-      request(target, trust, opts)
+        request(target, trust, opts)
+
+      {:error, _reason} = error ->
+        {error, false}
     end
   end
 
@@ -126,12 +144,14 @@ defmodule Cinder.Download.Client.Fetch do
         redirect(response, target.uri, trust, opts)
 
       {:ok, response} ->
-        {:ok, answer_of(response, target.uri, trust)}
+        {{:ok, answer_of(response, target.uri, trust)}, from_source?(trust)}
 
       {:error, reason} ->
-        {:error, reason}
+        {{:error, reason}, from_source?(trust)}
     end
   end
+
+  defp from_source?(trust), do: match?({:source, _origin}, trust)
 
   # `HTTPPolicy.bounded_request/2` decodes a body labelled JSON, and answers a body that does not
   # decode as `{:error, :invalid_json}` with no status. The label moves aside before it looks, so
@@ -160,7 +180,7 @@ defmodule Cinder.Download.Client.Fetch do
         ),
       body: response.body,
       url: uri,
-      trusted: match?({:source, _origin}, trust),
+      trusted: from_source?(trust),
       login_redirect: false
     }
   end
@@ -173,30 +193,30 @@ defmodule Cinder.Download.Client.Fetch do
             follow_redirect(response, current, location, trust, opts)
 
           Keyword.get(opts, :allow_magnet, false) ->
-            {:magnet, location}
+            {{:magnet, location}, from_source?(trust)}
 
           true ->
-            {:error, :unsupported_download_url}
+            {{:error, :unsupported_download_url}, from_source?(trust)}
         end
 
       [] ->
-        {:error, {Keyword.fetch!(opts, :error_tag), response.status}}
+        {{:error, {Keyword.fetch!(opts, :error_tag), response.status}}, from_source?(trust)}
     end
   end
 
   defp follow_redirect(response, current, location, trust, opts) do
     if opts[:redirects] == 0 do
-      {:error, :too_many_redirects}
+      {{:error, :too_many_redirects}, from_source?(trust)}
     else
       case resolve_redirect(current, location, trust, opts) do
         {:ok, next, next_trust} ->
           hop(response, next, next_trust, opts)
 
         {:error, :unsupported_scheme} ->
-          {:error, :unsupported_download_url}
+          {{:error, :unsupported_download_url}, from_source?(trust)}
 
         {:error, reason} ->
-          {:error, reason}
+          {{:error, reason}, from_source?(trust)}
       end
     end
   end
@@ -204,8 +224,8 @@ defmodule Cinder.Download.Client.Fetch do
   # A redirect on the source origin to a login path is not followed: its own answer, with the
   # target as its URL, is the login sign the check reads.
   defp hop(response, next, trust, opts) do
-    if match?({:source, _origin}, trust) and login_path?(next.uri),
-      do: {:ok, %{answer_of(response, next.uri, trust) | login_redirect: true}},
+    if from_source?(trust) and login_path?(next.uri),
+      do: {{:ok, %{answer_of(response, next.uri, trust) | login_redirect: true}}, true},
       else: request(next, trust, Keyword.update!(opts, :redirects, &(&1 - 1)))
   end
 

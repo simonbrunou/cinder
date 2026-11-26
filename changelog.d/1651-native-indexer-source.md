@@ -12,6 +12,7 @@
   It kills a search still running 1 s past that deadline. It reports an indexer whose type maps
   to no adapter as not supported, and with no enabled configured indexer whose secrets decrypt
   it answers `{:error, :no_indexers}`. #1653 maps the Newznab and Torznab types.
-  `Native.fetch_download/3` answers `{:error, :not_supported}`.
+  `Native.fetch_download/3` answers `{:error, :not_supported}` for a configured indexer whose
+  type maps to no adapter, such as a Cardigann one, or whose adapter has no grab fetch (#1659).
   `Cinder.HTTPPolicy.bounded_request/2,3` now kills its request task once the process that
   called it exits.

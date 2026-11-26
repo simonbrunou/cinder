@@ -66,8 +66,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   - `{:error, {:no_indexer_answered, report}}` when none was asked and one or more failed.
   - `{:ok, rows, report}` otherwise, a failed indexer's rows included.
 
-  `fetch_download/3` answers `{:error, :not_supported}`, with no request. `health/0` answers
-  from the recorded state (`IndexerState.health/2`), with no request either.
+  `fetch_download/3` fetches a grab's link through the adapter of the configured indexer the
+  grab recorded, read at grab time (#1659; its doc says when it answers with no request).
+  `health/0` answers from the recorded state (`IndexerState.health/2`), with no request.
 
   `config :cinder, #{inspect(__MODULE__)}` may set `deadline_ms` (a shorter deadline for a test)
   and `clock`, a 0-arity function returning the `DateTime` that `retry_at`, the backoff check
@@ -137,8 +138,49 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     now |> IndexerState.list() |> IndexerState.health(now)
   end
 
+  @doc """
+  Fetches a grab's link `url` for a download client whose fetch options are `opts` (#1659). The
+  configured indexer is the one `opts[:indexer_id]` names, the id `Cinder.Download` puts there
+  from the intent's provenance, read with `Cinder.Indexers.fetch_with_secrets/1`, enabled or not.
+  The stored source origin is not read: the indexer's adapter takes the origin from the row.
+
+  - `{:error, :indexer_changed}`, with no request, when `opts` holds no integer id or no integer
+    `:credentials_version`, the read answers `:not_found` or `:undecryptable_secrets`, or the
+    row's credentials version is newer than `opts[:credentials_version]`: credentials changed
+    after `Cinder.Download.GrabFailure.check/1` passed, so the link holds the old key and an
+    answer to it would be recorded against the new one.
+  - `{:error, :not_supported}`, with no request, when the `:indexer_adapters` map names no
+    adapter for the indexer's type (Cardigann until #1671), or its adapter has no
+    `fetch_download/3`.
+  - Otherwise the adapter's `fetch_download/3` answer: Newznab and Torznab fetch through
+    `Cinder.Acquisition.Indexer.Newznab.Grab`, outside the spacing lease and the backoff gate.
+  """
   @impl true
-  def fetch_download(_url, _source_origin, _opts), do: {:error, :not_supported}
+  def fetch_download(url, _source_origin, opts) do
+    with {:ok, indexer} <-
+           grab_indexer(Keyword.get(opts, :indexer_id), Keyword.get(opts, :credentials_version)),
+         {:ok, adapter} <- grab_adapter(indexer.type) do
+      adapter.fetch_download(indexer, url, opts)
+    end
+  end
+
+  defp grab_indexer(id, version) when is_integer(id) and is_integer(version) do
+    case Indexers.fetch_with_secrets(id) do
+      {:ok, %{credentials_version: current} = indexer} when version >= current -> {:ok, indexer}
+      _changed_or_unreadable -> {:error, :indexer_changed}
+    end
+  end
+
+  defp grab_indexer(_id, _version), do: {:error, :indexer_changed}
+
+  defp grab_adapter(type) do
+    with {:ok, adapter} <- Map.fetch(Application.fetch_env!(:cinder, :indexer_adapters), type),
+         true <- Code.ensure_loaded?(adapter) and function_exported?(adapter, :fetch_download, 3) do
+      {:ok, adapter}
+    else
+      _no_fetch -> {:error, :not_supported}
+    end
+  end
 
   @doc """
   The per-indexer Test of the configured indexer `id` (#1657, #1619 point 11): a plain call

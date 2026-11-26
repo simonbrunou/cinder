@@ -8,8 +8,8 @@
   `fetch:` function in `add/2`'s options, and each client fetches an http(s) link only through it,
   with the fetch options it used before. That function calls the `fetch_download/3` of the source
   the download intent recorded, never the configured one: an intent with no recorded source or with
-  `prowlarr` uses Prowlarr's, and one with `native` uses `IndexerSource.Native`'s, which answers
-  `{:error, :not_supported}` (#1651), unless Cinder dropped that intent first (#1656). It adds
+  `prowlarr` uses Prowlarr's, and one with `native` uses `IndexerSource.Native`'s (#1651,
+  #1659), unless Cinder dropped that intent first (#1656). It adds
   three keys to the fetch options: `indexer_source`,
   the recorded source or `"prowlarr"` when there is none, and the intent's `indexer_id` and
   `credentials_version`, each nil when the intent records none. When `Cinder.Download` is about

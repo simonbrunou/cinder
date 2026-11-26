@@ -102,7 +102,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Newznab.{Caps, Items}
+  alias Cinder.Acquisition.Indexer.Newznab.{Caps, Grab, Items}
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.{Native, Report}
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaps, IndexerStatus}
@@ -288,6 +288,13 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
           required(:query_origins) => [:id_scoped | :free_text],
           optional(atom()) => term()
         }
+
+  @doc """
+  Fetches a grab's link `url` from `indexer` for a download client
+  (`Cinder.Acquisition.Indexer.Newznab.Grab`, whose moduledoc gives the rules, #1659).
+  """
+  @impl Indexer
+  defdelegate fetch_download(indexer, url, opts), to: Grab
 
   @doc "Searches `indexer` for `query`; see the moduledoc."
   @impl Indexer

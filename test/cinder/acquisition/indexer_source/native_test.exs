@@ -659,10 +659,17 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
   end
 
   describe "the other callbacks" do
-    test "fetch_download/3 answers not supported with no request" do
+    # A Newznab or Torznab row fetches (`NativeFetchTest`); Cardigann's download block is #1672's.
+    test "fetch_download/3 answers not supported for a Cardigann row, with no request" do
+      c = cardigann!(%{})
+
       {result, events} =
         Cinder.TelemetryHelpers.capture([:cinder, :http, :request_task], fn ->
-          Native.fetch_download("https://indexer.example/dl/1", nil, indexer_source: "native")
+          Native.fetch_download("https://cardigann.example/dl/1", nil,
+            indexer_source: "native",
+            indexer_id: c.id,
+            credentials_version: c.credentials_version
+          )
         end)
 
       assert result == {:error, :not_supported}

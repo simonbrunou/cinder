@@ -153,7 +153,10 @@ defmodule Cinder.Acquisition.IndexerSource do
   link that redirects to a magnet when `opts` sets `allow_magnet: true`, or `{:error, reason}`, as
   `Cinder.Download.Client.Fetch.bytes/3` answers: `bytes` is an NZB or a torrent
   (`Cinder.Download.Client.DownloadCheck`, #1658). `source_origin` is the origin the release
-  recorded for its link, or `nil`.
+  recorded for its link, or `nil`. Prowlarr trusts the link on it; Native ignores it and trusts
+  the configured indexer's base URL origin read at grab time, and answers `:indexer_changed` or
+  `:not_supported` with no request too (`Cinder.Acquisition.IndexerSource.Native.fetch_download/3`,
+  #1659).
 
   `opts` are the client's fetch options, its test seams (`:plug`, `:resolver`) included, plus the
   intent's provenance that `Cinder.Download.fetch_function/2` adds: `:indexer_source`, the

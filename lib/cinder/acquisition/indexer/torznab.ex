@@ -19,5 +19,8 @@ defmodule Cinder.Acquisition.Indexer.Torznab do
 
   @impl true
   defdelegate test(indexer, context, record), to: Newznab
+
+  @impl true
+  defdelegate fetch_download(indexer, url, opts), to: Newznab
   defdelegate request_options(indexer, params), to: Newznab
 end
