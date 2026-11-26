@@ -40,3 +40,8 @@ new database).
 To check the movie page's manual-search panel with results, a search report or an error you
 choose, serve the dev app with `scripts/dev-manual-search.exs` instead: it answers with a fake
 indexer source, and its header gives the command, the login and the movies to open.
+
+To run a native search over real HTTP for a native-indexer PR's test path, run
+`scripts/dev-native-search.exs`: it serves a Newznab and Torznab listener on 127.0.0.1, creates
+dev indexers on it and prints the rows, the search report and each request line, as its header
+says. On #1653 (PR #1755) that test path took a hand-written Python listener and a second script.

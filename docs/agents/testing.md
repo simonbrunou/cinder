@@ -313,7 +313,9 @@
   module itself, since `config/test.exs` points each external-service behaviour at a Mox mock,
   except `Cinder.Acquisition.Indexer`, whose adapters send their requests to a `Req.Test` stub. On
   #1627 (PR #1701) the first run exited on the missing supervisor, and the first draft of this
-  bullet left out `:req`.
+  bullet left out `:req`. For a Newznab or Torznab search through `IndexerSource.Native`, run
+  `scripts/dev-native-search.exs` instead: it serves its own listener and prints each request
+  line ([code-navigation.md](code-navigation.md)).
 - Inject a one-time filesystem failure with `Cinder.Test.BarrierFilesystem.fail_once/1` or
   `fail_in_order/1`. Each fails the test when the failure never fired. A failure armed by hand
   with `Application.put_env` gets no such check: keep that for a failure that must stay armed.
