@@ -83,6 +83,8 @@ defmodule Cinder.MergePrScriptTest do
     write!(work, %{
       ".forgejo/workflows/ci.yml" => @ci,
       "test/code_health_test.exs" => "  @max_lines 1500\n",
+      "priv/repo/migrations/.formatter.exs" => "[]\n",
+      "priv/repo/migrations/20260101000000_base.exs" => "",
       "a.txt" => "a\n"
     })
 
@@ -112,11 +114,17 @@ defmodule Cinder.MergePrScriptTest do
     File.chmod!(path, 0o755)
   end
 
+  # Writes each file of `files` under `repo`, and deletes each one whose body is nil.
   defp write!(repo, files) do
     for {path, body} <- files do
       full = Path.join(repo, path)
-      File.mkdir_p!(Path.dirname(full))
-      File.write!(full, body)
+
+      if body == nil do
+        File.rm_rf!(full)
+      else
+        File.mkdir_p!(Path.dirname(full))
+        File.write!(full, body)
+      end
     end
   end
 
@@ -170,6 +178,7 @@ defmodule Cinder.MergePrScriptTest do
 
     assert code == 0, out
     assert out =~ "DRY RUN: every check passed"
+    assert out =~ "migrations: 1, no version or name twice"
     assert lines(ctx, "fences.log") == ["fences #{ctx.head} #{main_sha(ctx)}"]
     assert posts(ctx) == 0
   end
@@ -256,6 +265,115 @@ defmodule Cinder.MergePrScriptTest do
            ]
 
     assert posts(ctx) == 2
+  end
+
+  describe "migrations on the merged tree" do
+    test "stops when main and the head each add a migration with one version", ctx do
+      main_adds!(ctx, %{"priv/repo/migrations/20260102000000_from_main.exs" => ""})
+      push_head!(ctx, %{"priv/repo/migrations/20260102000000_from_pr.exs" => ""})
+      File.write!(Path.join(ctx.stub, "posts"), "200\n")
+
+      {out, code} = run(ctx, ["7"])
+
+      assert code == 1, out
+      assert out =~ "share the migration version 20260102000000 on the merged tree"
+      assert out =~ "20260102000000_from_main.exs"
+      assert out =~ "20260102000000_from_pr.exs"
+
+      assert out =~
+               "Fix: give the one origin/main lacks a version after the newest on origin/main"
+
+      assert posts(ctx) == 0
+    end
+
+    test "names main as the place to fix when origin/main already holds both files", ctx do
+      main_adds!(ctx, %{
+        "priv/repo/migrations/20260102000000_one.exs" => "",
+        "priv/repo/migrations/20260102000000_two.exs" => ""
+      })
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "share the migration version 20260102000000 on the merged tree"
+      assert out =~ "origin/main already holds both, so main itself is broken: fix it there first"
+      refute out =~ "Fix: "
+    end
+
+    test "stops when main and the head each add a migration with one name", ctx do
+      main_adds!(ctx, %{"priv/repo/migrations/20260102000000_add_x.exs" => ""})
+      push_head!(ctx, %{"priv/repo/migrations/20260103000000_add_x.exs" => ""})
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "share the migration name add_x on the merged tree"
+      assert out =~ "Fix: rename the one origin/main lacks, and its module"
+    end
+
+    test "stops on a file of another form, naming it", ctx do
+      for path <- [
+            "priv/repo/migrations/sub/20260102000000_nested.exs",
+            "priv/repo/migrations/20260102000000_compiled.ex",
+            "priv/repo/migrations/2026010200000_short.exs",
+            "priv/repo/migrations/202601020000000_long.exs",
+            "priv/repo/migrations/20260102000000_backup.exs.bak",
+            "priv/repo/migrations/20260102000000_Upper.exs",
+            "priv/repo/migrations/notes.md"
+          ] do
+        push_head!(ctx, %{path => ""})
+
+        {out, code} = run(ctx, ["--dry-run", "7"])
+
+        assert {path, code} == {path, 1}, out
+
+        assert out =~
+                 "#{path} on the merged tree is not priv/repo/migrations/<14 digits>_<name>.exs"
+      end
+    end
+
+    test "stops when the merged tree holds no migration", ctx do
+      push_head!(ctx, %{"priv/repo/migrations/20260101000000_base.exs" => nil})
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "FAIL: no migration under priv/repo/migrations on the merged tree"
+    end
+
+    test "stops when git cannot list the merged tree's migrations", ctx do
+      exe!(Path.join(ctx.bin, "git"), """
+      #!/usr/bin/env bash
+      [[ $1 == ls-tree ]] && exit 128
+      exec #{System.find_executable("git")} "$@"
+      """)
+
+      {out, code} = run(ctx, ["--dry-run", "7"])
+
+      assert code == 1, out
+      assert out =~ "FAIL: git cannot list priv/repo/migrations on the merged tree"
+    end
+
+    test "a 405 retry checks the migrations again on the new origin/main", ctx do
+      push_head!(ctx, %{"priv/repo/migrations/20260102000000_from_pr.exs" => ""})
+      File.write!(Path.join(ctx.stub, "posts"), "405\n200\n")
+
+      File.write!(Path.join(ctx.stub, "move"), """
+      cd '#{ctx.work}'
+      mkdir -p priv/repo/migrations
+      : > priv/repo/migrations/20260102000000_from_main.exs
+      git add -A
+      git -c user.name=f -c user.email=f@example.invalid commit -q -m 'main takes the version'
+      git push -q origin main
+      """)
+
+      {out, code} = run(ctx, ["7"])
+
+      assert code == 1, out
+      assert out =~ "migrations: 2, no version or name twice"
+      assert out =~ "share the migration version 20260102000000 on the merged tree"
+      assert posts(ctx) == 1
+    end
   end
 
   describe "a skipped container job (#1486)" do
@@ -402,23 +520,16 @@ defmodule Cinder.MergePrScriptTest do
     end
   end
 
-  # Rewrites the PR's one commit with the gate files and `files` laid over its tree (nil deletes a
-  # file), pushes it as the PR head and returns its SHA.
-  defp gate_head!(ctx, files) do
+  # Rewrites the PR's one commit with the gate files and `files` laid over its tree, pushes it as
+  # the PR head and returns its SHA.
+  defp gate_head!(ctx, files), do: push_head!(ctx, Map.merge(@gate_files, files))
+
+  # Rewrites the PR's one commit with `files` laid over its tree (nil deletes a file), pushes it
+  # as the PR head and returns its SHA.
+  defp push_head!(ctx, files) do
     git!(ctx.work, ["checkout", "-q", "pr"])
     git!(ctx.work, ["reset", "-q", "--hard", ctx.head])
-
-    for {path, body} <- Map.merge(@gate_files, files) do
-      full = Path.join(ctx.work, path)
-
-      if body == nil do
-        File.rm_rf!(full)
-      else
-        File.mkdir_p!(Path.dirname(full))
-        File.write!(full, body)
-      end
-    end
-
+    write!(ctx.work, files)
     git!(ctx.work, ["add", "-A"])
     git!(ctx.work, ["commit", "-q", "--amend", "--no-edit"])
     head = git!(ctx.work, ["rev-parse", "HEAD"])
@@ -426,6 +537,13 @@ defmodule Cinder.MergePrScriptTest do
     File.write!(Path.join(ctx.stub, "head"), head)
     git!(ctx.work, ["checkout", "-q", "main"])
     head
+  end
+
+  # Commits `files` on main and pushes it to origin.
+  defp main_adds!(ctx, files) do
+    write!(ctx.work, files)
+    commit!(ctx.work, "main adds")
+    git!(ctx.work, ["push", "-q", "origin", "main"])
   end
 
   # Serves the three jobs' statuses, each success unless `overrides` names it.

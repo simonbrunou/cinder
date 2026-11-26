@@ -27,8 +27,13 @@
 #   4. a diff that touches CHANGELOG.md already contains origin/main (merge it in and re-run CI
 #      first, since a stale [Unreleased] entry merges cleanly and turns main red);
 #   5. every lib/**/*.ex file the PR touches stays within test/code_health_test.exs's @max_lines
-#      on the merged tree. This one is a pre-check beyond AGENTS.md: two PRs that each grow a
-#      near-cap file pass apart and break main together;
+#      on the merged tree, and no two files of the merged tree's priv/repo/migrations share a
+#      version or a name. Ecto raises on such a pair when both are pending, as on the fresh
+#      database of each CI run, and a database that recorded a shared version never runs
+#      the other file. Each file there reads <14 digits>_<name>.exs (.formatter.exs aside); the
+#      check stops on any other form, on an empty listing and on a failed git ls-tree. These are
+#      pre-checks beyond AGENTS.md: two PRs that each grow a near-cap file, or each add a
+#      migration with one version, pass apart and break main together;
 #   6. a squash of several non-merge commits got --body-from or --body-file;
 #   7. scripts/merge-fences passes on the head and that origin/main SHA: it runs the fences
 #      (tests that scan the sources) either side changed since the merge-base, with `mix test`
@@ -203,6 +208,16 @@ Merge origin/main into the branch and push, so that CI decides against main, the
   echo "container: skipped, and the head changes no path of image-inputs.txt since $inputs_base"
 }
 
+# The fix for two migrations of the merged tree that clash: the PR's side when origin/main lacks
+# one of them, and main itself when it holds both.
+migration_fix() {
+  if git cat-file -e "$main_sha:$1" 2>/dev/null && git cat-file -e "$main_sha:$2" 2>/dev/null; then
+    echo "origin/main already holds both, so main itself is broken: fix it there first"
+  else
+    echo "Fix: $3"
+  fi
+}
+
 # 3 to 5. The merged tree, against a freshly fetched origin/main. origin/main is read once per
 # round: T3 worktrees share origin/* refs, so another thread's fetch can move it mid-check.
 # Sets main_sha and tree, which check 7 reads.
@@ -239,6 +254,30 @@ check_against_main() {
     ((lines <= max)) || fail "$file has $lines lines on the merged tree, over the $max cap"
   done <<<"$touched"
   echo "line cap: every touched lib/*.ex within $max"
+
+  # Ecto.Migrator raises on a version or a name that two pending files share. Each side's CI
+  # migrated one side's files only, so the merged tree is the first to hold both.
+  local listing base version name count=0
+  local -A versions=() names=()
+  listing=$(git ls-tree -r --name-only "$tree" -- priv/repo/migrations) ||
+    fail "git cannot list priv/repo/migrations on the merged tree"
+  while IFS= read -r file; do
+    [[ -n $file && $file != priv/repo/migrations/.formatter.exs ]] || continue
+    base=${file#priv/repo/migrations/}
+    [[ $base =~ ^([0-9]{14})_([a-z0-9_]+)\.exs$ ]] ||
+      fail "$file on the merged tree is not priv/repo/migrations/<14 digits>_<name>.exs, the only form this check reads: teach scripts/merge-pr that form"
+    version=${BASH_REMATCH[1]}
+    name=${BASH_REMATCH[2]}
+    [[ -z ${versions[$version]:-} ]] ||
+      fail "$file and ${versions[$version]} share the migration version $version on the merged tree: Ecto raises when both are pending, and a database that recorded $version never runs the other one. $(migration_fix "$file" "${versions[$version]}" "give the one origin/main lacks a version after the newest on origin/main, drop the test databases as docs/agents/testing.md says, run mix test, push, wait for CI")"
+    [[ -z ${names[$name]:-} ]] ||
+      fail "$file and ${names[$name]} share the migration name $name on the merged tree: Ecto raises when both are pending. $(migration_fix "$file" "${names[$name]}" "rename the one origin/main lacks, and its module, run mix test, push, wait for CI")"
+    versions[$version]=$file
+    names[$name]=$file
+    count=$((count + 1))
+  done <<<"$listing"
+  ((count > 0)) || fail "no migration under priv/repo/migrations on the merged tree"
+  echo "migrations: $count, no version or name twice"
 }
 
 check_against_main
