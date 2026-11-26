@@ -801,6 +801,17 @@
   ms as the wedged one, missed it on the loaded runner and turned `main` red: 43 minutes from
   the red run to the fix's merge. On #1512, in full local runs at load 60 to 64 on 16 CPUs,
   `BoundedWalkTest` missed its old 10 s deadline once and its guards' 5 s defaults three times.
+- A test that one deadline covers several steps of a call spends at least 2 s in an
+  earlier step, so a fresh deadline per step would end at least 2 s after the call's one
+  deadline. Its elapsed bound sits well under that later end ([ci.md](ci.md) "Wall-clock
+  tests"). `Cinder.Acquisition.Indexer.CardigannGrabTest` "a link that holds its request past
+  the time left ends at the grab's one deadline" starts its parser worker through an `erl` stub
+  that sleeps 2 s, runs a 5 s deadline and asserts the elapsed time from 5,000 to 6,500 ms. A
+  fresh deadline for the link's chain would end past 7 s. On #1672 (PR #1858) its first form
+  added no delay before the link's chain. With a 1.5 s deadline and a 5 s bound, it would have
+  passed with a fresh deadline per chain. Its second form started the worker 1 s late under a
+  4 s deadline, with a 4,900 ms bound 100 ms under a fresh deadline's end. A Spec finding and
+  a re-check each took a fix commit.
 - A task that a shrunk deadline kills can die before its stub runs, since a loaded runner can
   start it past the deadline. A test that reads that stub's report (its pid, a message) passes
   without it. `Cinder.HTTPPolicyTest` proves the kill through the pid a telemetry event gives it,
