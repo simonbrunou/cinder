@@ -45,8 +45,8 @@ Read the matching doc before you act:
 - "Tool claims" in [workflow.md](docs/agents/workflow.md): before writing what a tool or
   Cinder's own code prints or does, in any doc, moduledoc, comment, test name or changelog
   fragment.
-- [CI](docs/agents/ci.md): before editing `.forgejo/workflows/`, reading a red CI run, re-running
-  CI, or merging.
+- [CI](docs/agents/ci.md): before editing `.forgejo/workflows/`, running the browser scripts of
+  `.github/scripts/` on the host, reading a red CI run, re-running CI, or merging.
 - [Subtitle sync](docs/agents/subtitle-sync.md): before changing `Cinder.Subtitles.Sync`, its
   engine or its timing rules.
 - [Code navigation](docs/agents/code-navigation.md): before finding callers or dependents in
