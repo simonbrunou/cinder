@@ -31,12 +31,6 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
   defp link(:newznab, url), do: {:nzb, url}
   defp link(:torznab, url), do: {:torrent, url}
 
-  # Holds the stub's process until the monotonic time `at` without sleeping, which the
-  # `req_stub_sleep_test.exs` fence refuses in a stub.
-  defp busy_until(at) do
-    if System.monotonic_time(:millisecond) < at, do: busy_until(at), else: :ok
-  end
-
   defp delete!(indexer), do: :ok = Indexers.delete(nil, indexer.id)
 
   defp outcomes(%Report{indexers: indexers}),
@@ -249,19 +243,16 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
 
         deadline_at = System.monotonic_time(:millisecond) + 2_000
 
-        # The id query answers 1 s before the deadline; the text query, sent with about 1 s
-        # left, holds its answer past the deadline, so the deadline cuts it.
+        # The id query answers at once; the text query never answers, so the deadline cuts it.
         route(%{
           "a.example" => fn _conn, query ->
             case query do
               %{"tvdbid" => _id} ->
-                busy_until(deadline_at - 1_000)
                 error(201, "Incorrect parameter")
 
               %{"q" => _q} ->
                 send(test_pid, :text_sent)
-                busy_until(deadline_at + 500)
-                rss()
+                Process.sleep(:infinity)
             end
           end
         })

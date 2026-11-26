@@ -638,14 +638,15 @@
   failed, and a helper process that waited for that pid without a bound held a healthy probe until
   its 15 s budget ran out.
 - A probe meant to answer after its deadline answers on a signal the test sends only after 10 s
-  with the probe still alive, never after a sleep: a caller that wakes late reads a reply that
-  came after the deadline. Every probe the test holds back meanwhile gets a budget longer than the
-  test can hold it. `Cinder.HealthTest` "a probe that answers past its budget times out even
-  behind a slower probe" does this with a helper process that releases each probe. On #1123 a
-  probe that slept 500 ms against its 200 ms budget read `:ok` with the caller woken 400 ms late.
-  The cases in this bullet and the one above took a review and two re-check rounds, about
-  47 minutes from the first finding to the last fix. `test/code_health/req_stub_sleep_test.exs`
-  fails a sleep in a `Req.Test` stub's `fn`; its header names forms it skips.
+  with the probe still alive, never after a sleep or a loop that spins until a clock time: a
+  caller that wakes late reads a reply that came after the deadline. Every probe the test holds
+  back meanwhile gets a budget longer than the test can hold it. `Cinder.HealthTest` "a probe
+  that answers past its budget times out even behind a slower probe" does this with a helper
+  process that releases each probe. On #1123 a probe that slept 500 ms against its 200 ms budget
+  read `:ok` with the caller woken 400 ms late. The cases in this bullet and the one above took a
+  review and two re-check rounds, about 47 minutes from the first finding to the last fix.
+  `test/code_health/req_stub_sleep_test.exs` fails a sleep in a `Req.Test` stub's `fn`, also
+  through `Cinder.NewznabFixtures.route/1`; its header names forms it skips, such as a spin loop.
 - A test that a request ends at its `receive_timeout` sends it to `Cinder.Test.SilentServer`, a
   127.0.0.1 socket that never answers, through `req_options` that set `retry: false` and no
   plug. The `Req.Test` plug never applies `receive_timeout`: a stub that answered 500 ms late
