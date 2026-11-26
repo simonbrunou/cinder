@@ -220,6 +220,16 @@
   on the subtitle download survived the mutant that let the download run, and the reporting stub
   killed it (`Cinder.SubtitlesTest`, "an ID result leaves an ID-matched sidecar already in
   place").
+- `:sys.get_state/1` on a running server orders only the test process's own messages to it, as
+  `Cinder.SyncWorkerHelpers.cast_units/2` says. A cast from a process the test just started can
+  reach the server after the test's `:sys.get_state/1` call: in four runs of a probe that started
+  a `Task` to cast and then read the state, 999 or 1,000 casts of 1,000 were missing. Before a
+  test counts on the order of requests that such processes queue, it polls the state until each
+  one shows, as `await_seen/3` in `Cinder.Acquisition.IndexerSource.Native.LeaseTest` does. A
+  `refute_received` of a message that a granted process would send after the grant passes while
+  that message is still on its way, so read what the server decided from its state instead,
+  as that test's `holder_pid/2` reads the slot's holder. On #1770 (for #1655) the Standards
+  review found both in the first `LeaseTest`, and the fix took a review round and a re-check.
 - When the code computes a value that a message or a return reports, such as an elapsed time or
   a count, the mutant list holds mutants that report a wrong value, such as a constant and `0`,
   besides one that drops the value. The test pins the value, or bounds it on both sides where it
