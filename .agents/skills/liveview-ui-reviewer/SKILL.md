@@ -63,19 +63,23 @@ badge ranks Available over a stale Denied — preserve that.
 **Browser-only state:**
 - A patch that changes a LiveView's assigns re-renders its page, and morphdom patches every
   element it reaches. Inside a HEEx root the patch did not reach, it touches nothing: that root
-  comes back as a `data-phx-skip` placeholder (`toOutputBuffer` in LiveView's `rendered.js`).
-  A root is a template or function component whose whole body is one tag with no `:if` or `:for`
-  on it, such as `<.input>`'s fieldset `div` or `<.form>`'s `form`. The innermost root around an
-  element decides, and a patch reaches it when an assign that root reads or is passed changes.
-  Markup in no root is reached by every patch that re-renders the page: a `render/1` that opens
-  with `<Layouts.app>` is no root, and neither is `Layouts.app`, whose template has several
-  top-level tags. A reached element loses state only the browser holds: morphdom copies the
-  server's unchecked state onto a checkbox (the `#nav-drawer` toggle, before it got
-  `phx-update="ignore"`), strips a user-set `open` from `<details>`, and overwrites unsaved edits
-  in an input without focus. On #1568, before the `FormState` hooks went on the passkey forms, a
-  flash-only patch kept typed names, each in its own `<.input>` root. A refused rename set
-  `@passkey_errors`, which each row's `<.input>` and the add field's `<.input>` are passed, and on
-  the release image it turned another row's draft into its saved name and emptied the add field.
+  comes back as a `data-phx-skip` placeholder (`toOutputBuffer` in LiveView's `rendered.js`). A
+  root is a template or function component whose whole body is one tag with no `:if` or `:for`
+  on it, such as `<.input>`'s fieldset `div` or `<.form>`'s `form`. The innermost root around
+  an element decides, and a patch reaches it when an assign that root reads or is passed
+  changes. Markup in no root is reached by every patch that re-renders the page: a `render/1`
+  that opens with `<Layouts.app>` is no root, and neither is `Layouts.app`, whose template
+  has several top-level tags. A reached element loses state only the browser holds: morphdom
+  copies the server's unchecked state onto a checkbox (the `#nav-drawer` toggle, before it got
+  `phx-update="ignore"`), strips a user-set `open` from `<details>`, and overwrites unsaved
+  edits in an input without focus. A reply to the form's own `phx-submit` patches its focused
+  input too. On #1697 (PR #1823), with LiveView 1.2.14, a refused save sent with Enter from
+  the base URL input emptied that input while it kept focus, with no `phx-patch-focused` on it
+  (`.github/scripts/browser_lifecycle.py` case 14). On #1568, before the `FormState` hooks
+  went on the passkey forms, a flash-only patch kept typed names, each in its own `<.input>`
+  root. A refused rename set `@passkey_errors`, which each row's `<.input>` and the add field's
+  `<.input>` are passed, and on the release image it turned another row's draft into its saved
+  name and emptied the add field.
 - The house fixes: a lone stateful input gets an `id` and `phx-update="ignore"`, a `<details>`
   gets an `id` and `phx-hook="DisclosureState"`, a form whose unsaved edits must survive gets an
   `id`, `phx-hook="FormState"` and `data-form-revision={@form_revision}`, with the assign bumped
