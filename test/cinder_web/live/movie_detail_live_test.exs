@@ -5,6 +5,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Acquisition.IndexerSource
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Catalog
   alias Cinder.Catalog.{Attention, Movie, MovieLifecycle, TitleAlias}
@@ -767,6 +768,30 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "[Group] Perfect Blue (1997) [1080p]"
     assert has_element?(lv, "#ms-movie-#{movie.id} button", "Grab")
     refute html =~ "audio pick"
+  end
+
+  test "the manual-search panel searches as interactive", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Metropolis",
+        status: :available,
+        imdb_id: "tt1",
+        file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+      })
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      send(test_pid, {:priority, IndexerSource.priority()})
+      {:ok, []}
+    end)
+
+    {:ok, lv, _html} = live_movie(conn, movie)
+    lv |> element("button", "Find a better match") |> render_click()
+    render_async(lv)
+
+    assert_received {:priority, :interactive}
+    refute_received {:priority, :background}
   end
 
   describe "the manual-search panel reads the search's report (#1648)" do

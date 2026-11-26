@@ -50,6 +50,9 @@ defmodule Cinder.Application do
         # Owns the built-in indexer source's per-indexer searches, each under a heap cap, so a
         # search past its deadline or its heap is killed without touching the caller.
         {Task.Supervisor, name: Cinder.Acquisition.IndexerSource.Native.TaskSupervisor},
+        # One request at a time to each configured indexer, spaced 2 s apart, manual searches
+        # first (#1655). A search process that dies holding a slot frees it.
+        Cinder.Acquisition.IndexerSource.Native.Lease,
         # Owns notifier deliveries so a slow transport (e.g. SMTP) runs off the emitting pipeline's
         # critical path instead of wedging a poller tick (Cinder.Notifier.Dispatcher).
         {Task.Supervisor, name: Cinder.Notifier.TaskSupervisor},

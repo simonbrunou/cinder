@@ -16,7 +16,8 @@
   with the time it ends (#1654), an HTTP status, an indexer error code, a bad
   response or a body over 4 MiB. In a search answer, an `<error>` code 200 to 203 or 300 fails
   only that request: the indexer is reported failed, and the other requests of the same search
-  still run. Their rows are kept when another indexer answered; when none did, the search
-  answers `{:error, {:no_indexer_answered, report}}` and those rows are lost (#1738). In a caps
-  answer, every `<error>` code fails the indexer, and `<error code="100">` now reads as rejected
-  credentials.
+  still run, unless a backoff or a credentials rejection that another search recorded meanwhile
+  holds them back (#1655). Their rows are kept when another indexer answered; when none did,
+  the search answers `{:error, {:no_indexer_answered, report}}` and those rows are lost (#1738).
+  In a caps answer, every `<error>` code fails the indexer, and `<error code="100">` now reads as
+  rejected credentials.

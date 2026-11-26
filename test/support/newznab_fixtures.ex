@@ -13,8 +13,11 @@ defmodule Cinder.NewznabFixtures do
   """
 
   import ExUnit.Assertions
+  import Ecto.Query, only: [from: 2]
 
+  alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
   alias Cinder.Indexers
+  alias Cinder.Repo
 
   @key "nzb-key-0123456789"
 
@@ -49,6 +52,16 @@ defmodule Cinder.NewznabFixtures do
     {:ok, row} = Indexers.create(nil, attrs, %{"api_key" => @key})
     {:ok, indexer} = Indexers.fetch_with_secrets(row.id)
     indexer
+  end
+
+  @doc """
+  Deletes `indexer`'s backoff state, so the next request to it is sent whatever an earlier answer
+  in the test recorded: each request reads that state once it holds the indexer's slot
+  (`Cinder.Acquisition.Indexer.leased/4`).
+  """
+  def clear_status!(indexer) do
+    Repo.delete_all(from(s in IndexerStatus, where: s.configured_indexer_id == ^indexer.id))
+    :ok
   end
 
   @doc "A `t=caps` answer; `modes:` and `categories:` replace the defaults above."

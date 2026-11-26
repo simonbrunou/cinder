@@ -24,8 +24,14 @@ defmodule Cinder.Acquisition.Indexer do
   Every adapter request goes through `request/3`, which gives it the smaller of its own timeout
   and the time left before the search deadline in `t:context/0`, and one retry after an HTTP 502,
   503, 504 or 408.
+
+  Every search request and caps fetch runs inside `leased/4`, which holds the indexer's slot of
+  `Cinder.Acquisition.IndexerSource.Native.Lease` while the adapter sends the request and records
+  its answer.
   """
 
+  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerStatus, Lease}
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.HTTPPolicy
   alias Cinder.Indexers.ConfiguredIndexer
@@ -48,9 +54,14 @@ defmodule Cinder.Acquisition.Indexer do
 
   @typedoc """
   What Native hands an adapter about the seam call: `deadline_at`, the end of its total
-  deadline in `System.monotonic_time(:millisecond)`.
+  deadline in `System.monotonic_time(:millisecond)`, and `priority`, `:interactive` for a
+  manual search (`Cinder.Acquisition.IndexerSource.interactive/1`), else `:background`. A
+  context with no `priority` is background.
   """
-  @type context :: %{deadline_at: integer()}
+  @type context :: %{
+          required(:deadline_at) => integer(),
+          optional(:priority) => Lease.priority()
+        }
 
   @doc """
   Searches one configured indexer, its secrets in `secrets`, for `query`. Answers the rows and
@@ -65,6 +76,44 @@ defmodule Cinder.Acquisition.Indexer do
 
   # #1619 point 2: these statuses get one retry before the answer counts.
   @retry_statuses [502, 503, 504, 408]
+
+  @doc """
+  Runs `fun` while holding `indexer`'s slot of `Cinder.Acquisition.IndexerSource.Native.Lease`,
+  waiting in the queue of `context`'s priority until `context.deadline_at` at most, and answers
+  `{:ran, value}` with `fun`'s value. `fun` sends one request through `request/3` and records its
+  answer in `Cinder.Acquisition.IndexerSource.Native.IndexerStatus`, so the next request to the
+  indexer sees that answer.
+
+  Once the slot is granted, the indexer's backoff state is read again
+  (`IndexerStatus.read/1` and `IndexerStatus.gate/2` at Native's `clock`): an answer recorded
+  while this request waited can have started a backoff or rejected the credentials. Answers
+  `{:not_run, outcome}`, with `fun` never called and nothing recorded:
+
+  - `{:skipped, :deadline}`: the slot was not granted before the deadline, or the lease is down.
+  - `{:skipped, {:backoff, until}}` or `{:failed, :rejected_credentials}`: the gate's answer.
+
+  `gate: false` skips that read, for a Test's caps refetch (#1657), which asks an indexer
+  whatever its state.
+  """
+  @spec leased(ConfiguredIndexer.t(), context(), (-> value), keyword()) ::
+          {:ran, value} | {:not_run, Report.outcome()}
+        when value: term()
+  def leased(%ConfiguredIndexer{} = indexer, context, fun, opts \\ []) do
+    gate =
+      if Keyword.get(opts, :gate, true),
+        do: fn -> IndexerStatus.gate(IndexerStatus.read([indexer])[indexer.id], Native.now()) end,
+        else: fn -> :ask end
+
+    Lease.run(
+      indexer.id,
+      [
+        deadline_at: context.deadline_at,
+        priority: Map.get(context, :priority, :background),
+        gate: gate
+      ],
+      fun
+    )
+  end
 
   @doc "The largest response body in bytes `request/3` reads, 4 MiB."
   @spec max_response_bytes() :: pos_integer()

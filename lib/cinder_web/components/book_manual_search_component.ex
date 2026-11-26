@@ -49,7 +49,7 @@ defmodule CinderWeb.BookManualSearchComponent do
 
   require Logger
 
-  alias Cinder.Acquisition.{Audiobooks, Ebooks}
+  alias Cinder.Acquisition.{Audiobooks, Ebooks, IndexerSource}
   alias Cinder.Download
 
   @impl true
@@ -135,12 +135,15 @@ defmodule CinderWeb.BookManualSearchComponent do
 
     search = search_module(target)
 
+    # A manual search: its requests to each indexer go ahead of the pollers' (#1655).
     start_async(socket, :search, fn ->
-      search.candidates(work,
-        protocols: Download.available_protocols(),
-        language: target.preferred_language,
-        release_blocklist: Cinder.Books.blocked_release_titles(target.id)
-      )
+      IndexerSource.interactive(fn ->
+        search.candidates(work,
+          protocols: Download.available_protocols(),
+          language: target.preferred_language,
+          release_blocklist: Cinder.Books.blocked_release_titles(target.id)
+        )
+      end)
     end)
   end
 

@@ -45,6 +45,34 @@ defmodule Cinder.Acquisition.IndexerSource do
 
   alias Cinder.Acquisition.IndexerSource.Report
 
+  @interactive_key {__MODULE__, :interactive}
+
+  @doc """
+  Runs `fun` with the calling process marked interactive, and answers its value: a manual search
+  runs its search inside this, so the built-in source queues its requests to each indexer ahead
+  of every background one (`Cinder.Acquisition.IndexerSource.Native.Lease`). The mark is the
+  process's own, so a seam call that `fun` starts in another process is not marked. Once `fun`
+  returns or raises, the mark is what it was before. A search outside it, such as a poller's or
+  `Cinder.Catalog.UpgradeHunter`'s, is background.
+  """
+  @spec interactive((-> value)) :: value when value: term()
+  def interactive(fun) do
+    previous = Process.put(@interactive_key, true)
+
+    try do
+      fun.()
+    after
+      if previous,
+        do: Process.put(@interactive_key, previous),
+        else: Process.delete(@interactive_key)
+    end
+  end
+
+  @doc "`:interactive` inside `interactive/1` in this process, else `:background`."
+  @spec priority() :: :interactive | :background
+  def priority,
+    do: if(Process.get(@interactive_key, false), do: :interactive, else: :background)
+
   @typedoc "One search callback's answer; see the moduledoc."
   @type result :: {:ok, [map()]} | {:ok, [map()], Report.t()} | {:error, term()}
 

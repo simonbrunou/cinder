@@ -414,7 +414,11 @@ Every call a poller makes has a bound:
 - A native indexer search (`Cinder.Acquisition.IndexerSource.Native`) searches each indexer it
   can ask in a task of its own, under one deadline for the whole search, and kills the tasks
   still running past it. Its moduledoc gives the deadline, the heap cap and which indexers it
-  asks; `Cinder.Acquisition.Indexer.request/3` budgets each request inside.
+  asks; `Cinder.Acquisition.Indexer.request/3` budgets each request inside. Each request waits
+  for its indexer's slot (`Cinder.Acquisition.Indexer.leased/4`, whose `Native.Lease` moduledoc
+  gives the spacing and the priority), and a wait that reaches the deadline sends nothing. The
+  one retry `Cinder.Acquisition.Indexer.request/3` gives goes out inside the same hold,
+  `retry_delay_ms` after the first answer, not the spacing.
 - A child `erl` writes to its own stdout from C, so a protocol on a child VM's output reads
   another descriptor, as the `Cinder.Indexers.ParserWorker` moduledoc says. A host `mix release`
   runs nix's ERTS, which writes nothing there, so prove such a protocol in the image. Build and

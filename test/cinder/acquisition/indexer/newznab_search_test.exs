@@ -212,6 +212,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
                    @adapter.search(indexer, {:search_tv, 81_189, "Show", 1}, context())
 
           assert Enum.map(rows, & &1.title) == titles
+          # Each failure backs the indexer off; the next case asks it from a clean state.
+          clear_status!(indexer)
         end
 
         # A stop on the id query sends no text query.
@@ -304,10 +306,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
 
         log =
           capture_log([level: :debug], fn ->
-            # Native asks first: the limit it records makes a later Native search skip the
-            # indexer, while the adapter's own searches below still send their requests.
+            # Native asks first. The limit it records would make each later request skip the
+            # indexer, so the state is cleared before each of the adapter's own searches below.
             send(self(), {:native, Native.search("tt0133093")})
+            clear_status!(indexer)
             send(self(), {:first, @adapter.search(indexer, {:search, "tt0133093"}, context())})
+            clear_status!(indexer)
 
             send(
               self(),

@@ -34,10 +34,22 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     outcome is `:asked` when no request failed, else `{:failed, reason}` of the stopping failure,
     or of the first query error when there is none. A request the search deadline cut
     (`{:failed, :deadline}`, which Native reads as skipped) loses to an earlier query error, so
-    the search still reads incomplete.
+    the search still reads incomplete, and to an earlier answer, so the indexer reads `:asked`
+    with that answer's rows.
 
   A limit's reason carries the end `Cinder.Acquisition.Indexer.NewznabAnswer.limit_until/2` gives
   its wait, never nil.
+
+  ## The slot
+
+  Each search request and each caps fetch is sent inside `Cinder.Acquisition.Indexer.leased/4`,
+  which holds the indexer's slot of `Cinder.Acquisition.IndexerSource.Native.Lease` until the
+  answer is recorded, the one retry included. A request that never left the slot queue before the
+  deadline reads as `request/3`'s `:deadline` tag. A request whose re-read backoff state says no
+  is never sent, and stops the search with that state's outcome: `{:skipped, {:backoff, until}}`,
+  which loses to an earlier query error or answer as a deadline cut does, or `{:failed,
+  :rejected_credentials}`, which wins. A caps fetch the state holds back answers that outcome as
+  the search's. `refetch_caps/2` waits for the slot but asks the indexer whatever its state.
 
   ## The backoff state
 
@@ -112,7 +124,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   @spec plan(ConfiguredIndexer.t(), Indexer.query(), Indexer.context()) ::
           {:ok, [planned()]} | {:not_asked, :caps} | {:failed, atom() | tuple()}
   def plan(%ConfiguredIndexer{} = indexer, query, context) do
-    case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context) end) do
+    case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context, true) end) do
       {:ok, caps} -> query |> requests(caps) |> planned()
       {:error, tag} -> {:failed, tag}
     end
@@ -123,12 +135,13 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   @doc """
   Fetches `indexer`'s caps whatever its stored row holds, and stores them on success: the Test's
-  refetch (#1657).
+  refetch (#1657). It waits for the indexer's slot, never past `context.deadline_at`
+  (`{:error, :deadline}`), but skips the backoff gate.
   """
   @spec refetch_caps(ConfiguredIndexer.t(), Indexer.context()) ::
           {:ok, Caps.t()} | {:error, atom() | tuple()}
   def refetch_caps(%ConfiguredIndexer{} = indexer, context),
-    do: IndexerCaps.refetch(indexer, fn -> fetch_caps(indexer, context) end)
+    do: IndexerCaps.refetch(indexer, fn -> fetch_caps(indexer, context, false) end)
 
   @doc """
   The Req options of one request to `indexer` with the query `params`: a GET to the base URL with
@@ -155,7 +168,26 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   # A caps answer that fails is recorded in the indexer's backoff state; one that succeeds is not,
   # so the Test (#1657), which is to refetch the caps before its search, will record one answer.
-  defp fetch_caps(indexer, context) do
+  # The fetch holds the indexer's slot (`Indexer.leased/4`); `gate?` false, for the Test's
+  # refetch, asks the indexer whatever its backoff state holds.
+  defp fetch_caps(indexer, context, gate?),
+    do: leased(indexer, context, fn -> send_caps(indexer, context) end, gate: gate?)
+
+  # `Indexer.leased/4`'s answer as the fetch or request answer: the function's own, or the
+  # not-run class.
+  defp leased(indexer, context, fun, opts \\ []) do
+    case Indexer.leased(indexer, context, fun, opts) do
+      {:ran, answer} -> answer
+      not_run -> {:error, not_run_class(not_run)}
+    end
+  end
+
+  # A request that never left the slot queue reads as `Indexer.request/3`'s deadline tag, as one
+  # with no time left to send it does; one the gate held back carries the gate's outcome.
+  defp not_run_class({:not_run, {:skipped, :deadline}}), do: :deadline
+  defp not_run_class(not_run), do: not_run
+
+  defp send_caps(indexer, context) do
     response = Indexer.request(context, request_options(indexer, t: "caps"), raw_body: true)
     now = now()
 
@@ -187,6 +219,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     case plan(indexer, query, context) do
       {:ok, planned} -> send_planned(indexer, planned, context)
       {:not_asked, :caps} -> {[], {:not_asked, :caps}}
+      {:failed, {:not_run, outcome}} -> {[], outcome}
       {:failed, class} -> {[], {:failed, NewznabAnswer.reason(class)}}
     end
   end
@@ -206,10 +239,27 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
         end
       end)
 
-    {row_lists |> Enum.reverse() |> Enum.concat(), outcome(query_error, stop)}
+    {row_lists |> Enum.reverse() |> Enum.concat(), outcome(query_error, stop, row_lists != [])}
   end
 
-  defp answer(indexer, %{params: params, origin: origin}, context) do
+  # An indexer that answered a query was asked: a later query the deadline cut, or one a backoff
+  # skip held back, keeps the rows and the `:asked` outcome. Rejected credentials still win.
+  defp outcome(nil, stop, true = _answered) do
+    if cut?(stop), do: :asked, else: outcome(nil, stop)
+  end
+
+  defp outcome(query_error, stop, _answered), do: outcome(query_error, stop)
+
+  defp cut?(:deadline), do: true
+  defp cut?({:not_run, {:skipped, _reason}}), do: true
+  defp cut?(_stop), do: false
+
+  # One search request, holding the indexer's slot (`Indexer.leased/4`) while it is sent and its
+  # answer recorded.
+  defp answer(indexer, request, context),
+    do: leased(indexer, context, fn -> send_request(indexer, request, context) end)
+
+  defp send_request(indexer, %{params: params, origin: origin}, context) do
     response = Indexer.request(context, request_options(indexer, params), raw_body: true)
     now = now()
 
@@ -236,6 +286,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     end
   end
 
+  # A request the gate held back stops the search with the gate's outcome. A backoff skip loses
+  # to an earlier query error, as a deadline cut does, so the search still reads incomplete;
+  # rejected credentials win.
+  defp outcome(nil, {:not_run, outcome}), do: outcome
+  defp outcome(_query_error, {:not_run, {:failed, _reason} = outcome}), do: outcome
+  defp outcome(query_error, {:not_run, {:skipped, _reason}}), do: failed(query_error)
   defp outcome(nil, nil), do: :asked
   defp outcome(query_error, :deadline) when query_error != nil, do: failed(query_error)
   defp outcome(query_error, nil), do: failed(query_error)

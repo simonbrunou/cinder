@@ -156,6 +156,11 @@ config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
 # runs with, which `Cinder.Acquisition.IndexerRetryTest` pins with this key unset.
 config :cinder, Cinder.Acquisition.Indexer, retry_delay_ms: 10
 
+# Native spaces the requests to one configured indexer 10 ms apart here, not the 2 s the app runs
+# with, which `Cinder.Acquisition.IndexerSource.Native.LeaseTest` pins on an instance that reads
+# no config.
+config :cinder, Cinder.Acquisition.IndexerSource.Native.Lease, spacing_ms: 10
+
 # The Newznab and Torznab adapters' requests (Torznab reads Newznab's key) go to a Req.Test stub.
 config :cinder, Cinder.Acquisition.Indexer.Newznab,
   req_options: [plug: {Req.Test, Cinder.NewznabStub}]

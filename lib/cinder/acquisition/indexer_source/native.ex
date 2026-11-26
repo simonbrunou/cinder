@@ -24,6 +24,18 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     indexer's backoff state as a failure. The adapter records each other answer from the search
     process (`Cinder.Acquisition.Indexer.Newznab`).
 
+  ## The spacing
+
+  Each request a search process sends (a caps fetch, a search request) waits for the indexer's
+  slot of `Cinder.Acquisition.IndexerSource.Native.Lease`
+  (`Cinder.Acquisition.Indexer.leased/4`): one request at a time to each configured indexer, 2 s from the end of one to the start of the
+  next. A seam call made inside `Cinder.Acquisition.IndexerSource.interactive/1`, a manual
+  search, queues its requests ahead of every background one; Native reads that mark in the
+  calling process before it starts the search processes. A request still waiting at the deadline
+  is never sent and changes no state, and an indexer whose requests never left the queue reads
+  `{:skipped, :deadline}`. A request granted the slot reads the backoff state again first, so one
+  queued behind a failure is skipped as that backoff says.
+
   ## The deadline
 
   A seam call has 90 s from the moment it enters Native. Each adapter request gets the smaller of
@@ -63,6 +75,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   """
   @behaviour Cinder.Acquisition.IndexerSource
 
+  alias Cinder.Acquisition.IndexerSource
   alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Download.PollerProgress
@@ -119,23 +132,34 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   @impl true
   def fetch_download(_url, _source_origin, _opts), do: {:error, :not_supported}
 
+  # The priority is read here, in the calling process: the search processes are new ones, which
+  # do not inherit the mark of `Cinder.Acquisition.IndexerSource.interactive/1`.
   defp run(query) do
-    deadline_at = System.monotonic_time(:millisecond) + deadline_ms()
+    context = %{
+      deadline_at: System.monotonic_time(:millisecond) + deadline_ms(),
+      priority: IndexerSource.priority()
+    }
 
     case Indexers.searchable() do
       [] -> {:error, :no_indexers}
-      indexers -> indexers |> search_all(query, deadline_at) |> answer(indexers)
+      indexers -> indexers |> search_all(query, context) |> answer(indexers)
     end
   end
 
   defp deadline_ms, do: Keyword.get(config(), :deadline_ms, @deadline_ms)
-  defp now, do: Keyword.get(config(), :clock, &DateTime.utc_now/0).()
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  @doc """
+  The time Native's backoff state counts from: the `clock` of `config :cinder,
+  #{inspect(__MODULE__)}`, `DateTime.utc_now/0` by default.
+  """
+  @spec now() :: DateTime.t()
+  def now, do: Keyword.get(config(), :clock, &DateTime.utc_now/0).()
 
   # --- the searches ---
 
   # Each indexer's `{rows, outcome}`, by id.
-  defp search_all(indexers, query, deadline_at) do
+  defp search_all(indexers, query, context) do
     adapters = Application.fetch_env!(:cinder, :indexer_adapters)
     {supported, left_out} = Enum.split_with(indexers, &asked?(&1, adapters))
     left_out = Map.new(left_out, &{&1.id, {[], not_asked(&1, adapters)}})
@@ -143,7 +167,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
 
     asked
     |> Enum.map(&{&1, Map.fetch!(adapters, &1.type)})
-    |> collect(query, deadline_at)
+    |> collect(query, context)
     |> Map.merge(left_out)
     |> Map.merge(held)
   end
@@ -173,17 +197,15 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   defp not_asked(%ConfiguredIndexer{flaresolverr: true}, _adapters),
     do: {:not_asked, {:not_supported, :flaresolverr}}
 
-  defp collect([], _query, _deadline_at), do: %{}
+  defp collect([], _query, _context), do: %{}
 
-  defp collect(searches, query, deadline_at) do
-    context = %{deadline_at: deadline_at}
-
+  defp collect(searches, query, context) do
     searches
     |> Map.new(fn {indexer, adapter} ->
       task = start(indexer, adapter, query, context)
       {task.ref, {indexer, task}}
     end)
-    |> await(%{}, deadline_at + @kill_grace_ms)
+    |> await(%{}, context.deadline_at + @kill_grace_ms)
   end
 
   defp start(indexer, adapter, query, context) do

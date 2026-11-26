@@ -49,6 +49,7 @@ defmodule CinderWeb.ManualSearchComponent do
 
   alias Cinder.{Acquisition, Catalog, Settings}
   alias Cinder.Acquisition.{AnimePreferences, HouseholdPolicy, Language}
+  alias Cinder.Acquisition.IndexerSource
   alias Cinder.Acquisition.IndexerSource.Report
 
   @impl true
@@ -150,8 +151,9 @@ defmodule CinderWeb.ManualSearchComponent do
     opts = HouseholdPolicy.for_target(target)
     summary = Catalog.media_profile_summary(target)
 
+    # A manual search: its requests to each indexer go ahead of the pollers' (#1655).
     start_async(socket, :search, fn ->
-      search(summary, mode, target, season, opts)
+      IndexerSource.interactive(fn -> search(summary, mode, target, season, opts) end)
     end)
   end
 

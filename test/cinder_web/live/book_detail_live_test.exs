@@ -6,6 +6,7 @@ defmodule CinderWeb.BookDetailLiveTest do
 
   alias Cinder.AccountsFixtures
   alias Cinder.Acquisition.IndexerMock
+  alias Cinder.Acquisition.IndexerSource
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Books
   alias Cinder.Books.{BookGrab, BookTarget, PrimaryMetadataMock}
@@ -569,6 +570,28 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute has_element?(lv, panel, "Stale English")
       assert has_element?(lv, panel, "French")
     end
+  end
+
+  test "the manual-search panel searches as interactive", %{conn: conn} do
+    {target, _work} = ebook_target(title: "The Dispossessed")
+    test_pid = self()
+
+    stub(IndexerMock, :search_ebook, fn _author, _title, _opts ->
+      send(test_pid, {:priority, IndexerSource.priority()})
+      {:ok, []}
+    end)
+
+    stub(IndexerMock, :search_ebook_query, fn _query, _opts ->
+      send(test_pid, {:priority, IndexerSource.priority()})
+      {:ok, []}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+    lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+    render_async(lv)
+
+    assert_received {:priority, :interactive}
+    refute_received {:priority, :background}
   end
 
   describe "the manual-search panel reads the search's report (#1648)" do
