@@ -36,6 +36,9 @@ defmodule Cinder.CallTraceTest do
 
   test "leaves out the calls of another function a pattern set elsewhere matches" do
     other = {CallTraceTarget, :count_down, 1}
+    # A trace pattern matches only loaded functions, and this test can run before any other
+    # test loads `CallTraceTarget`.
+    Code.ensure_loaded!(CallTraceTarget)
     assert :erlang.trace_pattern(other, [{:_, [], [{:return_trace}]}], [:local]) == 1
     on_exit(fn -> :erlang.trace_pattern(other, false, [:local]) end)
 
