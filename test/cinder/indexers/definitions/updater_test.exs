@@ -701,6 +701,28 @@ defmodule Cinder.Indexers.Definitions.UpdaterTest do
       refute log =~ "token"
     end
 
+    for kind <- [:throw, :exit] do
+      test "a run that #{kind}s is logged by its kind, recorded, and the next run is armed" do
+        stub(SourceMock, :master_commit, fn ->
+          :erlang.raise(unquote(kind), "https://github.com/x?token=secret", [])
+        end)
+
+        log =
+          capture_log(fn ->
+            pid = start_updater()
+            assert await_run() == {:failed, :crashed}
+            assert Process.whereis(Updater) == pid
+          end)
+
+        assert {60_000, _message} = armed()
+        assert :erlang.binary_to_term(run_row().error) == :crashed
+        assert log =~ "indexer definitions update run crashed: #{unquote(kind)} in"
+        refute log =~ "terminating"
+        refute log =~ "http"
+        refute log =~ "token"
+      end
+    end
+
     test "an apply its audit row refuses is recorded as crashed and changes no set" do
       mirror!(definition())
       _public = cardigann!(definition())
