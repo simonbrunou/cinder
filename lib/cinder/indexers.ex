@@ -9,7 +9,9 @@ defmodule Cinder.Indexers do
   takes the `lock_version` the caller's form opened with: a save opened on an older version
   returns `{:error, changeset}` with an error on `lock_version` (tagged `stale: true`), and a save
   that changes nothing still runs that check. A save or delete of an id that no longer exists
-  returns `{:error, :not_found}`.
+  returns `{:error, :not_found}`. A refusal of the base URL, the API path or the settings,
+  whether `ConfiguredIndexer`'s checks or a Cardigann copy's refused it, returns a changeset
+  without that field's typed value (`ConfiguredIndexer.drop_refused/1`).
 
   Secret inputs arrive apart from the plain attrs, as one map (`Cinder.Indexers.Secrets`). An
   edit that changes no secret leaves `secrets_ciphertext` byte for byte as it was. When the
@@ -115,7 +117,9 @@ defmodule Cinder.Indexers do
           else: [{field, {"is invalid", validation: :base_url_links}}]
       end)
 
-    if changeset.valid?, do: :ok, else: {:error, %{changeset | action: action}}
+    if changeset.valid?,
+      do: :ok,
+      else: {:error, %{ConfiguredIndexer.drop_refused(changeset) | action: action}}
   end
 
   defp cardigann_values(changeset, definition, input, secrets) do
@@ -127,7 +131,7 @@ defmodule Cinder.Indexers do
 
   defp refuse(changeset, field, validation, action) do
     changeset = Ecto.Changeset.add_error(changeset, field, "is invalid", validation: validation)
-    %{changeset | action: action}
+    %{ConfiguredIndexer.drop_refused(changeset) | action: action}
   end
 
   defp create_secrets(changeset, type, secrets) do

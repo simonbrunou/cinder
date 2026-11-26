@@ -5,6 +5,9 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
 
   Each refusal is a changeset error whose message Ecto already uses (`priv/gettext/errors.pot`),
   with a `validation:` tag naming the rule, such as `{"is invalid", [validation: :base_url_query]}`.
+  A refused base URL, API path or settings value can carry a credential, such as
+  `https://user:KEY@host` or `&apikey=KEY`, so `drop_refused/1` takes it out of the changeset
+  (#1697).
 
   `secrets_ciphertext` holds the row's secrets (`Cinder.Indexers.Secrets`). The virtual `secrets`
   carries their plaintext on a read that asks for it, and `secrets_readable` says whether they
@@ -20,6 +23,9 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
 
   # The settings keys each type stores as plain values.
   @settings_keys %{newznab: ["additional_parameters"], torznab: []}
+
+  # The fields whose refused value `drop_refused/1` takes out of the changeset.
+  @dropped_fields [:base_url, :api_path, :settings]
 
   # Parameter names a Newznab `additional_parameters` value may not carry: the key belongs in the
   # encrypted secrets, never in a plain setting.
@@ -103,6 +109,27 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
     |> validate_api_type_fields()
     |> unique_constraint(:name)
     |> check_constraint(:priority, name: :configured_indexers_priority_range)
+    |> drop_refused()
+  end
+
+  @doc """
+  Takes the typed value of each of `base_url`, `api_path` and `settings` that carries an error,
+  whatever rule refused it, out of `changeset`: the field has no change, and its param reads
+  `""`, so a form of the changeset renders the input empty, never the stored value. The other
+  fields keep their typed values, and every error stays.
+  """
+  @spec drop_refused(Ecto.Changeset.t()) :: Ecto.Changeset.t()
+  def drop_refused(%Ecto.Changeset{} = changeset) do
+    Enum.reduce(@dropped_fields, changeset, fn field, changeset ->
+      if Keyword.has_key?(changeset.errors, field),
+        do: drop_value(changeset, field),
+        else: changeset
+    end)
+  end
+
+  defp drop_value(changeset, field) do
+    changeset = delete_change(changeset, field)
+    %{changeset | params: Map.put(changeset.params || %{}, Atom.to_string(field), "")}
   end
 
   defp validate_api_type_fields(changeset) do

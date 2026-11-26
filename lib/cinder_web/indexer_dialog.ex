@@ -7,7 +7,13 @@ defmodule CinderWeb.IndexerDialog do
   picked or the row holds, and `values`: the typed non-secret fields as strings, keyed
   `"name"`, `"base_url"`, `"api_path"`, `"additional_parameters"`, `"priority"`, `"enabled"`, and
   the Clear box's `"clear_api_key"`. `change/2` and a failed `save/3` keep the typed values in
-  it, so a re-render, a Test's finish included, renders them again. The secret input's value is
+  it, so a re-render, a Test's finish included, renders them again. The exception is a refused
+  base URL, API path or additional parameters value, which can carry a credential (#1697): a
+  failed `save/3` empties each one the store refused, so its input renders empty with its error.
+  The save's reply empties that input in the browser also while it has focus, as after a submit
+  with Enter from it (`.github/scripts/browser_lifecycle.py` case 14). A save of an indexer
+  deleted in another tab keeps no typed value, since the deleted line replaces the form. The
+  secret input's value is
   never kept: `save/3` reads it from the event's `secrets` param and hands it to the store, and
   the input's `secret_id`, new on each open, lets the browser keep what it holds across patches
   (`phx-update="ignore"`).
@@ -22,6 +28,13 @@ defmodule CinderWeb.IndexerDialog do
   alias CinderWeb.IndexerFormText
 
   @value_keys ~w(name base_url api_path additional_parameters priority enabled)
+
+  # The value key each refused store field empties.
+  @refused_value_keys %{
+    base_url: "base_url",
+    api_path: "api_path",
+    settings: "additional_parameters"
+  }
 
   @doc "A new Add dialog's form for `type`: priority 25, enabled, API path `/api`."
   @spec add(atom()) :: map()
@@ -111,7 +124,8 @@ defmodule CinderWeb.IndexerDialog do
 
   @doc """
   Saves the form with the typed values of `params` and its secret input: `{:ok, row}`, or
-  `{:error, dialog}` holding the refusal and the typed values.
+  `{:error, dialog}` holding the refusal and the typed values, each refused base URL, API path
+  or additional parameters value emptied.
   """
   @spec save(map(), term(), map()) :: {:ok, map()} | {:error, map()}
   def save(dialog, actor, params) do
@@ -132,17 +146,27 @@ defmodule CinderWeb.IndexerDialog do
       {:ok, row} ->
         {:ok, row}
 
+      # The deleted line replaces the form, so no typed value is kept for it.
       {:error, :not_found} ->
-        {:error, %{dialog | deleted?: true, errors: %{}}}
+        {:error, %{dialog | deleted?: true, errors: %{}, values: %{}}}
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:error,
          %{
            dialog
-           | stale?: IndexerFormText.stale?(changeset),
+           | values: Map.merge(dialog.values, Map.new(refused_value_keys(changeset), &{&1, ""})),
+             stale?: IndexerFormText.stale?(changeset),
              errors: IndexerFormText.errors(changeset, dialog.type)
          }}
     end
+  end
+
+  # The value keys of the refused fields, read from the store's errors: a Torznab settings
+  # refusal, which the form shows above the fields, still empties its key.
+  defp refused_value_keys(changeset) do
+    changeset.errors
+    |> Enum.flat_map(fn {field, _error} -> List.wrap(@refused_value_keys[field]) end)
+    |> Enum.uniq()
   end
 
   @doc """

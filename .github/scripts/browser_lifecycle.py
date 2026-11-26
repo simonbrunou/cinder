@@ -12,7 +12,9 @@ poster whose `src` a live update changes, and a stalled poster whose 3-second re
 survive a re-render. Case 11 adds a passkey and signs in with it (#1560). Case 12 drives the
 indexers table's switches and Delete in /settings, and checks its width at 390 px (#1660). Case
 13 drives its Add and Edit dialogs: the portal, typed values across Test finishes, the Tab trap,
-Escape and the focus it returns, and a save (#1661).
+Escape and the focus it returns, and a save (#1661). Case 14 submits a credential in the base URL,
+the API path and the additional parameters with Enter, in the Add and the Edit dialog, and checks
+that the refusal empties the focused input (#1697).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -1129,6 +1131,110 @@ def case_13_indexer_dialogs(page):
         delete_indexer(second)
 
 
+def case_14_refused_credential_clears_the_focused_input(page):
+    """A refused base URL, API path or additional parameters value can carry a credential
+    (#1697). In the Add dialog and in the Edit dialog, a credential typed into one of these
+    fields, with focus kept there and the form submitted with Enter, leaves that focused input
+    empty with its refusal's message, while the other fields keep their valid values. With the
+    base URL and the additional parameters both refused, both end empty. Text typed after a
+    refusal stays in the input, and so does the typed name."""
+    credential = "ci-cred-7d1f3b"
+    edited = seed_indexer("CI Refused Edit", 32)
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        settings = context.new_page()
+        login(settings)
+        settings.goto(f"{BASE_URL}/settings?group=indexer")
+        wait_for_liveview(settings)
+        box = settings.locator("#indexer-dialog-box")
+        name = settings.locator("#indexer-form-name")
+        base_url = settings.locator("#indexer-form-base-url")
+        api_path = settings.locator("#indexer-form-api-path")
+        parameters = settings.locator("#indexer-form-additional-parameters")
+        loading = settings.locator("#indexer-form.phx-change-loading")
+
+        userinfo = f"https://u:{credential}@indexer.example"
+        query = f"/api?apikey={credential}"
+        apikey = f"&apikey={credential}"
+        base_url_error = "Remove the user name and password from the URL."
+        api_path_error = "Enter a path that starts with a single /, such as /api."
+        parameters_error = "Put the API key in the API key field, not in additional parameters."
+
+        # Fills each (input, value, its refusal's message), then submits with Enter from the last
+        # input, which keeps focus. Every input holds its typed value before the submit. An
+        # earlier submit's message can still show, so the wait on the reply is each refused
+        # input's value turning "", and each message is read after it.
+        def submit(label, refused):
+            for field, value, _message in refused:
+                field.fill(value)
+            expect(loading).to_have_count(0)
+            for field, value, _message in refused:
+                expect(field).to_have_value(value)
+            refused[-1][0].press("Enter")
+            for field, _value, message in refused:
+                try:
+                    expect(field).to_have_value("", timeout=5_000)
+                except AssertionError as e:
+                    raise CaseFailure(
+                        f"case 14 ({label}): a refused input kept its value after the submit, {e}"
+                    ) from e
+                error = settings.locator(f"#{field.get_attribute('id')}-error")
+                expect(error).to_contain_text(message)
+
+        def open_add():
+            settings.locator("#indexers-add").click()
+            settings.locator("#indexer-kind-newznab").click()
+
+        def open_edit():
+            settings.locator(f"#indexer-{edited}-edit").click()
+
+        for dialog, open_dialog in [("add", open_add), ("edit", open_edit)]:
+            open_dialog()
+            expect(name).to_be_visible(timeout=5_000)
+            name.fill("CI Refused Credential")
+
+            submit(f"{dialog}, base URL", [(base_url, userinfo, base_url_error)])
+            expect(base_url).to_be_focused()
+
+            base_url.fill("https://ci-refused.invalid")
+            submit(f"{dialog}, API path", [(api_path, query, api_path_error)])
+            expect(api_path).to_be_focused()
+            expect(base_url).to_have_value("https://ci-refused.invalid")
+
+            api_path.fill("/api")
+            submit(f"{dialog}, additional parameters", [(parameters, apikey, parameters_error)])
+            expect(parameters).to_be_focused()
+            expect(base_url).to_have_value("https://ci-refused.invalid")
+            expect(api_path).to_have_value("/api")
+            expect(settings.locator("#indexer-form-base-url-error")).to_have_count(0)
+            expect(settings.locator("#indexer-form-api-path-error")).to_have_count(0)
+
+            submit(
+                f"{dialog}, both, from additional parameters",
+                [(base_url, userinfo, base_url_error), (parameters, apikey, parameters_error)],
+            )
+            expect(base_url).to_be_focused(timeout=5_000)
+
+            # Typing after the refusal: the next change's reply keeps what the admin types.
+            settings.keyboard.type("https://ci-retyped.invalid")
+            expect(loading).to_have_count(0)
+            expect(base_url).to_have_value("https://ci-retyped.invalid")
+            expect(name).to_have_value("CI Refused Credential")
+
+            values = settings.evaluate(
+                "() => [...document.querySelectorAll('#indexer-form input')].map((i) => i.value)"
+            )
+            if any(credential in value for value in values):
+                raise CaseFailure(
+                    f"case 14 ({dialog}): an input still holds the credential, {values!r}"
+                )
+
+            settings.keyboard.press("Escape")
+            expect(box).to_have_count(0, timeout=5_000)
+    finally:
+        context.close()
+        delete_indexer(edited)
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -1149,6 +1255,10 @@ CASES = [
         case_12_indexer_switches_in_the_settings_form,
     ),
     ("case13_indexer_dialogs", case_13_indexer_dialogs),
+    (
+        "case14_refused_credential_clears_the_focused_input",
+        case_14_refused_credential_clears_the_focused_input,
+    ),
 ]
 
 

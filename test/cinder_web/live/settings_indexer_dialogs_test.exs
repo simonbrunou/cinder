@@ -588,7 +588,7 @@ defmodule CinderWeb.SettingsIndexerDialogsTest do
            "Enter a whole number from 1 to 50."}
         ] do
       @typed typed
-      test "#{label} shows its message under its field and keeps the typed values", %{lv: lv} do
+      test "#{label} shows its message under its field and keeps the typed name", %{lv: lv} do
         typed = Map.merge(filled("Fresh"), @typed)
         submit(lv, typed)
 
@@ -643,6 +643,114 @@ defmodule CinderWeb.SettingsIndexerDialogsTest do
                %Ecto.Changeset{errors: [settings: {"is invalid", validation: :settings_keys}]},
                :torznab
              ) == %{form: ["Enter the parameters as &name=value pairs, such as &cat=2000."]}
+    end
+  end
+
+  # #1697: a refused base URL, API path or additional parameters value can carry a credential,
+  # so a refused submit empties that input; a change keeps what the admin types.
+  describe "a refused credential" do
+    @credential "SYNTH-cred-d41c3b"
+
+    setup %{conn: conn} do
+      indexer = indexer!(:newznab, "a.example", %{})
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      %{indexer: indexer, lv: lv}
+    end
+
+    defp open(lv, :add, _indexer), do: open_add(lv, "newznab")
+    defp open(lv, :edit, indexer), do: open_edit(lv, indexer.id)
+
+    defp state(lv),
+      do: inspect(:sys.get_state(lv.pid), limit: :infinity, printable_limit: :infinity)
+
+    for mode <- [:add, :edit],
+        {label, key, value, message} <- [
+          {"base URL", "base_url", "https://u:#{@credential}@indexer.example",
+           "Remove the user name and password from the URL."},
+          {"API path", "api_path", "/api?apikey=#{@credential}",
+           "Enter a path that starts with a single /, such as /api."},
+          {"additional parameters", "additional_parameters", "&apikey=#{@credential}",
+           "Put the API key in the API key field, not in additional parameters."}
+        ] do
+      @mode mode
+      @key_name key
+      @value value
+      @message message
+      test "#{mode}: a refused #{label} renders empty with its error and is held nowhere",
+           %{indexer: indexer, lv: lv} do
+        open(lv, @mode, indexer)
+        id = "indexer-form-" <> String.replace(@key_name, "_", "-")
+        typed = %{"indexer[name]" => "Typed name", "indexer[#{@key_name}]" => @value}
+
+        change(lv, typed)
+        # The controls: a change keeps the typed value in the form and in the assigns.
+        assert form_params(lv, %{})["indexer"][@key_name] == @value
+        assert state(lv) =~ @credential
+
+        submit(lv, typed)
+
+        assert has_dialog_element?(lv, "##{id}-error", @message)
+        assert form_params(lv, %{})["indexer"][@key_name] == ""
+        assert form_params(lv, %{})["indexer"]["name"] == "Typed name"
+        refute render(lv) =~ @credential
+        refute dialog(lv) =~ @credential
+        refute state(lv) =~ @credential
+        assert [%{name: "newznab a.example", base_url: "https://a.example"}] = Indexers.list()
+      end
+    end
+
+    test "a save of an indexer deleted in another tab keeps no typed value",
+         %{indexer: indexer, lv: lv} do
+      open_edit(lv, indexer.id)
+      typed = %{"indexer[base_url]" => "https://u:#{@credential}@indexer.example"}
+      change(lv, typed)
+      # The control: the change put the credential in the assigns.
+      assert state(lv) =~ @credential
+
+      :ok = Indexers.delete(nil, indexer.id)
+      submit(lv, typed)
+
+      assert has_dialog_element?(lv, "#indexer-form-deleted[role=alert]")
+      refute state(lv) =~ @credential
+      refute render(lv) =~ @credential
+    end
+
+    test "the next change keeps what the admin types into the emptied input", %{lv: lv} do
+      open_add(lv, "newznab")
+      refused = "https://u:#{@credential}@indexer.example"
+      submit(lv, %{"indexer[name]" => "Typed name", "indexer[base_url]" => refused})
+      assert form_params(lv, %{})["indexer"]["base_url"] == ""
+
+      change(lv, %{"indexer[base_url]" => "https://retyped.example"})
+
+      assert form_params(lv, %{})["indexer"]["base_url"] == "https://retyped.example"
+      assert has_dialog_element?(lv, "#indexer-form-base-url-error")
+    end
+
+    test "a refusal of another field empties none", %{lv: lv} do
+      open_add(lv, "newznab")
+
+      typed = %{
+        "indexer[name]" => "Typed name",
+        "indexer[base_url]" => "https://typed.example",
+        "indexer[api_path]" => "/typed/api",
+        "indexer[additional_parameters]" => "&cat=5000",
+        "indexer[priority]" => "0"
+      }
+
+      submit(lv, typed)
+
+      assert has_dialog_element?(lv, "#indexer-form-priority-error")
+
+      assert Map.take(
+               form_params(lv, %{})["indexer"],
+               ~w(base_url api_path additional_parameters)
+             ) ==
+               %{
+                 "base_url" => "https://typed.example",
+                 "api_path" => "/typed/api",
+                 "additional_parameters" => "&cat=5000"
+               }
     end
   end
 
@@ -927,6 +1035,51 @@ defmodule CinderWeb.SettingsIndexerDialogsTest do
     test "Phoenix.Logger filters the whole secrets map" do
       assert Phoenix.Logger.filter_values(%{"secrets" => %{"api_key" => "SYNTH"}}) ==
                %{"secrets" => "[FILTERED]"}
+    end
+
+    test "Phoenix.Logger filters the base URL, the API path and the additional parameters" do
+      assert Phoenix.Logger.filter_values(%{
+               "base_url" => "https://u:KEY@x",
+               "api_path" => "/api?apikey=KEY",
+               "settings" => %{"additional_parameters" => "&apikey=KEY"},
+               "name" => "kept"
+             }) == %{
+               "base_url" => "[FILTERED]",
+               "api_path" => "[FILTERED]",
+               "settings" => %{"additional_parameters" => "[FILTERED]"},
+               "name" => "kept"
+             }
+    end
+
+    test "the change and save events log no credential typed into those three fields",
+         %{conn: conn} do
+      credential = "SYNTH-cred-0e7a52"
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_add(lv, "newznab")
+
+      typed = %{
+        "indexer[name]" => "Logged name",
+        "indexer[base_url]" => "https://u:#{credential}@indexer.example",
+        "indexer[api_path]" => "/api?apikey=#{credential}",
+        "indexer[additional_parameters]" => "&apikey=#{credential}"
+      }
+
+      log =
+        capture_log([level: :debug], fn ->
+          change(lv, typed)
+          submit(lv, typed)
+        end)
+
+      assert log =~ ~s(HANDLE EVENT "change")
+      assert log =~ ~s(HANDLE EVENT "save")
+      assert log =~ "Logged name"
+
+      for key <- ~w(base_url api_path additional_parameters),
+          do: assert(log =~ ~s("#{key}" => "[FILTERED]"))
+
+      refute log =~ credential
+      assert has_dialog_element?(lv, "#indexer-form-base-url-error")
+      assert Indexers.list() == []
     end
 
     test "the change and save events log the form without the key", %{conn: conn} do

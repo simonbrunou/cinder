@@ -226,7 +226,23 @@ config :logger, :default_formatter,
 # request and LiveView event logs print [FILTERED] for the whole map (#1560).
 # "secrets": the indexers dialogs in /settings send a configured indexer's API key, and their
 # Clear box, under a "secrets" key, filtered as a whole map the same way (#1661).
-config :phoenix, :filter_parameters, ["password", "email", "token", "passkey", "secrets"]
+# "base_url", "api_path", "additional_parameters": the dialogs' form posts its base URL and API
+# path, and in the Newznab form its additional parameters, under these keys in `indexer[...]`. An
+# admin can type a credential into each, such as https://user:KEY@host or &apikey=KEY, which the
+# store refuses (#1697). Phoenix.Logger filters each key that contains one of these names, at any
+# depth, so the entries name the leaf keys: "indexer", the form's own key, would filter the whole
+# form, its name and priority included. No other param key named in lib/cinder_web, and no
+# Cinder.Settings.Registry key, contains one of these names.
+config :phoenix, :filter_parameters, [
+  "password",
+  "email",
+  "token",
+  "passkey",
+  "secrets",
+  "base_url",
+  "api_path",
+  "additional_parameters"
+]
 
 # i18n: English + French. The active locale is resolved per request/socket by
 # CinderWeb.Locale (authenticated user → session → Accept-Language → default). `en` is the source

@@ -9,6 +9,8 @@ defmodule Cinder.IndexersTest do
   alias Cinder.Indexers.ConfiguredIndexer
   alias Cinder.SecretCodec
   alias Cloak.Ciphers.AES.GCM
+  alias Phoenix.Component
+  alias Phoenix.HTML.Form
 
   @key "nzb-api-key-0123456789"
 
@@ -689,6 +691,142 @@ defmodule Cinder.IndexersTest do
       assert Indexers.update(nil, row.id, 1, %{name: "x"}) == {:error, :not_found}
       assert Indexers.set_enabled(nil, row.id, 1, false) == {:error, :not_found}
       assert Indexers.delete(nil, row.id) == {:error, :not_found}
+    end
+  end
+
+  # #1697: a refused base URL, API path or settings value can carry a credential, so the
+  # returned changeset holds none of it. `inspect/1` of a changeset omits its params, so each
+  # case reads `params` apart.
+  describe "a refused value" do
+    @credential "SYNTH-cred-6b2f9a"
+
+    @refused [
+      {:base_url, "https://u:#{@credential}@indexer.example", :base_url_userinfo},
+      {:base_url, "https://indexer.example/?apikey=#{@credential}", :base_url_query},
+      {:base_url, "https://indexer.example/##{@credential}", :base_url_fragment},
+      {:base_url, "ftp://u:#{@credential}@indexer.example", :base_url_scheme},
+      {:base_url, "http://u:#{@credential}@/path", :base_url_host},
+      {:base_url, "https://u:#{@credential}@indexer.example:99999", :base_url_port},
+      {:base_url, "https://u:#{@credential}@indexer example", :base_url_format},
+      {:api_path, "/api?apikey=#{@credential}", :api_path_plain},
+      {:settings, %{"additional_parameters" => "&apikey=#{@credential}"}, :credential_parameter},
+      {:settings, %{"additional_parameters" => "&passkey=#{@credential}"}, :credential_parameter},
+      {:settings, %{"additional_parameters" => "&ApiKey=#{@credential}"}, :credential_parameter},
+      {:settings, %{"additional_parameters" => "&apikey=#{@credential}#x"}, :parameter_format},
+      {:settings, %{"additional_parameters" => "&apikey=#{@credential}\r\n"}, :settings_values},
+      {:settings, %{"additional_parameters" => "&apikey=#{@credential}", "other" => "x"},
+       :settings_keys}
+    ]
+
+    # The case's tag is among the field's refusals, and neither the params, the changes nor
+    # inspect/1 of the changeset holds the credential. The field's param stays as "", so a form
+    # renders it empty rather than the stored value.
+    defp assert_dropped(changeset, {field, value, tag}) do
+      label = "#{field} #{inspect(tag)}"
+      assert {label, tag in Enum.map(refusals(changeset, field), &elem(&1, 1))} == {label, true}
+      assert {label, Map.fetch!(changeset.params, Atom.to_string(field))} == {label, ""}
+      refute Map.has_key?(changeset.changes, field), label
+      # The control: the case typed the credential.
+      assert inspect(value) =~ @credential, label
+
+      for {part, text} <- [
+            params: inspect(changeset.params, limit: :infinity, printable_limit: :infinity),
+            changes: inspect(changeset.changes, limit: :infinity, printable_limit: :infinity),
+            changeset: inspect(changeset, limit: :infinity, printable_limit: :infinity)
+          ] do
+        refute text =~ @credential, "#{label}: #{part}"
+      end
+    end
+
+    test "a create holds no part of it and writes nothing" do
+      for {field, value, _tag} = refused <- @refused do
+        assert {:error, changeset} = Indexers.create(nil, attrs(%{field => value}), %{})
+        assert_dropped(changeset, refused)
+      end
+
+      assert Repo.aggregate(ConfiguredIndexer, :count) == 0
+    end
+
+    test "an edit holds no part of it and writes nothing" do
+      row =
+        create!(%{
+          base_url: "https://saved.example",
+          settings: %{"additional_parameters" => "&cat=2000"}
+        })
+
+      before = stored(row.id)
+
+      for {field, value, _tag} = refused <- @refused do
+        assert {:error, changeset} =
+                 Indexers.update(nil, row.id, row.lock_version, %{field => value, name: "Typed"})
+
+        assert_dropped(changeset, refused)
+        # The control: the changes hold the edit's other typed field.
+        assert changeset.changes.name == "Typed"
+      end
+
+      assert stored(row.id) == before
+    end
+
+    test "the changeset's form reads a refused base URL as \"\", never the saved value" do
+      row = create!(%{base_url: "https://saved.example"})
+      refused = "https://u:#{@credential}@indexer.example"
+
+      assert {:error, created} = Indexers.create(nil, attrs(%{base_url: refused}))
+
+      assert {:error, edited} =
+               Indexers.update(nil, row.id, row.lock_version, %{base_url: refused})
+
+      for changeset <- [created, edited] do
+        assert Form.input_value(Component.to_form(changeset), :base_url) == ""
+      end
+    end
+
+    test "a stale save and a secrets error keep both refusals and hold no part of it" do
+      refused = {:base_url, "https://u:#{@credential}@indexer.example", :base_url_userinfo}
+      {field, value, _tag} = refused
+      row = create!()
+      {:ok, _} = Indexers.update(nil, row.id, row.lock_version, %{name: "Moved on"})
+
+      assert {:error, stale} = Indexers.update(nil, row.id, row.lock_version, %{field => value})
+      assert [{"is invalid", [stale: true]}] = for({:lock_version, e} <- stale.errors, do: e)
+      assert_dropped(stale, refused)
+
+      fresh = stored(row.id)
+
+      for result <- [
+            Indexers.create(nil, attrs(%{field => value}), %{"nosuch" => "x"}),
+            Indexers.update(nil, fresh.id, fresh.lock_version, %{field => value}, %{
+              "nosuch" => "x"
+            })
+          ] do
+        assert {:error, changeset} = result
+        assert refusals(changeset, :secrets) == [{"is invalid", :secret_fields}]
+        assert_dropped(changeset, refused)
+      end
+
+      assert stored(row.id) == fresh
+      assert Repo.aggregate(ConfiguredIndexer, :count) == 1
+    end
+
+    test "a save refused on another field keeps the typed base URL and additional parameters" do
+      typed = %{
+        base_url: "https://typed.example",
+        settings: %{"additional_parameters" => "&cat=5000"},
+        priority: 0
+      }
+
+      row = create!()
+      assert {:error, created} = Indexers.create(nil, attrs(typed))
+      assert {:error, edited} = Indexers.update(nil, row.id, row.lock_version, typed)
+
+      for changeset <- [created, edited] do
+        assert refusals(changeset, :priority) != []
+        assert changeset.params["base_url"] == "https://typed.example"
+        assert changeset.params["settings"] == %{"additional_parameters" => "&cat=5000"}
+        assert changeset.changes.base_url == "https://typed.example"
+        assert changeset.changes.settings == %{"additional_parameters" => "&cat=5000"}
+      end
     end
   end
 

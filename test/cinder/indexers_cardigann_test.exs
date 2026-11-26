@@ -117,6 +117,45 @@ defmodule Cinder.IndexersCardigannTest do
     end
   end
 
+  # #1697: these refusals run after `ConfiguredIndexer`'s checks, and drop the refused value the
+  # same way. A password typed into a plain setting is refused on `settings`.
+  describe "a refused value" do
+    @credential "SYNTH-cred-41d07e"
+
+    defp assert_dropped(changeset, field, validation) do
+      assert refusals(changeset, field) == [{"is invalid", validation}]
+      assert Map.fetch!(changeset.params, Atom.to_string(field)) == ""
+      refute Map.has_key?(changeset.changes, field)
+
+      for value <- [changeset.params, changeset.changes, changeset],
+          do: refute(inspect(value, limit: :infinity, printable_limit: :infinity) =~ @credential)
+    end
+
+    test "a create refused on its settings or on the copy's links holds no part of it" do
+      for {field, overrides, validation} <- [
+            {:settings, %{settings: %{"password" => @credential}}, :settings_keys},
+            {:base_url, %{base_url: "https://#{@credential}.invalid/"}, :base_url_links}
+          ] do
+        assert {:error, changeset} = Indexers.create(nil, attrs(overrides), %{})
+        assert_dropped(changeset, field, validation)
+      end
+
+      assert Repo.aggregate(ConfiguredIndexer, :count) == 0
+    end
+
+    test "an edit refused on the running copy's links holds no part of it" do
+      row = create!()
+
+      assert {:error, changeset} =
+               edit(row, %{base_url: "https://#{@credential}.invalid/", name: "Typed"})
+
+      assert_dropped(changeset, :base_url, :base_url_links)
+      # The control: the changes hold the edit's other typed field.
+      assert changeset.changes.name == "Typed"
+      assert stored(row.id) == row
+    end
+  end
+
   defp refusal_message(:required), do: "can't be blank"
   defp refusal_message(_validation), do: "is invalid"
 
