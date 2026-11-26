@@ -690,14 +690,20 @@
   moduledoc lists the traps of a hand-written `:erlang.trace`. On #1646 a hand-written trace
   failed twice: it got no message for the test process's own calls, then its pattern matched no
   function in a module that was not loaded yet.
-- A test that saves settings (`Cinder.Settings.save/2`, or `put/2`, `delete/1` and `save_form/1`,
-  which go through it) runs in an `async: false` module that restores every
+- A test that saves settings (`Cinder.Settings.save/2`, or `put/2`, `delete/1` and
+  `save_form/1`, which go through it) runs in an `async: false` module that restores every
   `Cinder.Settings.env_keys/0` key, as `Cinder.SettingsTest` does. Each save rebuilds those keys
-  from the boot capture (`Cinder.Settings.Overlay.base/1`) plus the stored rows, so a `put_env/2`
-  or `put_config/2` value on one of them is gone once the save returns. Seed the starting state as
-  rows with the raw `save/2`, which also stores a value `save_form/1` refuses (required embedded
-  subtitles with no subtitle language). Seed before creating the rows under test: a save that
-  changes the anime defaults decides every anime hold again (#791).
+  from the stored rows, so a `put_env/2` or `put_config/2` value on one of them is gone once the
+  save returns. A key with no row falls back to the boot capture (`Cinder.Settings.Overlay.base/1`)
+  only where its overlay writer reads it, such as a module's config (Prowlarr's) and a
+  definition with `bootstrap: :base`. On such a key, a value that must outlast the saves goes
+  into the capture with `Cinder.ConfigCase.update_boot_capture/2`. On any other key, and on
+  `:indexer_source`, whose writer keeps a captured module only when no option lists it, seed a
+  stored row instead. On #1662 (PR #1828) a `put_config/2` of Prowlarr's `base_url: nil` before
+  a save left the test green even with the saved `prowlarr_url` row dropped from that save. Seed
+  the starting state as rows with the raw `save/2`, which also stores a value `save_form/1`
+  refuses (required embedded subtitles with no subtitle language). Seed before creating the
+  rows under test: a save that changes the anime defaults decides every anime hold again (#791).
 - A test picks the media server through `Cinder.ConfigCase` too: `store_media_server_type/1`
   writes the type row without `Cinder.Settings.put/2`, which would swap the global impl off the
   Mox mock for the rest of the run. `put_plex_url/1` and `put_media_server_bootstrap/1` set

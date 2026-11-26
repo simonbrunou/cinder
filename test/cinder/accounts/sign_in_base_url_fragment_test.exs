@@ -16,7 +16,7 @@ defmodule Cinder.Accounts.SignInBaseUrlFragmentTest do
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
 
   # device_id/0 saves its id on a test's first Jellyfin call, and each save rebuilds every
-  # settings env key from the boot capture and the stored rows (docs/agents/testing.md).
+  # settings env key from the stored rows (docs/agents/testing.md).
   setup do
     ConfigCase.restore_env_on_exit(Cinder.Settings.env_keys())
   end

@@ -145,9 +145,11 @@ defmodule Cinder.ConfigCase do
   @doc """
   Replaces the boot capture the env overlay keeps for `key` (`Cinder.Settings.Overlay.base/1`)
   with `fun` applied to it, and restores the capture on exit. Each settings save rebuilds the env
-  from that capture plus the stored rows, so a `put_config/2` made before a save is gone once it
-  returns (docs/agents/testing.md); this keeps the change through saves. The capture is
-  process-global, so only an `async: false` module calls it.
+  from the stored rows, so a `put_config/2` made before a save is gone once it returns; a key with
+  no row falls back to this capture only where its overlay writer reads it, as a module's config
+  does (docs/agents/testing.md). On such a key this keeps the change through saves, except on
+  `:indexer_source`, whose writer keeps a captured module only when no option lists it. The
+  capture is process-global, so only an `async: false` module calls it.
   """
   def update_boot_capture(key, fun) when is_function(fun, 1) do
     pt_key = {Cinder.Settings, :base, key}
