@@ -27,7 +27,7 @@ defmodule Cinder.Acquisition.IndexerSource do
     - `{:indexers_backing_off, retry_at}`: every indexer that could take the query was skipped.
       `retry_at` must be a `DateTime`: the earliest end of a backoff among them, or 60 s after
       the search when none of them was in backoff (each was cut by the deadline or never left
-      the queue).
+      the queue). When some were in backoff and others were cut, it is the earlier of the two.
     - `{:no_indexer_answered, report}`: every indexer asked failed, or some failed and the rest
       were skipped. It has the `{code, detail}` shape `Cinder.Download.Watch.reason_code/1`
       reads, so a park records the code and no detail.

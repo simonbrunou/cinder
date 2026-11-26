@@ -12,10 +12,17 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     type}}` and gets no request.
   - Otherwise an indexer whose FlareSolverr toggle is on is `{:not_asked, {:not_supported,
     :flaresolverr}}`, and its adapter is never called.
+  - Otherwise Native reads the indexer's backoff state
+    (`Cinder.Acquisition.IndexerSource.Native.IndexerStatus.read/1`) before any request. An
+    indexer whose credentials are rejected is `{:failed, :rejected_credentials}`, and one in a
+    failure or limit backoff whose until-time is after the clock is `{:skipped, {:backoff,
+    until}}`. Neither gets a request, a caps fetch included.
   - Every other indexer is searched in its own process under
     `Cinder.Acquisition.IndexerSource.Native.TaskSupervisor`, all at once. Each such process runs
     under a `max_heap_size` that kills it; a killed, crashed or raising search, or an answer
-    outside the adapter contract, reads as `{:failed, :crashed}`.
+    outside the adapter contract, reads as `{:failed, :crashed}`, which Native records in the
+    indexer's backoff state as a failure. The adapter records each other answer from the search
+    process (`Cinder.Acquisition.Indexer.Newznab`).
 
   ## The deadline
 
@@ -42,7 +49,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   - `{:error, :no_indexers}` with no searchable configured indexer.
   - `{:ok, [], report}` when no indexer could be asked.
   - `{:error, {:indexers_backing_off, retry_at}}` when none was asked or failed and some were
-    skipped, `retry_at` 60 s after the search ends.
+    skipped. `retry_at` is the earliest of each skipped indexer's backoff end and, when the
+    deadline cut one, 60 s after the search ends.
   - `{:error, {:no_indexer_answered, report}}` when none was asked and one or more failed.
   - `{:ok, rows, report}` otherwise, a failed indexer's rows included.
 
@@ -50,10 +58,12 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   :not_supported}`, neither with a request.
 
   `config :cinder, #{inspect(__MODULE__)}` may set `deadline_ms` (a shorter deadline for a test)
-  and `clock`, a 0-arity function returning the `DateTime` `retry_at` counts from.
+  and `clock`, a 0-arity function returning the `DateTime` that `retry_at`, the backoff check
+  and the backoff state count from.
   """
   @behaviour Cinder.Acquisition.IndexerSource
 
+  alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Download.PollerProgress
   alias Cinder.Indexers
@@ -127,13 +137,30 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   # Each indexer's `{rows, outcome}`, by id.
   defp search_all(indexers, query, deadline_at) do
     adapters = Application.fetch_env!(:cinder, :indexer_adapters)
-    {asked, left_out} = Enum.split_with(indexers, &asked?(&1, adapters))
+    {supported, left_out} = Enum.split_with(indexers, &asked?(&1, adapters))
     left_out = Map.new(left_out, &{&1.id, {[], not_asked(&1, adapters)}})
+    {asked, held} = gate(supported)
 
     asked
     |> Enum.map(&{&1, Map.fetch!(adapters, &1.type)})
     |> collect(query, deadline_at)
     |> Map.merge(left_out)
+    |> Map.merge(held)
+  end
+
+  # The indexers whose backoff state lets the search ask them, and the outcome of each other one:
+  # skipped while a backoff runs, failed while its credentials are rejected.
+  defp gate(indexers) do
+    states = IndexerStatus.read(indexers)
+    now = now()
+
+    Enum.reduce(indexers, {[], %{}}, fn indexer, {asked, held} ->
+      case IndexerStatus.gate(Map.fetch!(states, indexer.id), now) do
+        :ask -> {[indexer | asked], held}
+        outcome -> {asked, Map.put(held, indexer.id, {[], outcome})}
+      end
+    end)
+    |> then(fn {asked, held} -> {Enum.reverse(asked), held} end)
   end
 
   defp asked?(%ConfiguredIndexer{type: type, flaresolverr: flaresolverr}, adapters),
@@ -186,12 +213,17 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
         Process.demonitor(task_ref, [:flush])
         {{indexer, _task}, tasks} = Map.pop!(tasks, task_ref)
         PollerProgress.beat()
-        await(tasks, Map.put(answers, indexer.id, checked(answer)), kill_at)
+        await(tasks, Map.put(answers, indexer.id, recorded(indexer, checked(answer))), kill_at)
 
       {:DOWN, task_ref, :process, _pid, _reason} when is_map_key(tasks, task_ref) ->
         {{indexer, _task}, tasks} = Map.pop!(tasks, task_ref)
         PollerProgress.beat()
-        await(tasks, Map.put(answers, indexer.id, {[], {:failed, :crashed}}), kill_at)
+
+        await(
+          tasks,
+          Map.put(answers, indexer.id, recorded(indexer, {[], {:failed, :crashed}})),
+          kill_at
+        )
     after
       left_ms -> expire(tasks, answers)
     end
@@ -205,6 +237,15 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
       Map.put(answers, indexer.id, {[], {:skipped, :deadline}})
     end)
   end
+
+  # A crashed search is a failure in the indexer's backoff state. The process that ran it may be
+  # dead, so the calling process records it; the adapter records every other answer itself.
+  defp recorded(indexer, {_rows, {:failed, :crashed}} = answer) do
+    IndexerStatus.record(indexer, :crashed, now())
+    answer
+  end
+
+  defp recorded(_indexer, answer), do: answer
 
   # The adapter's answer as Native reads it: a row list and an outcome of the closed set, the
   # deadline tag read as a skip. Anything else reads as crashed.
@@ -240,8 +281,22 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
         {:error, {:no_indexer_answered, report}}
 
       true ->
-        {:error, {:indexers_backing_off, DateTime.add(now(), @retry_after_s, :second)}}
+        {:error, {:indexers_backing_off, retry_at(outcomes)}}
     end
+  end
+
+  # The earliest time a skipped indexer can be asked again: its backoff's end, or 60 s after the
+  # search for one the deadline cut.
+  defp retry_at(outcomes) do
+    deadline_retry = DateTime.add(now(), @retry_after_s, :second)
+
+    outcomes
+    |> Enum.flat_map(fn
+      {:skipped, {:backoff, until}} -> [until]
+      {:skipped, :deadline} -> [deadline_retry]
+      _outcome -> []
+    end)
+    |> Enum.min(DateTime)
   end
 
   # Id-scoped rows of every indexer, then free-text rows; inside each, indexers in the searchable

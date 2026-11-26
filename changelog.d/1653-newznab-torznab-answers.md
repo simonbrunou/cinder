@@ -13,7 +13,7 @@
   `Cinder.Acquisition.Indexer.NewznabAnswer.classify/4` and `classify_caps/4` read each search
   and `t=caps` answer by the HTTP status and the `<error>` code into a closed class, and Native
   records it in the search report as the indexer's failure reason: rejected credentials, a limit
-  with the wait the answer states or with none, an HTTP status, an indexer error code, a bad
+  with the time it ends (#1654), an HTTP status, an indexer error code, a bad
   response or a body over 4 MiB. In a search answer, an `<error>` code 200 to 203 or 300 fails
   only that request: the indexer is reported failed, and the other requests of the same search
   still run. Their rows are kept when another indexer answered; when none did, the search

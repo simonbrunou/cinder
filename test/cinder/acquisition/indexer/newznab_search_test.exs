@@ -313,8 +313,10 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
 
         log =
           capture_log([level: :debug], fn ->
-            send(self(), {:first, @adapter.search(indexer, {:search, "tt0133093"}, context())})
+            # Native asks first: the limit it records makes a later Native search skip the
+            # indexer, while the adapter's own searches below still send their requests.
             send(self(), {:native, Native.search("tt0133093")})
+            send(self(), {:first, @adapter.search(indexer, {:search, "tt0133093"}, context())})
 
             send(
               self(),
@@ -326,7 +328,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
         assert_received {:key, key}
         assert key == key()
 
-        assert_received {:first, {[], {:failed, {:limit, nil}}} = first}
+        assert_received {:first, {[], {:failed, {:limit, ~U[2026-11-26 13:00:00Z]}}} = first}
         assert_received {:native, {:error, {:no_indexer_answered, report}}}
         assert_received {:later, {[], {:failed, :connection_refused}} = later}
 
@@ -343,7 +345,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
   # it, and the reason Native's report carries. A transport row's class is the tag
   # `Cinder.Acquisition.Indexer.request/3` gives.
   @class_cases [
-    {"HTTP 401", {401, [], ""}, :rejected_credentials, :rejected_credentials},
+    {"HTTP 401", {401, [], ""}, {:rejected_credentials, {:http_status, 401}},
+     :rejected_credentials},
     {"HTTP 429 disabled till, with Retry-After",
      {429, [{"retry-after", "600"}],
       error(429, "Indexer is disabled till 11/26/2026 13:00:00 due to recent failures.")},
@@ -356,20 +359,20 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
     {"HTTP 429 with Retry in 7 minutes",
      {429, [], error(500, "Request limit reached. Retry in 7 minutes.")},
      {:limit, ~U[2026-11-26 12:07:00Z]}, {:limit, ~U[2026-11-26 12:07:00Z]}},
-    {"HTTP 429 with no wait", {429, [], ""}, {:limit, nil}, {:limit, nil}},
+    {"HTTP 429 with no wait", {429, [], ""}, {:limit, nil}, {:limit, ~U[2026-11-26 13:00:00Z]}},
     {"HTTP 410", {410, [], error(410, "Indexer is disabled")}, {:http_status, 410},
      {:http_status, 410}},
     {"HTTP 404", {404, [], ""}, {:http_status, 404}, {:http_status, 404}},
-    {"code 100", {200, [], error(100, "Incorrect user credentials")}, :rejected_credentials,
-     :rejected_credentials},
-    {"code 101", {200, [], error(101, "Account suspended")}, :rejected_credentials,
-     :rejected_credentials},
-    {"code 102", {200, [], error(102, "Insufficient privileges")}, :rejected_credentials,
-     :rejected_credentials},
-    {"code 910", {200, [], error(910, "API disabled")}, :rejected_credentials,
+    {"code 100", {200, [], error(100, "Incorrect user credentials")},
+     {:rejected_credentials, {:code, 100}}, :rejected_credentials},
+    {"code 101", {200, [], error(101, "Account suspended")},
+     {:rejected_credentials, {:code, 101}}, :rejected_credentials},
+    {"code 102", {200, [], error(102, "Insufficient privileges")},
+     {:rejected_credentials, {:code, 102}}, :rejected_credentials},
+    {"code 910", {200, [], error(910, "API disabled")}, {:rejected_credentials, {:code, 910}},
      :rejected_credentials},
     {"code 500 with Request limit reached", {200, [], error(500, "Request limit reached")},
-     {:limit, nil}, {:limit, nil}},
+     {:limit, nil}, {:limit, ~U[2026-11-26 13:00:00Z]}},
     {"code 500 without limit", {200, [], error(500, "Internal error")}, {:indexer_error, 500},
      {:indexer_error, 500}},
     {"code 201", {400, [], error(201, "Incorrect parameter")}, {:query_error, 201},
@@ -456,7 +459,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
              {:http_status, 429}},
             {{400, [], error(201, "Incorrect parameter")}, {:indexer_error, 201}},
             {{200, [], error(100, "Incorrect user credentials")}, :rejected_credentials},
-            {{429, [], ""}, {:limit, nil}}
+            {{429, [], ""}, {:limit, ~U[2026-11-26 13:00:00Z]}}
           ] do
         indexer = indexer!(:newznab, "a.example")
 

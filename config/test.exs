@@ -152,6 +152,10 @@ config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
 
+# The one retry after an HTTP 502, 503, 504 or 408 answer waits 10 ms here, not the 2 s the app
+# runs with, which `Cinder.Acquisition.IndexerRetryTest` pins with this key unset.
+config :cinder, Cinder.Acquisition.Indexer, retry_delay_ms: 10
+
 # The Newznab and Torznab adapters' requests (Torznab reads Newznab's key) go to a Req.Test stub.
 config :cinder, Cinder.Acquisition.Indexer.Newznab,
   req_options: [plug: {Req.Test, Cinder.NewznabStub}]

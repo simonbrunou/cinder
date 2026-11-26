@@ -22,7 +22,8 @@ defmodule Cinder.Acquisition.Indexer do
   ## Requests
 
   Every adapter request goes through `request/3`, which gives it the smaller of its own timeout
-  and the time left before the search deadline in `t:context/0`.
+  and the time left before the search deadline in `t:context/0`, and one retry after an HTTP 502,
+  503, 504 or 408.
   """
 
   alias Cinder.Acquisition.IndexerSource.Report
@@ -62,6 +63,9 @@ defmodule Cinder.Acquisition.Indexer do
   @request_timeout_ms 30_000
   @max_response_bytes 4 * 1024 * 1024
 
+  # #1619 point 2: these statuses get one retry before the answer counts.
+  @retry_statuses [502, 503, 504, 408]
+
   @doc "The largest response body in bytes `request/3` reads, 4 MiB."
   @spec max_response_bytes() :: pos_integer()
   def max_response_bytes, do: @max_response_bytes
@@ -72,13 +76,18 @@ defmodule Cinder.Acquisition.Indexer do
   default) and the time left before `context.deadline_at`, as its `receive_timeout` and its total
   deadline. With no time left it sends nothing.
 
+  An HTTP 502, 503, 504 or 408 answer gets one retry, sent `retry_delay_ms` after it (2 s unless
+  `config :cinder, #{inspect(__MODULE__)}` sets it), and the retry's answer is the answer. When
+  that delay is not shorter than the time left before the deadline, the retry is never sent and
+  the request answers `{:error, :deadline}`. No other answer is retried.
+
   Answers `{:ok, response}` or `{:error, tag}`, a closed tag that never carries a URL, a header or
   a body:
 
   - `:timeout`: a timeout ended the request while the search deadline had not: its own timeout,
     when that was no longer than the time left, or an earlier connect timeout.
   - `:deadline`: the request timed out at the search deadline, which was shorter than its own
-    timeout, or no time was left to send it.
+    timeout, or no time was left to send it or its retry.
   - `:dns`, `:connection_refused`, `:connection_failed`, `:too_large` or `:bad_response` (a body
     labelled JSON that does not decode), as `Cinder.Acquisition.IndexerSource.Report` defines
     them.
@@ -90,7 +99,33 @@ defmodule Cinder.Acquisition.Indexer do
   """
   @spec request(context(), keyword(), keyword()) ::
           {:ok, Req.Response.t()} | {:error, atom()}
-  def request(%{deadline_at: deadline_at}, request_options, opts \\ []) do
+  def request(context, request_options, opts \\ []) do
+    case send_once(context, request_options, opts) do
+      {:ok, %Req.Response{status: status}} when status in @retry_statuses ->
+        retry(context, request_options, opts)
+
+      answer ->
+        answer
+    end
+  end
+
+  # The one retry: sent `retry_delay_ms` after the first answer when more time than that is left
+  # before the deadline; otherwise it is never sent and reads as the deadline.
+  defp retry(%{deadline_at: deadline_at} = context, request_options, opts) do
+    delay_ms = retry_delay_ms()
+
+    if deadline_at - System.monotonic_time(:millisecond) > delay_ms do
+      Process.sleep(delay_ms)
+      send_once(context, request_options, opts)
+    else
+      {:error, :deadline}
+    end
+  end
+
+  defp retry_delay_ms,
+    do: :cinder |> Application.get_env(__MODULE__, []) |> Keyword.get(:retry_delay_ms, 2_000)
+
+  defp send_once(%{deadline_at: deadline_at}, request_options, opts) do
     own_ms = Keyword.get(opts, :timeout_ms, @request_timeout_ms)
     left_ms = deadline_at - System.monotonic_time(:millisecond)
 

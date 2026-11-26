@@ -24,19 +24,33 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   - `{[], {:not_asked, :caps}}` when the caps take none of the call's requests.
   - `{[], {:failed, reason}}` when the caps could not be read, `reason` the fetch's class read
     through `Cinder.Acquisition.Indexer.NewznabAnswer.reason/1`.
-  - Otherwise it sends the planned requests one after another, id-scoped first, each once, with
-    no `limit` or `offset`. Each answer is read by `Cinder.Acquisition.Indexer.NewznabAnswer.read/2`
-    and its items by `Cinder.Acquisition.Indexer.Newznab.Items.rows/2`, every row tagged with its
-    request's query origin. A `{:query_error, code}` answer fails that query only: the next one is
+  - Otherwise it sends the planned requests one after another, id-scoped first, each once (plus
+    the one retry `Cinder.Acquisition.Indexer.request/3` gives an HTTP 502, 503, 504 or 408),
+    with no `limit` or `offset`. Each answer is read by
+    `Cinder.Acquisition.Indexer.NewznabAnswer.read/2` and its items by
+    `Cinder.Acquisition.Indexer.Newznab.Items.rows/2`, every row tagged with its request's query
+    origin. A `{:query_error, code}` answer fails that query only: the next one is
     still sent. Any other failure stops the search, the rows of the answers before it kept. The
     outcome is `:asked` when no request failed, else `{:failed, reason}` of the stopping failure,
     or of the first query error when there is none. A request the search deadline cut
     (`{:failed, :deadline}`, which Native reads as skipped) loses to an earlier query error, so
     the search still reads incomplete.
 
-  The class's `wait` counts from the `clock` of `config :cinder,
-  Cinder.Acquisition.IndexerSource.Native`, `DateTime.utc_now/0` by default. No error, outcome or
-  log line carries a URL, a header or a body.
+  A limit's reason carries the end `Cinder.Acquisition.Indexer.NewznabAnswer.limit_until/2` gives
+  its wait, never nil.
+
+  ## The backoff state
+
+  Each answer to a search request, and each caps fetch that fails, goes to
+  `Cinder.Acquisition.IndexerSource.Native.IndexerStatus.record/3` from the process that sent
+  it, as soon as it is read: `:success` for a search answer that reads, else its class or
+  transport tag. A caps fetch that succeeds records nothing, so the Test (#1657), which is to
+  refetch the caps before its search, will record one answer. A request the deadline cut never
+  answers, so it records nothing.
+
+  The class's `wait` and the times the answer records count from the `clock` of `config :cinder,
+  Cinder.Acquisition.IndexerSource.Native`, `DateTime.utc_now/0` by default, read once the answer
+  has come in. No error, outcome or log line carries a URL, a header or a body.
 
   ## The requests
 
@@ -78,7 +92,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   alias Cinder.Acquisition.Indexer.Newznab.{Caps, Items}
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.{Native, Report}
-  alias Cinder.Acquisition.IndexerSource.Native.IndexerCaps
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaps, IndexerStatus}
   alias Cinder.HTTPPolicy
   alias Cinder.Indexers.ConfiguredIndexer
 
@@ -139,13 +153,21 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
 
   defp api_key(_indexer), do: []
 
+  # A caps answer that fails is recorded in the indexer's backoff state; one that succeeds is not,
+  # so the Test (#1657), which is to refetch the caps before its search, will record one answer.
   defp fetch_caps(indexer, context) do
-    context
-    |> Indexer.request(request_options(indexer, t: "caps"), raw_body: true)
-    |> NewznabAnswer.read_caps(now())
+    response = Indexer.request(context, request_options(indexer, t: "caps"), raw_body: true)
+    now = now()
+
+    response
+    |> NewznabAnswer.read_caps(now)
     |> case do
       {:ok, element} -> Caps.read(element)
       {:error, class} -> {:error, class}
+    end
+    |> case do
+      {:ok, caps} -> {:ok, caps}
+      {:error, class} -> {:error, recorded(indexer, class, now)}
     end
   end
 
@@ -188,15 +210,29 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   end
 
   defp answer(indexer, %{params: params, origin: origin}, context) do
-    context
-    |> Indexer.request(request_options(indexer, params), raw_body: true)
-    |> NewznabAnswer.read(now())
+    response = Indexer.request(context, request_options(indexer, params), raw_body: true)
+    now = now()
+
+    response
+    |> NewznabAnswer.read(now)
     |> case do
       {:ok, items} ->
+        IndexerStatus.record(indexer, :success, now)
         {:ok, for(row <- Items.rows(items, indexer), do: Map.put(row, :query_origins, [origin]))}
 
       {:error, class} ->
-        {:error, class}
+        {:error, recorded(indexer, class, now)}
+    end
+  end
+
+  # Records `class` in the indexer's backoff state and answers it with a limit's wait ended as
+  # the state ends it, so the report and the state hold one until-time.
+  defp recorded(indexer, class, now) do
+    IndexerStatus.record(indexer, class, now)
+
+    case class do
+      {:limit, wait} -> {:limit, NewznabAnswer.limit_until(wait, now)}
+      class -> class
     end
   end
 

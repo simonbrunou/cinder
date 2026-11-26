@@ -28,9 +28,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
     end
 
     test "HTTP 401 is rejected credentials, before a limit body or any <error> element" do
-      assert classify(401, "") == {:error, :rejected_credentials}
-      assert classify(401, error(500, "Request limit reached")) == {:error, :rejected_credentials}
-      assert classify(401, rss()) == {:error, :rejected_credentials}
+      assert classify(401, "") == {:error, {:rejected_credentials, {:http_status, 401}}}
+
+      assert classify(401, error(500, "Request limit reached")) ==
+               {:error, {:rejected_credentials, {:http_status, 401}}}
+
+      assert classify(401, rss()) == {:error, {:rejected_credentials, {:http_status, 401}}}
     end
 
     test "HTTP 429 with 'Indexer is disabled till' is a failure that carries its stated wait" do
@@ -137,10 +140,10 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
 
     test "the <error> codes of rule 6, on a 2xx answer" do
       for {code, description, class} <- [
-            {100, "Incorrect user credentials", :rejected_credentials},
-            {101, "Account suspended", :rejected_credentials},
-            {102, "Insufficient privileges", :rejected_credentials},
-            {910, "API disabled", :rejected_credentials},
+            {100, "Incorrect user credentials", {:rejected_credentials, {:code, 100}}},
+            {101, "Account suspended", {:rejected_credentials, {:code, 101}}},
+            {102, "Insufficient privileges", {:rejected_credentials, {:code, 102}}},
+            {910, "API disabled", {:rejected_credentials, {:code, 910}}},
             {500, "Request limit reached", {:limit, nil}},
             {501, "Daily LIMIT reached", {:limit, nil}},
             {500, "Internal error", {:indexer_error, 500}},
@@ -163,10 +166,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
                {:error, {:query_error, 201}}
 
       assert classify(403, error(100, "Incorrect user credentials")) ==
-               {:error, :rejected_credentials}
+               {:error, {:rejected_credentials, {:code, 100}}}
 
       assert classify(503, error(900, "Unknown")) == {:error, {:indexer_error, 900}}
-      assert classify(302, error(101, "Account suspended")) == {:error, :rejected_credentials}
+
+      assert classify(302, error(101, "Account suspended")) ==
+               {:error, {:rejected_credentials, {:code, 101}}}
 
       assert classify(500, error(500, "Request limit reached. Retry in 3 minutes.")) ==
                {:error, {:limit, ~U[2026-11-26 12:03:00Z]}}
@@ -226,7 +231,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
       assert NewznabAnswer.classify_caps(200, %{}, rss(), @now) == {:error, :bad_response}
 
       assert NewznabAnswer.classify_caps(200, %{}, error(100, "x"), @now) ==
-               {:error, :rejected_credentials}
+               {:error, {:rejected_credentials, {:code, 100}}}
 
       assert NewznabAnswer.classify_caps(429, %{"retry-after" => ["60"]}, "", @now) ==
                {:error, {:limit, ~U[2026-11-26 12:01:00Z]}}
@@ -257,7 +262,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
       wait = ~U[2026-11-26 12:10:00Z]
 
       for {class, reason} <- [
-            {:rejected_credentials, :rejected_credentials},
+            {{:rejected_credentials, {:code, 101}}, :rejected_credentials},
+            {{:rejected_credentials, {:http_status, 401}}, :rejected_credentials},
             {{:disabled_till, wait}, {:http_status, 429}},
             {{:disabled_till, nil}, {:http_status, 429}},
             {{:limit, wait}, {:limit, wait}},
@@ -275,6 +281,38 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswerTest do
           ] do
         assert {class, NewznabAnswer.reason(class)} == {class, reason}
       end
+    end
+  end
+
+  describe "limit_until/2" do
+    # The wait a limit tag carries, as #1654 ends it: the stated time, else 1 h, clamped between
+    # 1 min and 24 h after the answer. The expected values are literals.
+    test "ends a limit at the stated wait, 1 h without one, clamped to 1 min and 24 h" do
+      for {wait, until} <- [
+            {120, ~U[2026-11-26 12:02:00Z]},
+            {~U[2026-11-26 12:02:00Z], ~U[2026-11-26 12:02:00Z]},
+            {~U[2026-11-26 14:52:00Z], ~U[2026-11-26 14:52:00Z]},
+            {172 * 60, ~U[2026-11-26 14:52:00Z]},
+            {nil, ~U[2026-11-26 13:00:00Z]},
+            {10, ~U[2026-11-26 12:01:00Z]},
+            {~U[2026-11-26 12:00:10Z], ~U[2026-11-26 12:01:00Z]},
+            {~U[2026-11-26 11:00:00Z], ~U[2026-11-26 12:01:00Z]},
+            {60, ~U[2026-11-26 12:01:00Z]},
+            {3 * 24 * 60 * 60, ~U[2026-11-27 12:00:00Z]},
+            {~U[2026-11-29 12:00:00Z], ~U[2026-11-27 12:00:00Z]},
+            {24 * 60 * 60, ~U[2026-11-27 12:00:00Z]}
+          ] do
+        assert {wait, NewznabAnswer.limit_until(wait, @now)} == {wait, until}
+      end
+    end
+
+    test "counts from a clock with microseconds and answers whole seconds" do
+      now = ~U[2026-11-26 12:00:00.654321Z]
+      assert NewznabAnswer.limit_until(nil, now) == ~U[2026-11-26 13:00:00Z]
+      assert NewznabAnswer.limit_until(120, now) == ~U[2026-11-26 12:02:00Z]
+
+      assert NewznabAnswer.limit_until(~U[2026-11-26 12:30:00.250000Z], now) ==
+               ~U[2026-11-26 12:30:00Z]
     end
   end
 end

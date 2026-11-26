@@ -25,8 +25,8 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
     - `{:indexer_error, code}`: an integer Newznab `<error>` code that is neither a limit nor a
       credentials code.
     - `{:limit, until}`: the indexer reported a limit, which lasts until the `DateTime` `until`,
-      or nil when the answer stated no wait (#1653). Nothing gives a nil limit a default yet:
-      #1654 adds one.
+      or nil when the answer stated no wait (#1653). Native's Newznab and Torznab adapters
+      report the end `Cinder.Acquisition.Indexer.NewznabAnswer.limit_until/2` gives, never nil.
     - `:rejected_credentials`: a failure, not a skip.
     - `:challenge`: a Cloudflare challenge or a FlareSolverr failure.
     - `:crashed`: the search process or parser worker died, or a regex limit hit.
@@ -87,6 +87,13 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
   ]
 
   @rank %{not_asked: 0, asked: 1, skipped: 2, failed: 3}
+
+  @doc """
+  The atom failure reasons of the closed set. The tagged ones are `{:http_status, status}`,
+  `{:indexer_error, code}` and `{:limit, until}`.
+  """
+  @spec failure_atoms() :: [atom()]
+  def failure_atoms, do: @failure_atoms
 
   @doc "An empty report: no indexer, no failed seam call."
   @spec new() :: t()

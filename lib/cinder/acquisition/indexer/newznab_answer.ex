@@ -7,7 +7,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
 
   0. A body over 4 MiB is `:too_large`, whatever its status. `Cinder.Acquisition.Indexer.request/3`
      refuses such a body with the same tag before it reaches this module.
-  1. HTTP 401: `:rejected_credentials`.
+  1. HTTP 401: `{:rejected_credentials, {:http_status, 401}}`.
   2. HTTP 429 whose `<error>` answer (rule 6 says which element is one) has a description that
      starts with "Indexer is disabled till", Prowlarr's answer for an indexer in its failure
      backoff: `{:disabled_till, wait}`.
@@ -16,9 +16,10 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
   5. HTTP 404: `{:http_status, 404}`.
   6. An `<error>` answer, a root `<error>` element whose `code` reads through
      `Cinder.Acquisition.Indexer.Newznab.XML.integer/1` (a non-negative integer of at most 18
-     digits), on any other status: codes 100 to 102 and 910 are `:rejected_credentials`; code 500
-     or 501 whose description holds "limit", in any case, is `{:limit, wait}`; codes 200 to 203
-     and 300 are `{:query_error, code}`; any other code, 900 included, is
+     digits), on any other status: codes 100 to 102 and 910 are
+     `{:rejected_credentials, {:code, code}}`; code 500 or 501 whose description holds "limit",
+     in any case, is `{:limit, wait}`; codes 200 to 203 and 300 are `{:query_error, code}`; any
+     other code, 900 included, is
      `{:indexer_error, code}`. In a search answer `{:query_error, code}` fails that request only,
      and the adapter still sends the search's other requests; in a caps answer it fails the caps
      fetch, so the indexer is not searched. An `<error>` element below the root, or one whose
@@ -41,18 +42,24 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
   `Req.Utils.parse_http_date/1`, which refuses a day name that does not match the date; the
   obsolete RFC 850 and asctime forms read here, a two-digit year more than 50 years ahead being
   the century before. A wait longer than 366 days reads as 366 days, so a huge number gives a
-  date every reader can store. No reader gives a nil wait a default or clamps a wait yet: #1654
-  adds both.
+  date every reader can store. `limit_until/2` ends a limit from its wait: the default and the
+  clamp are its own (#1654), and Native's backoff state and report read the limit through it.
 
-  `reason/1` maps a class to the reason the report carries: `{:disabled_till, wait}` is
-  `{:http_status, 429}` and `{:query_error, code}` is `{:indexer_error, code}`; every other class
-  is its own reason. No class carries a URL, a header or a body.
+  `reason/1` maps a class to the reason the report carries: `{:rejected_credentials, by}` is
+  `:rejected_credentials`, `{:disabled_till, wait}` is `{:http_status, 429}` and
+  `{:query_error, code}` is `{:indexer_error, code}`; every other class is its own reason. No
+  class carries a URL, a header or a body.
   """
 
   alias Cinder.Acquisition.Indexer
   alias Cinder.Acquisition.Indexer.Newznab.XML
 
   @max_wait_s 366 * 24 * 60 * 60
+
+  # A limit's end (#1619 point 3): the stated wait, else 1 h, clamped to 1 min and 24 h.
+  @default_limit_s 60 * 60
+  @min_limit_s 60
+  @max_limit_s 24 * 60 * 60
   # 31,622,400 s (the cap) has 8 digits and the cap in minutes 6, so 12 digits leaves room.
   @max_wait_digits 12
 
@@ -64,7 +71,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
 
   @type wait :: DateTime.t() | nil
   @type class ::
-          :rejected_credentials
+          {:rejected_credentials, {:code | :http_status, integer()}}
           | {:disabled_till, wait()}
           | {:limit, wait()}
           | {:http_status, integer()}
@@ -104,8 +111,28 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
 
   def read_caps({:error, tag}, _now) when is_atom(tag), do: {:error, tag}
 
+  @doc """
+  When a limit that `now` answered ends (#1654): `wait`, the time a limit class carries or a
+  number of seconds after `now`, else 1 h after `now`, clamped between 1 min and 24 h after
+  `now`. The answer is whole seconds. #1658 and #1659 are to end a grab's limit with it.
+  """
+  @spec limit_until(wait() | non_neg_integer(), DateTime.t()) :: DateTime.t()
+  def limit_until(wait, %DateTime{} = now) do
+    now = DateTime.truncate(now, :second)
+    shortest = DateTime.add(now, @min_limit_s, :second)
+    longest = DateTime.add(now, @max_limit_s, :second)
+
+    until = wait |> limit_end(now) |> DateTime.truncate(:second)
+    [until, shortest] |> Enum.max(DateTime) |> then(&Enum.min([&1, longest], DateTime))
+  end
+
+  defp limit_end(nil, now), do: DateTime.add(now, @default_limit_s, :second)
+  defp limit_end(seconds, now) when is_integer(seconds), do: DateTime.add(now, seconds, :second)
+  defp limit_end(%DateTime{} = until, _now), do: until
+
   @doc "The report's failure reason for a class or a transport tag; see the moduledoc."
   @spec reason(class() | atom()) :: atom() | tuple()
+  def reason({:rejected_credentials, _by}), do: :rejected_credentials
   def reason({:disabled_till, _wait}), do: {:http_status, 429}
   def reason({:query_error, code}), do: {:indexer_error, code}
   def reason(class), do: class
@@ -137,7 +164,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
 
   defp document(_body), do: nil
 
-  defp status_class(401, _document, _headers, _now), do: :rejected_credentials
+  defp status_class(401, _document, _headers, _now),
+    do: {:rejected_credentials, {:http_status, 401}}
 
   defp status_class(429, document, headers, now) do
     description = with {_code, text} <- error_element(document), do: text
@@ -169,7 +197,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
   defp success_class(status, _document, _success), do: {:http_status, status}
 
   defp error_class(code, _description, _headers, _now) when code in 100..102 or code == 910,
-    do: :rejected_credentials
+    do: {:rejected_credentials, {:code, code}}
 
   defp error_class(code, description, headers, now) when code in [500, 501] do
     if description != nil and String.contains?(String.downcase(description), "limit"),
