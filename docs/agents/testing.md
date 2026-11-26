@@ -89,6 +89,14 @@
   in under half a second. On #1670 (PR #1712) the Spec review found `\C`, and the re-check then
   found `\c\\C` hiding a real `\C` from the first fix's scan, a second fix round the sweep would
   have saved.
+- Such a check that refuses .NET syntax PCRE reads another way accepts only the forms both
+  engines read alike and refuses every other one, as `BoundedRegex.groups_allowed?/1` does
+  for `(?` groups, with a `dotnet fsi` row for each kind of `(?` group `check/1` accepts. A
+  short-string sweep cannot reach a construct hidden behind a longer form. On #1677 (PR #1831)
+  the subtraction scan missed a `-[` behind a `#` comment of the `x` flag (#1820), a rule refusing
+  option groups that name `x` then missed `(?+x)` (#1825), and the thread stopped under its stop
+  rule before the allowlist. The allowlist's hunk check found no bypass, but found it accepted
+  `(?)`, which .NET refuses: a refused row now pins it.
 - A fix that escapes each value inserted into text a parser then reads as one string, such as
   the `$` to `$$` of `Cardigann.Filters`' `re_replace`, tests an insertion with the parser's
   syntax written right before it and right after it, each beside a value whose first or last
