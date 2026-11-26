@@ -17,6 +17,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     search_audiobook_query: 2,
     search_ebook: 3,
     search_ebook_query: 2,
+    search_movie: 3,
     search_movie_query: 2,
     search_tv: 3,
     search_tv_query: 2
@@ -33,7 +34,7 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 
-  test "the seam keeps its ten callbacks, and the adapter and the mocks implement it" do
+  test "the seam keeps its eleven callbacks, and the adapter and the mocks implement it" do
     assert Enum.sort(IndexerSource.behaviour_info(:callbacks)) == @callbacks
 
     assert IndexerSource in behaviours(IndexerSource.Prowlarr)

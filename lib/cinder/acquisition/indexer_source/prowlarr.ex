@@ -17,6 +17,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
   the id query alone is not enough), reusing the same normalization.
 
+  `search_movie/3`, the standard movie search, sends `search/1`.
+
   `search_movie_query/2` is the free-text movie search (`type=search`), scoped to the movie
   category by default.
 
@@ -72,6 +74,14 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   def search(imdb_id) do
     search_query("{ImdbId:#{imdb_id}}", "movie", [])
   end
+
+  @doc """
+  A standard movie search: `search/1` of `imdb_id`, the one request Prowlarr has always sent.
+  `query` and `opts` are not read, since Prowlarr asks no indexer whose caps lack `imdbid`
+  (cinder#1613) and the maintainer kept Prowlarr as it is (#1632).
+  """
+  @impl true
+  def search_movie(imdb_id, _query, _opts), do: search(imdb_id)
 
   @impl true
   def search_tv(nil, title, season) do

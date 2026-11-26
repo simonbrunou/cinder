@@ -664,7 +664,7 @@ defmodule Cinder.Download.PollerTest do
 
       assert movie.status == :requested
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
         {:ok,
          [
            %{
@@ -746,6 +746,10 @@ defmodule Cinder.Download.PollerTest do
           genres: ["Animation"]
         })
 
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _imdb_id, _query, _opts ->
+        {:ok, []}
+      end)
+
       stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id -> {:ok, []} end)
       stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts -> {:ok, []} end)
 
@@ -766,7 +770,7 @@ defmodule Cinder.Download.PollerTest do
 
       set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt7777777" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt7777777", _query, _opts ->
         {:ok,
          [
            %{
@@ -820,7 +824,7 @@ defmodule Cinder.Download.PollerTest do
         :ok
       end)
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn imdb_id, _query, _opts ->
         send(test_pid, {:searched, imdb_id})
         {:ok, []}
       end)
@@ -847,7 +851,10 @@ defmodule Cinder.Download.PollerTest do
 
     test "backoff: a just-failed movie is not re-attempted until retry_after elapses" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt2" -> {:error, :prowlarr_down} end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt2", _query, _opts ->
+        {:error, :prowlarr_down}
+      end)
 
       start_supervised!({Poller, interval: 60_000, search_retry_after: 60})
 
@@ -891,7 +898,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, movie} =
         Catalog.add_movie(%{tmdb_id: 401, title: "Crash Window", imdb_id: "tt0000401"})
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000401" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0000401", _query, _opts ->
         {:ok,
          [
            %{

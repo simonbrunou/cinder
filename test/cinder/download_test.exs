@@ -27,7 +27,7 @@ defmodule Cinder.DownloadTest do
   test "hands a requested movie off and advances it to :downloading" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok, [survivable_result()]}
     end)
 
@@ -85,7 +85,7 @@ defmodule Cinder.DownloadTest do
     deny(Cinder.Acquisition.IndexerMock, :search_movie_query, 2)
     deny(Cinder.Acquisition.IndexerMock, :search_tv_query, 2)
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-standard" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt-standard", _query, _opts ->
       {:ok, [survivable_result()]}
     end)
 
@@ -107,7 +107,12 @@ defmodule Cinder.DownloadTest do
 
     movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
 
-    expect(Cinder.Acquisition.IndexerMock, :search, 2, fn "tt-anime-auto" -> {:ok, []} end)
+    # The standard pass's search, then the anime fallback's id query.
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt-anime-auto", _query, _opts ->
+      {:ok, []}
+    end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-auto" -> {:ok, []} end)
 
     expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn
       "Your Name 2016", categories: [5070] ->
@@ -175,7 +180,12 @@ defmodule Cinder.DownloadTest do
 
       movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
 
-      expect(Cinder.Acquisition.IndexerMock, :search, 2, fn "tt-auto-wrong" ->
+      # The standard pass's search, then the anime fallback's id query.
+      expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt-auto-wrong", _query, _opts ->
+        {:ok, [@wrong_film]}
+      end)
+
+      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-auto-wrong" ->
         {:ok, [@wrong_film]}
       end)
 
@@ -199,7 +209,11 @@ defmodule Cinder.DownloadTest do
 
     movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
     deny(Cinder.Acquisition.IndexerMock, :search_movie_query, 2)
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-standard" -> {:ok, []} end)
+    deny(Cinder.Acquisition.IndexerMock, :search, 1)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt-anime-standard", _q, _opts ->
+      {:ok, []}
+    end)
 
     assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
@@ -231,7 +245,10 @@ defmodule Cinder.DownloadTest do
   test "persists the chosen release_title on the :downloading transition" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+      {:ok, [survivable_result()]}
+    end)
+
     expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-1"} end)
 
     assert {:ok, %Movie{release_title: "Inception.2010.1080p.BluRay.x264-GRP"}} =
@@ -267,7 +284,9 @@ defmodule Cinder.DownloadTest do
       movie_id: movie.id
     })
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [release_a(), release_b()]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+      {:ok, [release_a(), release_b()]}
+    end)
 
     # A would win on resolution; the blocklist drops it, so the client must receive B.
     expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
@@ -288,7 +307,9 @@ defmodule Cinder.DownloadTest do
       movie_id: movie.id
     })
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [release_a()]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+      {:ok, [release_a()]}
+    end)
 
     # ClientMock.add has no expectation → verify_on_exit! fails if the blocked release is re-grabbed.
 
@@ -309,7 +330,7 @@ defmodule Cinder.DownloadTest do
   test "routes a usenet release to the usenet client and persists the protocol" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok,
        [
          %{
@@ -348,7 +369,7 @@ defmodule Cinder.DownloadTest do
       {:ok, %{tmdb_id: movie.tmdb_id, imdb_id: "tt1375666"}}
     end)
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok, [survivable_result()]}
     end)
 
@@ -359,7 +380,7 @@ defmodule Cinder.DownloadTest do
 
   test "parks the movie at :no_match when no release survives scoring" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, []} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts -> {:ok, []} end)
 
     assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
@@ -399,7 +420,11 @@ defmodule Cinder.DownloadTest do
 
   test "returns the client error and leaves the movie :searching on add failure" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+      {:ok, [survivable_result()]}
+    end)
+
     expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:error, :qbittorrent_down} end)
 
     assert {:error, :qbittorrent_down} = Download.start(movie)

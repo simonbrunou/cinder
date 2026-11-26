@@ -282,7 +282,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
       on_exit(fn -> put_vault_config(vault_config) end)
       test_pid = self()
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000002" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0000002", _query, _opts ->
         put_vault_config(vault_config)
         {:ok, [indexer_result(@bravo_found)]}
       end)
@@ -408,7 +408,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
     prepare.(movie.id)
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok, [indexer_result(@movie_found)]}
     end)
 
@@ -424,7 +424,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   defp poll_transient_failure(_movie_id) do
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok, [indexer_result(@movie_stored)]}
     end)
 
@@ -486,7 +486,7 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   defp stub_movie_search do
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn imdb_id, _query, _opts ->
       send(test_pid, {:search, imdb_id})
       if imdb_id == "tt0000002", do: {:ok, [indexer_result(@bravo_found)]}, else: {:ok, []}
     end)

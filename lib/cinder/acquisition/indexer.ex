@@ -46,6 +46,7 @@ defmodule Cinder.Acquisition.Indexer do
   """
   @type query ::
           {:search, imdb_id :: String.t()}
+          | {:search_movie, imdb_id :: String.t(), query :: String.t(), opts :: keyword()}
           | {:search_movie_query, query :: String.t(), opts :: keyword()}
           | {:search_tv_query, query :: String.t(), opts :: keyword()}
           | {:search_tv, tvdb_id :: integer() | nil, title :: String.t(),

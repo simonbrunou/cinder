@@ -395,7 +395,7 @@ defmodule Cinder.Download.GrabReserveTest do
 
       titles = %{"tt0000001" => "Alpha", "tt0000002" => "Bravo", "tt0000003" => "Charlie"}
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn imdb ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn imdb, _query, _opts ->
         {:ok,
          [
            %{
@@ -427,7 +427,7 @@ defmodule Cinder.Download.GrabReserveTest do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 7001, title: "Big", imdb_id: "tt7777001"})
       inflight = tv_grab!()
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt7777001" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt7777001", _query, _opts ->
         {:ok,
          [
            %{
@@ -560,7 +560,7 @@ defmodule Cinder.Download.GrabReserveTest do
 
       inflight = tv_grab!()
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
         {:ok, [tv_release("Inception.2010.1080p.BluRay.x264-GRP")]}
       end)
 

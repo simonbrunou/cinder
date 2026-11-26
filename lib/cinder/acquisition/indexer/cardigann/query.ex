@@ -11,6 +11,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
   | Seam call | Query | Origin |
   |---|---|---|
   | `search(imdb)` | `.Query.IMDBID`, when `movie-search` lists `imdbid` | id-scoped |
+  | `search_movie(imdb, query, _)` | as `search(imdb)` when `movie-search` lists `imdbid`, and nothing else | id-scoped |
+  | `search_movie(imdb, query, _)` | else the query, when `search` lists `q` and the query is not blank | free text |
   | `search_tv` with a TVDB id | `.Query.TVDBID` and `.Query.Season`, when `tv-search` lists `tvdbid` | id-scoped |
   | `search_tv` | the title plus ` S<nn>` for a season above 0, when `tv-search` lists `q` and `season`, else when `search` lists `q` | free text |
   | the four `*_query` calls | the text, when `search` lists `q` | free text |
@@ -226,6 +228,16 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
       ]
     else
       _not_asked -> []
+    end
+  end
+
+  # #1632, as `Cinder.Acquisition.Indexer.Newznab` plans it: the id query alone when
+  # `movie-search` lists `imdbid`, else the text.
+  defp asks(definition, {:search_movie, imdb_id, text, opts}) do
+    cond do
+      mode?(definition, "movie-search", "imdbid") -> asks(definition, {:search, imdb_id})
+      not is_binary(text) or String.trim(text) == "" -> []
+      true -> text_ask(definition, text, scope(opts, @movie_category))
     end
   end
 

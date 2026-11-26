@@ -49,7 +49,7 @@ defmodule Cinder.Acquisition.IndexerSourcePriorityTest do
     movie_fixture(%{title: "Plain", year: 2020, imdb_id: "tt0133093"})
     test_pid = self()
 
-    stub(IndexerMock, :search, fn "tt0133093" ->
+    stub(IndexerMock, :search_movie, fn "tt0133093", _query, _opts ->
       send(test_pid, {:priority, IndexerSource.priority()})
       {:ok, []}
     end)

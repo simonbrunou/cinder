@@ -64,7 +64,7 @@ defmodule Cinder.Download.SearchHoldTest do
   defp answer_movie_search(imdb_id, answer) do
     test_pid = self()
 
-    stub(IndexerMock, :search, fn ^imdb_id ->
+    stub(IndexerMock, :search_movie, fn ^imdb_id, _query, _opts ->
       send(test_pid, {:movie_search, imdb_id})
       answer
     end)

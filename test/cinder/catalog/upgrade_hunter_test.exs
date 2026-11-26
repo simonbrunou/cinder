@@ -43,7 +43,9 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   end
 
   defp indexer_offers(title, results) do
-    stub(Cinder.Acquisition.IndexerMock, :search, fn ^title -> {:ok, results} end)
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn ^title, _query, _opts ->
+      {:ok, results}
+    end)
   end
 
   # Each result has its own download URL, as an indexer returns them: a season's release list keeps
@@ -145,7 +147,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       movie = library_movie(%{imported_resolution: "2160p"})
       test_pid = self()
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn _query ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _imdb_id, _query, _opts ->
         send(test_pid, :movie_indexer_searched)
         {:ok, []}
       end)
@@ -209,7 +211,10 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     test "an indexer failure leaves the movie alone but still counts as checked" do
       movie = library_movie()
       watch_grabs()
-      stub(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:error, :timeout} end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+        {:error, :timeout}
+      end)
 
       poll()
 

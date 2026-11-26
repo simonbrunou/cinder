@@ -143,7 +143,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release/3 composes indexer search, parse, and scoring" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok,
        [
          raw(title: "Movie.2020.720p.BluRay.x264-GOOD", size: 4 * @gb),
@@ -156,7 +156,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release/3 returns :no_match when nothing survives the rules" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
       {:ok, [raw(title: "Movie.2020.1080p.BluRay.x264-GRP", size: 50 * @gb)]}
     end)
 
@@ -164,19 +164,21 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release/3 returns :no_match on an empty indexer result" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, []} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts -> {:ok, []} end)
 
     assert :no_match = Acquisition.best_release("tt1375666", movie_context())
   end
 
   test "best_release/3 passes an indexer error straight through" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:error, :timeout} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
+      {:error, :timeout}
+    end)
 
     assert {:error, :timeout} = Acquisition.best_release("tt1375666", movie_context())
   end
 
   test "best_release/3 excludes releases whose protocol has no configured client" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
       {:ok,
        [
          raw(title: "Movie.2020.1080p.WEB-DL-USE", protocol: :usenet, size: 9 * @gb),
@@ -194,7 +196,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release/3 with no :protocols opt keeps every protocol" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn _, _query, _opts ->
       {:ok, [raw(title: "Movie.2020.1080p.WEB-DL-USE", protocol: :usenet, size: 9 * @gb)]}
     end)
 
@@ -203,7 +205,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release filters by language: french pick keeps a FRENCH release" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb),
@@ -222,7 +224,7 @@ defmodule Cinder.AcquisitionTest do
   test "best_release: a french 480p is rejected, not grabbed, when 1080p was asked for" do
     # The reported bug: a French pick where the only in-band French release is 480p (the higher-res
     # French one is absent/too big) used to grab the 480p. With the resolution allow-list it parks.
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Movie.2020.FRENCH.480p.WEB-DL-FR", size: 2 * @gb),
@@ -240,7 +242,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release returns :no_language_match when nothing satisfies the pick" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok, [raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb)]}
     end)
 
@@ -253,7 +255,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release with original pick on an English title accepts untagged, rejects a FRENCH tag" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Movie.2020.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb),
@@ -270,7 +272,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release with no language preference is unchanged (any/nil)" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok, [raw(title: "Movie.2020.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)]}
     end)
 
@@ -286,7 +288,7 @@ defmodule Cinder.AcquisitionTest do
     # The parser tags `language` from the whole release name, so "The Italian Job" is tagged
     # ITALIAN. Under the soft default (original/en), nothing satisfies — but rather than parking,
     # best_release falls back to scoring the unfiltered candidates so the title isn't stranded.
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "The.Italian.Job.2003.720p.BluRay.x264-GRP", size: 6 * @gb),
@@ -303,7 +305,7 @@ defmodule Cinder.AcquisitionTest do
   end
 
   test "best_release with an explicit language pick still parks on a title-word collision (strict)" do
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "The.Italian.Job.2003.720p.BluRay.x264-GRP", size: 6 * @gb),
@@ -322,7 +324,7 @@ defmodule Cinder.AcquisitionTest do
   test "best_release: a recognised foreign dub never outranks the original-language release" do
     # The Hungarian bug: the dub used to parse to nil, was assumed 'original', and could outscore
     # the French release. Now it's tagged HUNGARIAN and dropped, so French wins despite being smaller.
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Chasse.Gardee.2024.HUNGARIAN.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
@@ -342,7 +344,7 @@ defmodule Cinder.AcquisitionTest do
     # No language token → not a confirmed match → ranked below the tagged FRENCH release, so it
     # can't masquerade as the French original and outscore the real one (it is a bigger 1080p,
     # which wins on every non-language axis).
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Chasse.Gardee.2024.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
@@ -363,7 +365,7 @@ defmodule Cinder.AcquisitionTest do
     # releases with a bare name. The tagged alternatives here are out of band (a 19 GB BluRay),
     # so a strict untagged=English read left the movie at :no_match with a perfect candidate on
     # the indexer.
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       {:ok,
        [
          raw(title: "Guru.2025.FRENCH.1080p.BluRay.x264-GRP", size: 19 * @gb),
@@ -386,8 +388,13 @@ defmodule Cinder.AcquisitionTest do
     wrong = raw(title: "Spider-Island.2026.1080p.WEB-DL.x264-BIG", size: 15 * @gb)
     right = raw(title: "Spider-Man.Brand.New.Day.2026.1080p.WEB-DL.x264-GRP", size: 6 * @gb)
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt22084616" -> {:ok, [wrong, right]} end)
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt22084616" -> {:ok, [wrong]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt22084616", _query, _opts ->
+      {:ok, [wrong, right]}
+    end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt22084616", _query, _opts ->
+      {:ok, [wrong]}
+    end)
 
     assert {:ok, %Release{group: "GRP"}} =
              Acquisition.best_release("tt22084616", context, max_size: 20 * @gb)
@@ -410,8 +417,13 @@ defmodule Cinder.AcquisitionTest do
     wrong = raw(title: "Spider.2002.1080p.BluRay.x264-HORROR", size: 15 * @gb)
     right = raw(title: "Spiderman.2002.1080p.Bluray.x264-hV", size: 12 * @gb)
 
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong, right]} end)
-    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong]} end)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0145487", _query, _opts ->
+      {:ok, [wrong, right]}
+    end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0145487", _query, _opts ->
+      {:ok, [wrong]}
+    end)
 
     assert {:ok, %Release{group: "hV"}} =
              Acquisition.best_release("tt0145487", context, max_size: 20 * @gb)
@@ -422,7 +434,7 @@ defmodule Cinder.AcquisitionTest do
   describe "judge_movie/3" do
     test "judges every release, acceptable first" do
       Cinder.Acquisition.IndexerMock
-      |> expect(:search, fn "tt1" ->
+      |> expect(:search_movie, fn "tt1", _query, _opts ->
         {:ok,
          [
            %{
@@ -458,7 +470,7 @@ defmodule Cinder.AcquisitionTest do
 
     test "flags a release on an unconfigured protocol" do
       Cinder.Acquisition.IndexerMock
-      |> expect(:search, fn _ ->
+      |> expect(:search_movie, fn _, _query, _opts ->
         {:ok, [%{title: "U", size: 1_000_000_000, protocol: :usenet, download_url: "u"}]}
       end)
 
@@ -469,7 +481,9 @@ defmodule Cinder.AcquisitionTest do
     end
 
     test "passes through an indexer error" do
-      Cinder.Acquisition.IndexerMock |> expect(:search, fn _ -> {:error, :down} end)
+      Cinder.Acquisition.IndexerMock
+      |> expect(:search_movie, fn _, _query, _opts -> {:error, :down} end)
+
       assert Acquisition.judge_movie("tt1", movie_context(), []) == {:error, :down}
     end
 
@@ -481,7 +495,10 @@ defmodule Cinder.AcquisitionTest do
       context = movie_context(imdb_id: "tt0145487", title: "Spider-Man", year: 2002)
       wrong = raw(title: "Spider.2002.1080p.BluRay.x264-GRP", size: 9 * @gb)
       right = raw(title: "Spiderman.2002.1080p.BluRay.x264-GRP", size: 6 * @gb)
-      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt0145487" -> {:ok, [wrong, right]} end)
+
+      expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0145487", _query, _opts ->
+        {:ok, [wrong, right]}
+      end)
 
       assert [
                {%Release{title: "Spiderman.2002" <> _}, :ok},
@@ -495,7 +512,9 @@ defmodule Cinder.AcquisitionTest do
     # The sweep can fetch an IMDb id the context doesn't carry yet (`Download.ensure_imdb_id/1`):
     # the guard follows the id that was searched.
     test "searches by the id it is given, whatever the context says" do
-      expect(Cinder.Acquisition.IndexerMock, :search, fn "tt9" -> {:ok, [raw([])]} end)
+      expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt9", _query, _opts ->
+        {:ok, [raw([])]}
+      end)
 
       assert {:ok, %ReleaseJudge{guard: {:imdb, _context}}} =
                Acquisition.judge_movie("tt9", movie_context(imdb_id: nil), [])
@@ -508,6 +527,175 @@ defmodule Cinder.AcquisitionTest do
 
       assert {:ok, %ReleaseJudge{guard: {:title_year, "Movie", 2020}}} =
                Acquisition.judge_movie("", movie_context(), [])
+    end
+  end
+
+  # #1632: under the built-in source an indexer that takes no IMDb id is asked by "Title Year", so
+  # one standard movie search can answer id-scoped and free-text rows.
+  describe "judge_movie/3 with an IMDb id: one search_movie/3 call and a guard per row" do
+    defp dune(attrs \\ []),
+      do: movie_context([imdb_id: "tt1160419", title: "Dune", year: 2021] ++ attrs)
+
+    # The row of `title` in the judged record.
+    defp judged_row({:ok, %ReleaseJudge{rows: rows}}, title),
+      do: Enum.find(rows, &(&1.release.title == title)) || flunk("no row #{title}")
+
+    test "asks search_movie/3 once with the \"Title Year\" query, and never search/1" do
+      deny(Cinder.Acquisition.IndexerMock, :search, 1)
+      deny(Cinder.Acquisition.IndexerMock, :search_movie_query, 2)
+
+      expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1160419", "Dune 2021", [] ->
+        {:ok, [raw(title: "Dune.2021.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert {:ok, %ReleaseJudge{guard: {:imdb, _context}}} =
+               Acquisition.judge_movie("tt1160419", dune(), [])
+    end
+
+    test "a nil year sends the title alone" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1160419", "Dune", [] ->
+        {:ok, []}
+      end)
+
+      assert {:ok, %ReleaseJudge{}} = Acquisition.judge_movie("tt1160419", dune(year: nil), [])
+    end
+
+    test "the indexer_source opt names the module that gets the call" do
+      expect(Cinder.Acquisition.PassedIndexerMock, :search_movie, fn "tt1160419",
+                                                                     "Dune 2021",
+                                                                     [] ->
+        {:ok, []}
+      end)
+
+      assert {:ok, %ReleaseJudge{}} =
+               Acquisition.judge_movie("tt1160419", dune(),
+                 indexer_source: Cinder.Acquisition.PassedIndexerMock
+               )
+    end
+
+    test "a text-only row faces Title.Year and drops with no title_mismatch verdict; others the IMDb guard" do
+      rows = [
+        raw(
+          title: "Dune.Part.Two.2024.1080p.WEB-DL-GRP",
+          download_url: "p2",
+          query_origins: [:free_text]
+        ),
+        raw(
+          title: "Dune.German.2021.1080p.WEB-DL-GER",
+          download_url: "de",
+          query_origins: [:free_text]
+        ),
+        # Another film of the same title: the year half of the Title.Year rule drops it.
+        raw(
+          title: "Dune.1984.1080p.BluRay.x264-OLD",
+          download_url: "1984",
+          query_origins: [:free_text]
+        ),
+        raw(
+          title: "Dune.2021.1080p.WEB-DL-TXT",
+          download_url: "txt",
+          query_origins: [:free_text]
+        ),
+        raw(
+          title: "Dune.2021.1080p.BluRay.x264-GRP",
+          download_url: "id",
+          query_origins: [:id_scoped]
+        ),
+        raw(title: "Dune.Part.Two.2024.720p.WEB-DL-NIL", download_url: "nil", query_origins: nil),
+        raw(
+          title: "Dune.Part.Two.2024.720p.WEB-DL-EMPTY",
+          download_url: "empty",
+          query_origins: []
+        ),
+        raw(
+          title: "Dune.Part.Two.2024.720p.WEB-DL-BOTH",
+          download_url: "both",
+          query_origins: [:id_scoped, :free_text]
+        )
+      ]
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _id, _query, _opts -> {:ok, rows} end)
+
+      judged = Acquisition.judge_movie("tt1160419", dune(), max_size: 20 * @gb)
+
+      # The verdict a Title.Year drop gets on the no-id path, for the same row.
+      title_year_verdict = fn title ->
+        rows
+        |> Enum.map(&Release.new/1)
+        |> ReleaseJudge.judge({:title_year, "Dune", 2021}, max_size: 20 * @gb)
+        |> Map.fetch!(:rows)
+        |> Enum.find(&(&1.release.title == title))
+        |> Map.fetch!(:verdict)
+      end
+
+      for title <- [
+            "Dune.Part.Two.2024.1080p.WEB-DL-GRP",
+            "Dune.German.2021.1080p.WEB-DL-GER",
+            "Dune.1984.1080p.BluRay.x264-OLD"
+          ] do
+        row = judged_row(judged, title)
+        assert row.dropped_at == :title_guard, title
+        assert row.verdict == title_year_verdict.(title), title
+        refute row.verdict == {:rejected, :title_mismatch}, title
+      end
+
+      for title <- [
+            "Dune.2021.1080p.WEB-DL-TXT",
+            "Dune.2021.1080p.BluRay.x264-GRP",
+            "Dune.Part.Two.2024.720p.WEB-DL-NIL",
+            "Dune.Part.Two.2024.720p.WEB-DL-EMPTY",
+            "Dune.Part.Two.2024.720p.WEB-DL-BOTH"
+          ] do
+        assert judged_row(judged, title).dropped_at == nil, title
+      end
+    end
+
+    test "a row the IMDb guard drops still reads title_mismatch, whatever its id-scoped origins" do
+      for origins <- [nil, [], [:id_scoped], [:id_scoped, :free_text]] do
+        stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _id, _query, _opts ->
+          {:ok, [raw(title: "Arrival.2016.1080p.WEB-DL-GRP", query_origins: origins)]}
+        end)
+
+        row =
+          judged_row(
+            Acquisition.judge_movie("tt1160419", dune(), []),
+            "Arrival.2016.1080p.WEB-DL-GRP"
+          )
+
+        assert {row.dropped_at, row.verdict} == {:title_guard, {:rejected, :title_mismatch}},
+               inspect(origins)
+      end
+    end
+
+    test "with no Latin needle in the title, every text-only row is dropped and an id-scoped one kept" do
+      context = dune(title: "デューン", localized_titles: [], aliases: [])
+
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _id, _query, _opts ->
+        {:ok,
+         [
+           raw(
+             title: "Dune.2021.1080p.WEB-DL-TXT",
+             download_url: "t",
+             query_origins: [:free_text]
+           ),
+           raw(title: "Dune.2021.1080p.WEB-DL-ID", download_url: "i", query_origins: [:id_scoped])
+         ]}
+      end)
+
+      judged = Acquisition.judge_movie("tt1160419", context, [])
+      assert judged_row(judged, "Dune.2021.1080p.WEB-DL-TXT").dropped_at == :title_guard
+      assert judged_row(judged, "Dune.2021.1080p.WEB-DL-ID").dropped_at == nil
+    end
+
+    # A known effect, recorded in the PR: Nyaa.si maps its anime category under Movies/Other too, so
+    # the standard pass now asks it by text, and a `[Group] Title (Year)` name passes Title.Year.
+    test "a bracketed anime-style text row passes Title.Year and is picked under the standard profile" do
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _id, _query, _opts ->
+        {:ok, [raw(title: "[Group] Dune (2021) [1080p]", query_origins: [:free_text])]}
+      end)
+
+      assert {:ok, %Release{title: "[Group] Dune (2021) [1080p]"}} =
+               Acquisition.best_release("tt1160419", dune(), max_size: 20 * @gb)
     end
   end
 

@@ -76,9 +76,15 @@ defmodule Cinder.Download.SearchReportSweepTest do
     series |> Series.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
   end
 
-  # Reports each anime free-text query to the test, on `mock`.
+  # Reports each anime query to the test, on `mock`: the id query as `{:id, imdb_id}`, each
+  # free-text query as its text.
   defp spy_anime_queries(mock) do
     test_pid = self()
+
+    stub(mock, :search, fn imdb_id ->
+      send(test_pid, {:anime_query, mock, {:id, imdb_id}})
+      {:ok, []}
+    end)
 
     stub(mock, :search_movie_query, fn query, _opts ->
       send(test_pid, {:anime_query, mock, query})
@@ -94,8 +100,11 @@ defmodule Cinder.Download.SearchReportSweepTest do
   describe "a standard movie search" do
     test "that an indexer failed runs no anime fallback and counts an attempt" do
       movie = auto_anime_movie("tt-incomplete")
-      stub(IndexerMock, :search, fn "tt-incomplete" -> {:ok, [], failed_report()} end)
       spy_anime_queries(IndexerMock)
+
+      stub(IndexerMock, :search_movie, fn "tt-incomplete", _query, _opts ->
+        {:ok, [], failed_report()}
+      end)
 
       start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
       assert :ok = Poller.poll()
@@ -106,10 +115,14 @@ defmodule Cinder.Download.SearchReportSweepTest do
 
     test "that an indexer only skipped runs the anime fallback, as today" do
       movie = auto_anime_movie("tt-skipped")
-      stub(IndexerMock, :search, fn "tt-skipped" -> {:ok, [], skipped_report()} end)
       spy_anime_queries(IndexerMock)
 
+      stub(IndexerMock, :search_movie, fn "tt-skipped", _query, _opts ->
+        {:ok, [], skipped_report()}
+      end)
+
       assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
+      assert_received {:anime_query, IndexerMock, {:id, "tt-skipped"}}
       assert_received {:anime_query, IndexerMock, "Your Name 2016"}
     end
 
@@ -118,7 +131,7 @@ defmodule Cinder.Download.SearchReportSweepTest do
       unanswered = {:no_indexer_answered, failed_report()}
 
       for reason <- [:no_indexers, {:indexers_backing_off, @until}, unanswered] do
-        expect(IndexerMock, :search, fn "tt-plain" -> {:error, reason} end)
+        expect(IndexerMock, :search_movie, fn "tt-plain", _query, _opts -> {:error, reason} end)
         assert Download.start(Repo.get!(Movie, movie.id)) == {:error, reason}
       end
     end
@@ -127,7 +140,7 @@ defmodule Cinder.Download.SearchReportSweepTest do
       movie =
         movie_fixture(%{title: "Plain", year: 2020, imdb_id: "tt-park", search_attempts: 9})
 
-      stub(IndexerMock, :search, fn "tt-park" ->
+      stub(IndexerMock, :search_movie, fn "tt-park", _query, _opts ->
         {:error, {:no_indexer_answered, failed_report()}}
       end)
 
@@ -142,27 +155,27 @@ defmodule Cinder.Download.SearchReportSweepTest do
       movie = auto_anime_movie("tt-switch")
       test_pid = self()
 
-      stub(IndexerMock, :search, fn "tt-switch" ->
-        send(test_pid, {:id_search, IndexerMock})
+      spy_anime_queries(IndexerMock)
+      spy_anime_queries(PassedIndexerMock)
+
+      stub(IndexerMock, :search_movie, fn "tt-switch", _query, _opts ->
+        send(test_pid, {:movie_search, IndexerMock})
         Application.put_env(:cinder, :indexer_source, PassedIndexerMock)
         {:ok, []}
       end)
 
-      stub(PassedIndexerMock, :search, fn _imdb_id ->
-        send(test_pid, {:id_search, PassedIndexerMock})
+      stub(PassedIndexerMock, :search_movie, fn _imdb_id, _query, _opts ->
+        send(test_pid, {:movie_search, PassedIndexerMock})
         {:ok, []}
       end)
 
-      spy_anime_queries(IndexerMock)
-      spy_anime_queries(PassedIndexerMock)
-
       assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
 
-      # The standard search, then the anime fallback's id query.
-      assert_received {:id_search, IndexerMock}
-      assert_received {:id_search, IndexerMock}
+      # The standard search, then the anime fallback's id and text queries.
+      assert_received {:movie_search, IndexerMock}
+      assert_received {:anime_query, IndexerMock, {:id, "tt-switch"}}
       assert_received {:anime_query, IndexerMock, "Your Name 2016"}
-      refute_received {:id_search, PassedIndexerMock}
+      refute_received {:movie_search, PassedIndexerMock}
       refute_received {:anime_query, PassedIndexerMock, _query}
     end
   end

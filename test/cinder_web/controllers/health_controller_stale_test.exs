@@ -63,7 +63,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
     test = self()
     stub(IndexerMock, :search_movie_query, fn _query, _opts -> {:ok, []} end)
 
-    stub(IndexerMock, :search, fn imdb_id ->
+    stub(IndexerMock, :search_movie, fn imdb_id, _query, _opts ->
       send(test, {:searching, imdb_id, self()})
 
       receive do

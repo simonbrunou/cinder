@@ -39,14 +39,21 @@ defmodule Cinder.Acquisition do
   Searches the indexer for a movie and judges every result (`Cinder.Acquisition.ReleaseJudge`).
   The sweep picks from it (`best_release/3`) and the manual-search panel lists it.
 
-  With an IMDb id the search is `{ImdbId:...}`-scoped. That scope is not identity proof, so a
-  release must still spell one of the movie's known titles (`{:imdb, context}`). With a nil or
-  blank id (TMDB publishes none for some titles, #195) it is a free-text `"Title Year"` search,
-  and the stricter Title.Year guard re-establishes the identity the id would have pinned
+  With an IMDb id the search is one `search_movie/3` call with the id and the `"Title Year"`
+  text (#1632): Prowlarr asks by the id alone, and the built-in source asks an indexer that takes
+  no IMDb id by the text. The guard is `{:imdb, context}`. An id scope is not identity proof, so
+  a release must still spell one of the movie's known titles, and a release only the text query
+  found faces the Title.Year rule instead (`title_guard/2`). With a nil or blank id (TMDB
+  publishes none for some titles, #195) it is a free-text `"Title Year"` search, and the stricter
+  Title.Year guard re-establishes the identity the id would have pinned
   (`{:title_year, title, year}`). The guard follows the id that was searched, not
   `context.imdb_id`: the sweep can fetch an id the context doesn't carry yet.
 
-  The judged record carries the search's report (`Cinder.Acquisition.IndexerSource.Report`).
+  The judged record carries the search's report (`Cinder.Acquisition.IndexerSource.Report`). An
+  indexer that the built-in source's report lists as failed makes it incomplete, its text
+  request included. When another indexer answered, a miss then reaches the sweep as
+  `{:error, :incomplete_search}` (`best_release/3`), not `:no_match`, so the Auto profile's
+  anime fallback, which runs only on `:no_match`, does not run (`Cinder.Download`).
   """
   def judge_movie(imdb_id, context, opts \\ []) do
     {indexer, opts} = IndexerSource.pop_opt(opts)
@@ -61,9 +68,14 @@ defmodule Cinder.Acquisition do
   end
 
   defp judge_movie_with(indexer, imdb_id, context, opts) do
-    with {:ok, raw, report} <- Report.from_result(indexer.search(imdb_id)),
+    query = movie_query(context.title, context.year)
+
+    with {:ok, raw, report} <- Report.from_result(indexer.search_movie(imdb_id, query, [])),
          do: {:ok, judged(Enum.map(raw, &Release.new/1), {:imdb, context}, opts, report)}
   end
+
+  # The `"Title Year"` text of a movie search: the title, then the year when it is not nil.
+  defp movie_query(title, year), do: [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
 
   defp judged(releases, guard, opts, report),
     do: %{ReleaseJudge.judge(releases, guard, opts) | report: report}
@@ -190,8 +202,11 @@ defmodule Cinder.Acquisition do
   @doc """
   The release judge's title guard: the releases automatic selection keeps as the target's own.
 
-  - `{:imdb, context}`: an `{ImdbId:...}`-scoped movie search. The release has to spell one of the
-    movie's known titles (`context` is `Cinder.Catalog.movie_acquisition_context/1`'s map).
+  - `{:imdb, context}`: a movie search with an IMDb id. A release has to spell one of the movie's
+    known titles (`context` is `Cinder.Catalog.movie_acquisition_context/1`'s map). A release
+    only a free-text query found (`Cinder.Acquisition.Release.free_text_only?/1`) faces the
+    Title.Year rule of `{:title_year, context.title, context.year}` instead. The input order is
+    kept.
   - `{:title_year, title, year}`: a free-text movie search. Everything before the year token has
     to be the title.
   - `{:series, series, season_number, wanted_numbers}`: a season search. An explicit TVDB id
@@ -209,7 +224,13 @@ defmodule Cinder.Acquisition do
 
   Only `Cinder.Acquisition.ReleaseJudge` calls this.
   """
-  def title_guard(releases, {:imdb, context}), do: filter_id_scoped_movie(releases, context)
+  def title_guard(releases, {:imdb, context}) do
+    Enum.filter(releases, fn release ->
+      if Release.free_text_only?(release),
+        do: filter_movie_title([release], context.title, context.year) != [],
+        else: filter_id_scoped_movie([release], context) != []
+    end)
+  end
 
   def title_guard(releases, {:title_year, title, year}),
     do: filter_movie_title(releases, title, year)
@@ -769,9 +790,8 @@ defmodule Cinder.Acquisition do
   # keep listing everything — the guard is deliberately strict, so a title convention it fails
   # closed on is exactly when the operator needs to see and override the rows.
   defp title_search(indexer, title, year) do
-    query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
-
-    with {:ok, raw, report} <- Report.from_result(indexer.search_movie_query(query, [])),
+    with {:ok, raw, report} <-
+           Report.from_result(indexer.search_movie_query(movie_query(title, year), [])),
          do: {:ok, Enum.map(raw, &Release.new/1), report}
   end
 

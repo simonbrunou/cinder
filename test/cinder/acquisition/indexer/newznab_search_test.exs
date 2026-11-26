@@ -475,6 +475,72 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
     end
   end
 
+  # #1632's three Newznab indexers: A's movie-search takes `imdbid`, B's only `q` with a search
+  # that takes `q` and lists only category 2000, C's search is off and its movie-search lacks
+  # `imdbid`. Each answers every search request with rows of its own.
+  defp three_movie_indexers do
+    a = indexer!(:newznab, "a.example")
+    b = indexer!(:newznab, "b.example")
+    c = indexer!(:newznab, "c.example")
+
+    route(%{
+      "a.example" => fn _conn, query ->
+        if query["t"] == "caps",
+          do: :default,
+          else: rss([item("Dune.2021.1080p.WEB-DL-A", {:nzb, "https://a.example/1"})])
+      end,
+      "b.example" => fn _conn, query ->
+        if query["t"] == "caps",
+          do:
+            caps(
+              modes: %{
+                "search" => ~s(available="yes" supportedParams="q"),
+                "movie-search" => ~s(available="yes" supportedParams="q")
+              },
+              categories: [2000]
+            ),
+          else:
+            rss([
+              item("Dune.2021.1080p.BluRay.x264-GRP", {:nzb, "https://b.example/1"}),
+              item("Dune.Part.Two.2024.1080p.WEB-DL-GRP", {:nzb, "https://b.example/2"})
+            ])
+      end,
+      "c.example" => fn _conn, query ->
+        if query["t"] == "caps",
+          do:
+            caps(
+              modes: %{
+                "search" => ~s(available="no" supportedParams="q"),
+                "movie-search" => ~s(available="yes" supportedParams="q")
+              }
+            ),
+          else: rss([item("Dune.2021.720p-C", {:nzb, "https://c.example/1"})])
+      end
+    })
+
+    {a, b, c}
+  end
+
+  # Each host received one caps fetch and exactly the search requests `expected` lists for it,
+  # the key left out.
+  defp assert_movie_requests(expected) do
+    sent = receive_requests([])
+
+    for {host, searches} <- expected do
+      queries = for {^host, query} <- sent, do: Map.delete(query, "apikey")
+      assert Enum.count(queries, &(&1["t"] == "caps")) == 1, host
+      assert Enum.reject(queries, &(&1["t"] == "caps")) == searches, host
+    end
+  end
+
+  defp receive_requests(acc) do
+    receive do
+      {:newznab_request, host, query} -> receive_requests([{host, query} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   describe "through Native" do
     test "search_tv/3 with one Newznab indexer answers its rows, id-scoped first, and a report" do
       indexer = indexer!(:newznab, "a.example")
@@ -541,6 +607,45 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
                failing.id => {:failed, {:indexer_error, 201}},
                other.id => :asked
              }
+    end
+
+    test "search_movie/3 asks each indexer at most once: by id when it takes imdbid, else by text (#1632)" do
+      {a, b, c} = three_movie_indexers()
+
+      assert {:ok, rows, report} = Native.search_movie("tt1160419", "Dune 2021", [])
+
+      assert outcomes(report) == %{a.id => :asked, b.id => :asked, c.id => {:not_asked, :caps}}
+
+      assert Enum.map(rows, &{&1.title, &1.query_origins, &1.indexer_id}) == [
+               {"Dune.2021.1080p.WEB-DL-A", [:id_scoped], a.id},
+               {"Dune.2021.1080p.BluRay.x264-GRP", [:free_text], b.id},
+               {"Dune.Part.Two.2024.1080p.WEB-DL-GRP", [:free_text], b.id}
+             ]
+
+      assert_movie_requests(%{
+        "a.example" => [%{"t" => "movie", "imdbid" => "1160419"}],
+        "b.example" => [%{"t" => "search", "q" => "Dune 2021", "cat" => "2000"}],
+        "c.example" => []
+      })
+    end
+
+    test "search/1 against the same three indexers asks only the one that takes imdbid" do
+      {a, b, c} = three_movie_indexers()
+
+      assert {:ok, [%{indexer_id: a_id}], report} = Native.search("tt1160419")
+      assert a_id == a.id
+
+      assert outcomes(report) == %{
+               a.id => :asked,
+               b.id => {:not_asked, :caps},
+               c.id => {:not_asked, :caps}
+             }
+
+      assert_movie_requests(%{
+        "a.example" => [%{"t" => "movie", "imdbid" => "1160419"}],
+        "b.example" => [],
+        "c.example" => []
+      })
     end
 
     test "a lone indexer with a query error answers no indexer answered (#1651's rule)" do

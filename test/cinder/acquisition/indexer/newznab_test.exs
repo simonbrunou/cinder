@@ -166,6 +166,72 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
       end
     end
 
+    describe "#{@name}: search_movie/3 (a standard movie, #1632)" do
+      test "asks only t=movie by the id when movie-search lists imdbid, and no t=search" do
+        assert planned(@adapter, {:search_movie, "tt0133093", "The Matrix 1999", []}) ==
+                 [{key(%{"t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
+      end
+
+      test "asks t=search with the text, scoped to 2000, when movie-search lacks imdbid" do
+        for attrs <- [
+              ~s(available="yes" supportedParams="q"),
+              ~s(available="no" supportedParams="q,imdbid"),
+              nil
+            ] do
+          assert planned(@adapter, {:search_movie, "tt0133093", "The Matrix 1999", []},
+                   modes: %{@modes | "movie-search" => attrs}
+                 ) ==
+                   [
+                     {key(%{"t" => "search", "q" => "The Matrix 1999", "cat" => "2000,2040"}),
+                      :free_text}
+                   ]
+        end
+      end
+
+      test "takes the caller's categories for the text request" do
+        assert planned(
+                 @adapter,
+                 {:search_movie, "tt0133093", "The Matrix 1999", [categories: [5070]]},
+                 modes: %{@modes | "movie-search" => nil}
+               ) ==
+                 [
+                   {key(%{"t" => "search", "q" => "The Matrix 1999", "cat" => "5070"}),
+                    :free_text}
+                 ]
+      end
+
+      test "sends no text to an indexer that lists imdbid, though the id is not digits" do
+        for id <- ["nm0000123", "", "tt0133093x"] do
+          assert planned(@adapter, {:search_movie, id, "The Matrix 1999", []}) ==
+                   {:not_asked, :caps}
+        end
+      end
+
+      test "is not asked without imdbid when search lacks q or its categories cover no movie" do
+        no_imdbid = %{@modes | "movie-search" => ~s(available="yes" supportedParams="q")}
+
+        assert planned(@adapter, {:search_movie, "tt0133093", "The Matrix 1999", []},
+                 modes: %{no_imdbid | "search" => ~s(available="yes" supportedParams="imdbid")}
+               ) == {:not_asked, :caps}
+
+        assert planned(@adapter, {:search_movie, "tt0133093", "The Matrix 1999", []},
+                 modes: no_imdbid,
+                 categories: [5000, 7020]
+               ) == {:not_asked, :caps}
+      end
+
+      test "a blank query plans no text request, and the id request still goes out" do
+        for query <- ["", "   "] do
+          assert planned(@adapter, {:search_movie, "tt0133093", query, []},
+                   modes: %{@modes | "movie-search" => nil}
+                 ) == {:not_asked, :caps}
+
+          assert planned(@adapter, {:search_movie, "tt0133093", query, []}) ==
+                   [{key(%{"t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
+        end
+      end
+    end
+
     describe "#{@name}: search_tv/3" do
       test "asks the TVDB id with its season, and the title with its season, in that order" do
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 2}) == [

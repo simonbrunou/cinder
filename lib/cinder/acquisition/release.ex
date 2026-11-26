@@ -4,8 +4,9 @@ defmodule Cinder.Acquisition.Release do
   `download_url`, `download_url_origin`, `protocol`, `tvdb_id`, `query_origins`) plus the
   attributes parsed from its name. The shared shape passed between the indexer, parser, and scorer.
 
-  `query_origins` records identity-scoped and free-text query provenance; it is diagnostic rather
-  than proof because a provider may ignore the requested id. `tvdb_id`, when present, is the
+  `query_origins` records identity-scoped and free-text query provenance; it is not proof, because
+  a provider may ignore the requested id. The title guards read it to pick a rule per release
+  (`free_text_only?/1`, `Cinder.Acquisition.title_guard/2`). `tvdb_id`, when present, is the
   indexer result's explicit series identity and can preserve AKA-titled matches safely.
 
   `protocol` (`:torrent | :usenet`) routes the release to the matching download
@@ -77,6 +78,16 @@ defmodule Cinder.Acquisition.Release do
     }
     |> struct(Parser.parse(title))
   end
+
+  @doc """
+  Whether only a free-text query found `release`: its `query_origins` is a non-empty list without
+  `:id_scoped`. A release with no recorded origin, `nil` (as Prowlarr's `search/1` rows carry)
+  or `[]`, is not.
+  The IMDb movie guard reads such a release by the Title.Year rule (#1632).
+  """
+  @spec free_text_only?(map()) :: boolean()
+  def free_text_only?(%{query_origins: [_ | _] = origins}), do: :id_scoped not in origins
+  def free_text_only?(_release), do: false
 
   @provenance [
     :indexer_id,

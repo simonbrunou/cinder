@@ -217,6 +217,83 @@ defmodule Cinder.Acquisition.IndexerSource.NativeEndToEndTest do
     end
   end
 
+  # --- a standard movie on an indexer that takes no IMDb id (#1632) ---
+
+  @dune %{imdb_id: "tt1160419", title: "Dune", year: 2021, aliases: [], localized_titles: []}
+
+  # Caps whose movie-search lacks `imdbid` and whose search takes `q`, as most public torrent
+  # sites' definitions list.
+  defp text_only_caps,
+    do:
+      caps(
+        modes: %{
+          "search" => ~s(available="yes" supportedParams="q"),
+          "movie-search" => ~s(available="yes" supportedParams="q")
+        }
+      )
+
+  describe "a standard movie search through an indexer with no imdbid" do
+    test "sends it the \"Title Year\" text and picks the release Title.Year keeps" do
+      indexer = indexer!(:torznab, "text.example")
+
+      route(%{
+        "text.example" => fn _conn, query ->
+          case query do
+            %{"t" => "caps"} ->
+              text_only_caps()
+
+            %{"t" => "search", "q" => "Dune 2021"} ->
+              rss([
+                item("Dune.Part.Two.2024.1080p.WEB-DL-GRP", {:torrent, "https://text.example/2"},
+                  size: 9_000_000_000
+                ),
+                item("Dune.2021.1080p.BluRay.x264-GRP", {:torrent, "https://text.example/1"},
+                  size: 8_000_000_000
+                )
+              ])
+
+            _other ->
+              flunk("unexpected request #{inspect(query)}")
+          end
+        end
+      })
+
+      assert {:ok, release} = Acquisition.best_release("tt1160419", @dune, @opts)
+
+      assert {release.title, release.indexer_id} ==
+               {"Dune.2021.1080p.BluRay.x264-GRP", indexer.id}
+
+      assert {:ok, judged} = Acquisition.judge_movie("tt1160419", @dune, @opts)
+      [part_two] = Enum.filter(judged.rows, &(&1.release.title =~ "Part.Two"))
+      assert part_two.release.query_origins == [:free_text]
+      assert part_two.dropped_at == :title_guard
+      refute part_two.verdict == {:rejected, :title_mismatch}
+    end
+
+    test "a failed text request beside an answering id request makes the search incomplete" do
+      id_indexer = indexer!(:newznab, "id.example")
+      text_indexer = indexer!(:torznab, "text.example")
+
+      route(%{
+        "id.example" => fn _conn, _query -> :default end,
+        "text.example" => fn _conn, query ->
+          if query["t"] == "caps", do: text_only_caps(), else: {503, "down"}
+        end
+      })
+
+      assert {:ok, judged} = Acquisition.judge_movie("tt1160419", @dune, @opts)
+
+      assert outcomes(judged.report) == %{
+               id_indexer.id => :asked,
+               text_indexer.id => {:failed, {:http_status, 503}}
+             }
+
+      # The 503 started a backoff, which would skip the next search's text request.
+      clear_status!(text_indexer)
+      assert Acquisition.best_release("tt1160419", @dune, @opts) == {:error, :incomplete_search}
+    end
+  end
+
   # --- the 13 seam call sites ---
 
   # Each site's request, the entry that reaches it, and the item that answers it. Every other
@@ -230,8 +307,8 @@ defmodule Cinder.Acquisition.IndexerSource.NativeEndToEndTest do
   @audiobook "Ursula K. Le Guin - The Dispossessed (m4b)"
 
   @sites [
-    {"judge_movie/3's search/1", :movie_id, %{"t" => "movie", "imdbid" => "0000001"}, @movie,
-     8_000_000_000},
+    {"judge_movie/3's search_movie/3", :movie_id, %{"t" => "movie", "imdbid" => "0000001"},
+     @movie, 8_000_000_000},
     {"title_search/2's search_movie_query/2", :movie_title,
      %{"t" => "search", "q" => "Movie 2020"}, @movie, 8_000_000_000},
     {"search_tv_seasons/3's search_tv/3, one season", :season,

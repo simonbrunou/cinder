@@ -78,6 +78,8 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   | Seam call | Request | Origin |
   |---|---|---|
   | `search(imdb)` | `t=movie&imdbid=<digits>`, when movie-search lists `imdbid` | id-scoped |
+  | `search_movie(imdb, query, _)` | as `search(imdb)` when movie-search lists `imdbid`, and nothing else | id-scoped |
+  | `search_movie(imdb, query, _)` | else `t=search&q=<query>` (scope 2000) when search lists `q` and `query` is not blank | free text |
   | `search_tv` with a TVDB id | `t=tvsearch&tvdbid=..`, plus `season` when tv-search lists it, when tv-search lists `tvdbid` | id-scoped |
   | `search_tv` | `t=tvsearch&q=..&season=..` when tv-search lists `q` and `season`, else `t=search&q=..` (scope 5000) when search lists `q` | free text |
   | the four `*_query` calls | `t=search&q=..` when search lists `q` | free text |
@@ -87,13 +89,15 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     id that is not digits, with or without a leading `tt`, plans nothing.
   - Season 0 goes out as `00`, as Prowlarr's `NewznabifySeasonNumber` sends it.
   - The scope of a `t=search` is the caller's non-empty `categories`, else (an empty list
-    included) 2000 for
-    `search_movie_query`, 5000 for `search_tv_query` and the `search_tv` fallback, 7020 for
-    `search_ebook_query` and 3030 for `search_audiobook_query`. A book request takes the caller's
-    non-empty `categories`, else 7020 for `search_ebook` and 3030 for `search_audiobook`. The
-    `t=movie` and `t=tvsearch` requests carry no scope.
+    included) 2000 for `search_movie_query` and `search_movie`, 5000 for `search_tv_query` and
+    the `search_tv` fallback, 7020 for `search_ebook_query` and 3030 for
+    `search_audiobook_query`. A book request takes the caller's non-empty `categories`, else 7020
+    for `search_ebook` and 3030 for `search_audiobook`. The `t=movie` and `t=tvsearch` requests
+    carry no scope.
   - No request ever carries `ep`, and none is `t=moviesearch`. No text request stands in for an
-    id-scoped or book request the caps cannot take.
+    id-scoped or book request the caps cannot take, but `search_movie`'s: an indexer whose
+    movie-search lacks `imdbid` gets the movie's `"Title Year"` text instead (#1632), and one
+    that lists it never gets the text, also when the id is not digits.
 
   The Req options a request is built from come from `config :cinder, #{inspect(__MODULE__)},
   req_options: [...]` at runtime, which the tests point at a `Req.Test` stub.
@@ -400,6 +404,17 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     end
   end
 
+  # #1632: at most one request per indexer. An indexer that takes `imdbid` gets the id request
+  # alone, or nothing for an id that is not digits, so its request count stays what the
+  # `{:search, imdb_id}` plan above sends.
+  defp requests({:search_movie, imdb_id, query, opts}, caps) do
+    cond do
+      Caps.param?(caps, "movie-search", "imdbid") -> requests({:search, imdb_id}, caps)
+      blank?(query) -> []
+      true -> search_request(query, scope(opts, @movie_category), caps)
+    end
+  end
+
   defp requests({:search_tv, tvdb_id, title, season}, caps),
     do: tv_id_request(tvdb_id, season, caps) ++ tv_text_request(title, season, caps)
 
@@ -470,6 +485,8 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
       _none -> [default]
     end
   end
+
+  defp blank?(query), do: not is_binary(query) or String.trim(query) == ""
 
   defp cat(ids), do: Enum.map_join(ids, ",", &to_string/1)
 

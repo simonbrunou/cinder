@@ -71,7 +71,7 @@ defmodule Cinder.M3PipelineTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn 3 -> {:ok, []} end)
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1375666", _query, _opts ->
       {:ok,
        [
          %{

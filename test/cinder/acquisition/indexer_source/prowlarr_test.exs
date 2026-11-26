@@ -120,6 +120,26 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
            ]
   end
 
+  # #1632: Prowlarr asks no indexer whose caps lack `imdbid` (#1613), so the standard movie
+  # search sends the id query alone and never the text.
+  test "search_movie/3 sends search/1's IMDb id query and ignores the text and categories" do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      send(test_pid, {:prowlarr_params, conn.request_path, conn.params})
+      Req.Test.json(conn, [%{"title" => "Dune.2021.1080p-GRP", "downloadUrl" => "magnet:?1"}])
+    end)
+
+    assert {:ok, [%{title: "Dune.2021.1080p-GRP"}]} =
+             Prowlarr.search_movie("tt1160419", "Dune 2021", categories: [5070])
+
+    assert_received {:prowlarr_params, "/api/v1/search",
+                     %{"query" => "{ImdbId:tt1160419}", "type" => "movie"} = params}
+
+    refute Map.has_key?(params, "categories")
+    refute_received {:prowlarr_params, _path, _params}
+  end
+
   # #1627: `moviesearch` is no Newznab function, Prowlarr sent it to the Newznab indexers it asked
   # as `t=moviesearch`, and on prod altHUB and NinjaCentral answered it with no results. Prowlarr
   # sends `search` as `t=search`, scoped here to the movie category.

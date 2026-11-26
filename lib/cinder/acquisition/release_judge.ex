@@ -10,7 +10,8 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   The guard names the target and how its search was scoped:
 
-  - `{:imdb, context}`: an IMDb-scoped movie search.
+  - `{:imdb, context}`: a movie search with an IMDb id, whose free-text rows face the Title.Year
+    rule (`Cinder.Acquisition.title_guard/2`).
   - `{:title_year, title, year}`: a movie with no IMDb id.
   - `{:series, series, season_number, wanted_numbers}`: a standard TV season and its still-wanted
     episode numbers.
@@ -63,10 +64,12 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   - `dropped_at`: the first stage that dropped the release, or nil if it was kept.
   - `verdict`: why automatic selection would skip it, which the panel shows and the operator may
-    override. No client for the protocol comes first. Only the IMDb-scoped and the anime guards
-    say `:title_mismatch` (an anime episode one also for a name carrying another series' year);
+    override. No client for the protocol comes first. Only the IMDb and the anime guards say
+    `:title_mismatch` (an anime episode one also for a name carrying another series' year);
     the Title.Year and season guards also reject for a missing year or the language before it, so
-    they drop the row without a verdict of their own.
+    they drop the row without a verdict of their own. So does the IMDb guard for a row only a
+    free-text query found (`Cinder.Acquisition.Release.free_text_only?/1`), which faced the
+    Title.Year rule (#1632).
     `:conflicting_standard_numbering` marks a bridged coordinate that resolves two ways, or a
     native one a vetted mapping assigns to an episode other than its native one. An anime
     episode row with no frozen mapping is `:unsafe_anime_mapping` (the panel can't grab it), and
@@ -92,7 +95,7 @@ defmodule Cinder.Acquisition.ReleaseJudge do
   """
 
   alias Cinder.Acquisition
-  alias Cinder.Acquisition.{Anime, Language, Scorer}
+  alias Cinder.Acquisition.{Anime, Language, Release, Scorer}
   alias Cinder.Acquisition.IndexerSource.Report
 
   defstruct [:guard, rows: [], kept: [], language: :off, opts: [], report: %Report{}]
@@ -290,9 +293,16 @@ defmodule Cinder.Acquisition.ReleaseJudge do
 
   defp verdict(_release, :protocol, _guard, _opts), do: {:rejected, :wrong_protocol}
 
-  defp verdict(_release, :title_guard, {kind, _context}, _opts)
-       when kind in [:imdb, :anime_movie],
-       do: {:rejected, :title_mismatch}
+  # A text-only row the IMDb guard drops faced the Title.Year rule, which also drops a name with no
+  # year or a language before it: it gets the verdict a `{:title_year, ...}` drop gets (#1632).
+  defp verdict(release, :title_guard, {:imdb, _context}, opts) do
+    if Release.free_text_only?(release),
+      do: Scorer.verdict(release, opts),
+      else: {:rejected, :title_mismatch}
+  end
+
+  defp verdict(_release, :title_guard, {:anime_movie, _context}, _opts),
+    do: {:rejected, :title_mismatch}
 
   defp verdict(release, _dropped_at, {:anime_movie, _context}, opts),
     do: Anime.movie_verdict(release, opts)

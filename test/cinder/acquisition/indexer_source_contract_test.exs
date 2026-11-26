@@ -1,15 +1,16 @@
 defmodule Cinder.Acquisition.IndexerSourceContractTest do
   # The `Cinder.Acquisition.IndexerSource` contract, one loop over every source (#1624 point 2,
-  # #1651): each of the eight search callbacks answers `{:ok, rows}`, `{:ok, rows, report}` or
+  # #1651): each of the nine search callbacks answers `{:ok, rows}`, `{:ok, rows, report}` or
   # `{:error, _}`, and every row carries a non-blank title, a download link, a protocol, its
   # indexer's id and name, and its query origins. Prowlarr runs behind its `Req.Test` stub, Native
   # behind a Mox mock of the per-type seam. Not async: Native's adapter map is global.
   #
   # Listed exceptions, each asserted exactly below:
   # - Prowlarr answers `{:ok, []}` when every indexer it asks is down: its API returns `[]`.
-  # - Prowlarr tags no query origin on `search/1`, `search_movie_query/2` and `search_tv_query/2`,
-  #   and `search_tv/3` merges both origins onto a link both of its queries return. Callers read a
-  #   missing origin as untagged (`Cinder.Acquisition.title_guard/2`), so this PR leaves them.
+  # - Prowlarr tags no query origin on `search/1`, `search_movie/3` (which sends its `search/1`),
+  #   `search_movie_query/2` and `search_tv_query/2`, and `search_tv/3` merges both origins onto a
+  #   link both of its queries return. Callers read a missing origin as untagged
+  #   (`Cinder.Acquisition.title_guard/2`), so this PR leaves them.
   use Cinder.DataCase, async: false
 
   import Mox
@@ -23,6 +24,7 @@ defmodule Cinder.Acquisition.IndexerSourceContractTest do
 
   @callbacks [
     {:search, ["tt0000001"], :id_scoped},
+    {:search_movie, ["tt0000001", "Title 2021", []], :id_scoped},
     {:search_movie_query, ["Title", []], :free_text},
     {:search_tv_query, ["Show", []], :free_text},
     {:search_tv, [81_189, "Show", 1], :id_scoped},
@@ -35,6 +37,7 @@ defmodule Cinder.Acquisition.IndexerSourceContractTest do
   # The query origins Prowlarr tags, per callback: nil for none.
   @prowlarr_origins %{
     search: nil,
+    search_movie: nil,
     search_movie_query: nil,
     search_tv_query: nil,
     search_tv: [[:id_scoped], [:free_text]],

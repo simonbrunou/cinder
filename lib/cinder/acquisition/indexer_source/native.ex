@@ -108,6 +108,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   def search(imdb_id), do: run({:search, imdb_id})
 
   @impl true
+  def search_movie(imdb_id, query, opts), do: run({:search_movie, imdb_id, query, opts})
+
+  @impl true
   def search_movie_query(query, opts), do: run({:search_movie_query, query, opts})
 
   @impl true

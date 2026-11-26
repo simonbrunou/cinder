@@ -657,7 +657,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
         file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
       })
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _imdb, _query, _opts ->
       {:ok,
        [%{title: "Better 1080p", size: 5_000_000_000, protocol: :torrent, download_url: "u"}]}
     end)
@@ -699,7 +699,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
           file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
         })
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn _imdb, _query, _opts ->
         {:ok,
          [
            %{
@@ -781,7 +781,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
       send(test_pid, {:priority, IndexerSource.priority()})
       {:ok, []}
     end)
@@ -807,7 +807,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
       report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :timeout})
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
         {:ok,
          [
            %{
@@ -909,7 +909,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
       report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :rejected_credentials})
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
         {:error, {:no_indexer_answered, report}}
       end)
 

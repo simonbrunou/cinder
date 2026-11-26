@@ -12,7 +12,9 @@ defmodule Cinder.Acquisition.IndexerSource do
   download intent recorded, not the configured one (`Cinder.Download.fetch_source/1`). A magnet
   link needs no fetch, and an intent whose source maps to no module makes none.
 
-  Prefer searching by IMDb id over free-text title.
+  A standard movie with an IMDb id is searched through `search_movie/3`. Prowlarr asks by the id
+  alone. The built-in source asks an indexer by the id when its movie-search lists `imdbid`, and
+  by the movie's `"Title Year"` text only when it does not (#1632).
 
   ## What a search callback returns
 
@@ -76,7 +78,24 @@ defmodule Cinder.Acquisition.IndexerSource do
   @typedoc "One search callback's answer; see the moduledoc."
   @type result :: {:ok, [map()]} | {:ok, [map()], Report.t()} | {:error, term()}
 
+  @doc """
+  Searches releases scoped to an IMDb id. Prowlarr sends `{ImdbId:...}`; the built-in source asks
+  only an indexer whose movie-search lists `imdbid`, and sends no text query in its place. Anime
+  movie searches call it beside their own text queries.
+  """
   @callback search(imdb_id :: String.t()) :: result()
+
+  @doc """
+  Searches the releases of one standard movie: `imdb_id`, and `query`, the movie's `"Title Year"`
+  text, or its title alone when it has no year (`Cinder.Acquisition.judge_movie/3`). Prowlarr
+  sends `search/1` and ignores `query`. The built-in source sends each indexer at most one
+  request (#1632). An indexer whose movie-search lists `imdbid` gets the id, or nothing when the
+  id is not digits after an optional `tt`. Another gets `query` when `query` is not blank, its
+  search lists `q` and its categories reach the scope. `opts` takes `categories:`, the scope, as
+  `search_movie_query/2` does.
+  """
+  @callback search_movie(imdb_id :: String.t(), query :: String.t(), opts :: keyword()) ::
+              result()
 
   @doc "Searches movie releases by a bounded free-text query."
   @callback search_movie_query(query :: String.t(), opts :: keyword()) ::

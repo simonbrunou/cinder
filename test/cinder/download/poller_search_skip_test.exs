@@ -72,7 +72,7 @@ defmodule Cinder.Download.PollerSearchSkipTest do
     movie = requested_movie("tt0848001", %{search_attempts: 9})
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0848001" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0848001", _query, _opts ->
       set_status(movie.id, status: :requested)
       send(test_pid, :row_changed)
       {:ok, []}
@@ -90,7 +90,7 @@ defmodule Cinder.Download.PollerSearchSkipTest do
     movie = requested_movie("tt0848002", %{search_attempts: 9})
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0848002" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0848002", _query, _opts ->
       send(test_pid, {:intent, reserved_intent(movie.id, "Other.Release.1080p-GRP")})
       one_release("Inception.2010.1080p.BluRay.x264-GRP")
     end)
@@ -121,7 +121,7 @@ defmodule Cinder.Download.PollerSearchSkipTest do
       {:ok, "hash-848-completed"}
     end)
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn imdb_id, _query, _opts ->
       send(test_pid, {:searched, imdb_id})
       {:ok, []}
     end)
@@ -141,7 +141,7 @@ defmodule Cinder.Download.PollerSearchSkipTest do
     movie = requested_movie("tt0848004", %{import_attempts: 9})
     test_pid = self()
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0848004" ->
+    stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt0848004", _query, _opts ->
       set_status(movie.id, status: :downloading, download_id: "hash-848-moved")
       send(test_pid, :moved_on)
       {:error, :prowlarr_down}

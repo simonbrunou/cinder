@@ -454,6 +454,53 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
     end
   end
 
+  describe "a definition whose movie-search lists imdbid (#1632)" do
+    setup do
+      [nyaa] =
+        setup!(
+          [{"nyaa.yml", nyaa_like(&with_imdbid/1)}],
+          [{"nyaa.yml", nyaa_base(), %{}}]
+        )
+
+      route(%{"nyaa.test" => fn _conn, _query -> nyaa_page(frieren()) end})
+      %{nyaa: nyaa}
+    end
+
+    test "a standard movie search sends the id request only, tagged id-scoped", %{nyaa: nyaa} do
+      assert {:ok, [_ | _] = rows, report} =
+               Native.search_movie("tt0133093", "Frieren 2023", [])
+
+      assert outcomes(report) == %{nyaa.id => :asked}
+      assert Enum.all?(rows, &(&1.query_origins == [:id_scoped]))
+
+      sent = requests()
+      assert sent != []
+
+      for {"nyaa.test", "/", query} <- sent do
+        assert query["imdb"] == "tt0133093"
+        refute Map.has_key?(query, "q")
+      end
+    end
+
+    test "an id that is not digits sends nothing, not the text in its place", %{nyaa: nyaa} do
+      assert {[], outcomes} =
+               search_answer(Native.search_movie("nm0000123", "Frieren 2023", []))
+
+      assert outcomes == %{nyaa.id => {:not_asked, :caps}}
+      assert requests() == []
+    end
+  end
+
+  # Nyaa-shaped, with `imdbid` under movie-search and the id sent as the `imdb` input. A blank
+  # input stays out, so a text query sends no `imdb`.
+  defp with_imdbid(definition) do
+    definition
+    |> put_in(["caps", "modes", "movie-search"], ["q", "imdbid"])
+    |> update_in(["search", "inputs"], fn %{values: values} ->
+      obj(values ++ [{"imdb", "{{ .Query.IMDBID }}"}])
+    end)
+  end
+
   describe "the queries a definition listing only q in its modes asks" do
     setup do
       [nyaa, t9] =
@@ -477,6 +524,34 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
 
       assert {:ok, _rows, report} = Native.search_movie_query("frieren", [])
       assert outcomes(report) == %{nyaa.id => :asked, t9.id => :asked}
+    end
+
+    test "a standard movie search asks both by the \"Title Year\" text, tagged free text (#1632)",
+         %{nyaa: nyaa, t9: t9} do
+      assert {:ok, rows, report} = Native.search_movie("tt0133093", "Frieren 2023", [])
+      assert outcomes(report) == %{nyaa.id => :asked, t9.id => :asked}
+      assert rows != []
+      assert Enum.all?(rows, &(&1.query_origins == [:free_text]))
+
+      sent = requests()
+
+      assert {"nyaa.test", "/", %{"q" => "Frieren 2023"}} in for(
+               {h, p, q} <- sent,
+               do: {h, p, Map.take(q, ["q"])}
+             )
+
+      # The Torrent9-shaped keyword filter joins the words with `-`.
+      assert {"t9.test", "/search/Frieren-2023.html"} in for({h, p, _q} <- sent, do: {h, p})
+
+      refute Enum.any?(sent, fn {_host, path, query} ->
+               path =~ "0133093" or Map.has_key?(query, "imdb")
+             end)
+    end
+
+    test "a standard movie search with a blank query asks neither", %{nyaa: nyaa, t9: t9} do
+      assert {[], outcomes} = search_answer(Native.search_movie("tt0133093", " ", []))
+      assert outcomes == %{nyaa.id => {:not_asked, :caps}, t9.id => {:not_asked, :caps}}
+      assert requests() == []
     end
 
     test "a TV search with a TVDB id sends no id query, only its text one", %{nyaa: nyaa} do
@@ -1068,6 +1143,20 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
       assert {:ok, [], report} = Native.search_audiobook_query("frieren", [])
       assert outcomes(report) == %{indexer.id => {:not_asked, :caps}}
       assert requests() == []
+    end
+
+    test "a standard movie search's text takes the Movies scope, else the caller's (#1632)" do
+      nyaa!(&with_categories_input/1)
+      route(%{"nyaa.test" => fn _conn, _query -> nyaa_page(frieren()) end})
+
+      # Movies (2000) reaches Movies/Other alone, where TV (5000) would add 4_0.
+      assert {:ok, _rows, _report} = Native.search_movie("tt0133093", "Frieren 2023", [])
+      assert [{_, _, %{"cats" => "1_0,1_2", "q" => "Frieren 2023"}}] = requests()
+
+      assert {:ok, _rows, _report} =
+               Native.search_movie("tt0133093", "Frieren 2023", categories: [5000])
+
+      assert [{_, _, %{"cats" => "1_0,1_2,4_0"}}] = requests()
     end
 
     test "a scope that reaches no mapping is not asked, though a mapping is marked default; the Test sends the default" do

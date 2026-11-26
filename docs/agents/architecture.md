@@ -38,8 +38,10 @@ type), `Cinder.Download.Client`, `Cinder.Library.MediaServer`, `Cinder.Books.Met
   uses the `Cinder.Test.UnstartedMailbox` storage driver, which leaves the mailbox running. On
   #1551 (for #1546) the triage brief's `local: false` recipe still delivered `{:ok, ...}` in the
   Spec reviewer's probe.
-- Search indexers by IMDb id rather than free-text title. `Catalog.get_movie/1` carries
-  `imdb_id` through for this.
+- Search a standard movie by IMDb id. `Catalog.get_movie/1` carries `imdb_id` through for
+  this. For a movie with an IMDb id, the Built-in source sends the `"Title Year"` text only to an
+  indexer whose movie-search takes no `imdbid`, and `Cinder.Acquisition.judge_movie/3` judges
+  each row by the title rule of the query that found it (#1632).
 
 ## Status writes go through the choke-points
 

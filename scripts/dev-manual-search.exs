@@ -35,6 +35,11 @@ defmodule DevManualSearch.Source do
     |> Report.put({"native", 4}, "Tabula", {:failed, {:limit, DateTime.add(now, 3 * 86_400)}})
   end
 
+  # A standard movie's panel calls `search_movie/3`, an anime movie's `search/1`: both answer
+  # the cases below.
+  @impl true
+  def search_movie(imdb_id, _query, _opts), do: search(imdb_id)
+
   @impl true
   def search("tt9000001") do
     row = %{

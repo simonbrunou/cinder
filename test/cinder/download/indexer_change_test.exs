@@ -108,7 +108,7 @@ defmodule Cinder.Download.IndexerChangeTest do
       test_pid = self()
       watch_client()
 
-      stub(Cinder.Acquisition.IndexerMock, :search, fn imdb_id ->
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn imdb_id, _query, _opts ->
         send(test_pid, {:searched, imdb_id})
         {:ok, []}
       end)
@@ -598,7 +598,10 @@ defmodule Cinder.Download.IndexerChangeTest do
   end
 
   defp stub_movie_search(imdb_id, results),
-    do: stub(Cinder.Acquisition.IndexerMock, :search, fn ^imdb_id -> {:ok, results} end)
+    do:
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn ^imdb_id, _query, _opts ->
+        {:ok, results}
+      end)
 
   defp stub_tv_search(results) do
     stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, _title, 1 -> {:ok, results} end)

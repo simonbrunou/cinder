@@ -34,8 +34,10 @@ defmodule Cinder.Acquisition.IndexerSourceSitesTest do
     defp movie_raw,
       do: %{title: "Movie.2020.1080p.BluRay.x264-GRP", size: 8_000_000_000, download_url: "m"}
 
-    test "with an IMDb id judges the search/1 rows and carries its report" do
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [movie_raw()], report(1)} end)
+    test "with an IMDb id judges the search_movie/3 rows and carries its report" do
+      expect(PassedIndexerMock, :search_movie, fn "tt1", "Movie 2020", [] ->
+        {:ok, [movie_raw()], report(1)}
+      end)
 
       assert {:ok, judged} = Acquisition.judge_movie("tt1", movie_context(), @opts)
       assert urls(judged) == ["m"]
@@ -60,14 +62,18 @@ defmodule Cinder.Acquisition.IndexerSourceSitesTest do
       do: Report.put(Report.new(), {"native", 20}, "Indexer 20", {:skipped, :deadline})
 
     test "a :no_match pick from a search where an indexer failed is an incomplete search" do
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [], report(14)} end)
+      expect(PassedIndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        {:ok, [], report(14)}
+      end)
 
       assert Acquisition.best_release("tt1", movie_context(), @opts) ==
                {:error, :incomplete_search}
     end
 
     test "a :no_match pick from a search where an indexer was only skipped stays :no_match" do
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [], skipped_report()} end)
+      expect(PassedIndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        {:ok, [], skipped_report()}
+      end)
 
       assert Acquisition.best_release("tt1", movie_context(), @opts) == :no_match
     end
@@ -76,17 +82,24 @@ defmodule Cinder.Acquisition.IndexerSourceSitesTest do
       english = %{movie_raw() | title: "Movie.2020.1080p.BluRay.x264-EN"}
       french = [preferred_language: "french", original_language: "en"] ++ @opts
 
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [english], report(15)} end)
+      expect(PassedIndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        {:ok, [english], report(15)}
+      end)
 
       assert Acquisition.best_release("tt1", movie_context(), french) ==
                {:error, :incomplete_search}
 
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [english], skipped_report()} end)
+      expect(PassedIndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        {:ok, [english], skipped_report()}
+      end)
+
       assert Acquisition.best_release("tt1", movie_context(), french) == :no_language_match
     end
 
     test "a release found beside a failed indexer is still picked" do
-      expect(PassedIndexerMock, :search, fn "tt1" -> {:ok, [movie_raw()], report(16)} end)
+      expect(PassedIndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        {:ok, [movie_raw()], report(16)}
+      end)
 
       assert {:ok, %{download_url: "m"}} = Acquisition.best_release("tt1", movie_context(), @opts)
     end
