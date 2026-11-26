@@ -165,6 +165,7 @@ msgstr ""
 #: lib/cinder_web/components/core_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/issue_components.ex
+#: lib/cinder_web/components/prowlarr_import_components.ex
 #: lib/cinder_web/live/library_adoption_live.ex
 #: lib/cinder_web/live/library_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
@@ -1572,6 +1573,7 @@ msgid "Library paths"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex
+#: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
 msgid "Loading…"
@@ -5021,6 +5023,7 @@ msgid_plural "Imported %{count} accounts."
 msgstr[0] ""
 msgstr[1] ""
 
+#: lib/cinder_web/components/prowlarr_import_components.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
 msgid "Importing…"
@@ -7700,6 +7703,7 @@ msgid "%{name} (%{reason})"
 msgstr ""
 
 #: lib/cinder_web/components/search_report_components.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Couldn't reach Prowlarr. Try again."
 msgstr ""
@@ -8178,11 +8182,13 @@ msgid "A new base URL or any changed credential drops this indexer's grabs still
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/components/prowlarr_import_components.ex
 #, elixir-autogen, elixir-format
 msgid "API key"
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "API path"
 msgstr ""
@@ -8193,11 +8199,13 @@ msgid "Add indexer"
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Additional parameters"
 msgstr ""
 
 #: lib/cinder_web/indexer_form_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Another indexer already has this name."
 msgstr ""
@@ -8218,6 +8226,7 @@ msgid "Back"
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr ""
@@ -8228,6 +8237,7 @@ msgid "Cinder tests an enabled indexer when you save it."
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/components/prowlarr_import_components.ex
 #, elixir-autogen, elixir-format
 msgid "Close"
 msgstr ""
@@ -8253,6 +8263,7 @@ msgid "Enter a URL with a host name."
 msgstr ""
 
 #: lib/cinder_web/indexer_form_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Enter a name."
 msgstr ""
@@ -8273,6 +8284,7 @@ msgid "Enter a whole number from 1 to 50."
 msgstr ""
 
 #: lib/cinder_web/indexer_form_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Enter the API key as plain text."
 msgstr ""
@@ -8293,6 +8305,7 @@ msgid "No indexer type matches."
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Priority"
 msgstr ""
@@ -8405,4 +8418,235 @@ msgstr ""
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen, elixir-format
 msgid "No usable indexer uses the same protocol as a working download client."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{field}: %{message}"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{kind}, searched by Cinder"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{kind}, searched through Prowlarr"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: API key not entered: created disabled"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: already imported, skipped"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: created"
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Add it through Prowlarr"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Already imported"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Another import is running. Try again when it ends."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Another ticked indexer has this name."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Can't be imported"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can't import this indexer as it is set up."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can't search a %{implementation} indexer itself."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder is testing each enabled indexer it created."
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Import"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Import from Prowlarr"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "It goes through FlareSolverr in Prowlarr, which Cinder uses for Cardigann only."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "It goes through a SOCKS proxy in Prowlarr."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "It goes through a proxy in Prowlarr that Cinder doesn't know."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "It goes through an HTTP proxy in Prowlarr."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "It has additional parameters, which Cinder keeps for Newznab only."
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Leave blank to create it disabled"
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Name in Cinder"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Not carried: %{settings}."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Not imported: indexer definitions not loaded yet"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr doesn't say whether it is a Usenet or a torrent indexer."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr gave an answer Cinder can't read."
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr has no indexer."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr or a definition changed: check the preview again."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr refused the API key. Check it in the Indexers group."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr's global proxy is on."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Save Prowlarr's URL and API key first."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "The import could not be saved, so nothing was imported. Try again."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "The import failed. Try again."
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer source stays as it was."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer can't be imported."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer is imported directly, not through Prowlarr."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer was imported meanwhile."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Tick Add it through Prowlarr to import this indexer."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Tick at least one indexer to import."
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "app profile"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "grab limit"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "query limit"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "query timeout"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "seed settings"
+msgstr ""
+
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder is testing %{names}."
 msgstr ""

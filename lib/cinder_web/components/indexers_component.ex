@@ -24,6 +24,14 @@ defmodule CinderWeb.IndexersComponent do
   dialog wraps focus, closes on Escape, and gives focus back to the button that opened it when it
   goes, or to "Add indexer" once the edited indexer's row is gone.
 
+  "Import from Prowlarr" opens the import dialog (#1674) in the same portal, wider: its state is
+  a `CinderWeb.ProwlarrImportDialog`, its content `CinderWeb.ProwlarrImportComponents`. Opening
+  it and submitting it read Prowlarr in the event handler, `ProwlarrImport.preview/0` and
+  `commit/3`, so the page waits for those reads. Each typed API key goes from the submit's params
+  to the commit and never into an assign. After a commit, the rows are read again and the host
+  gets its notice; the Tests the import started mark their rows as the runner's messages arrive.
+  A refused commit moves focus to the alert above the rows, or to the first refused row's name.
+
   Its own actions save at once and say so in one `role="status"` line. The switch saves through
   `Cinder.Indexers.set_enabled/4`, checked against the `lock_version` the row was read with, and
   starts no Test. Delete goes through `Cinder.Indexers.delete/2`, which takes no version, and
@@ -34,12 +42,13 @@ defmodule CinderWeb.IndexersComponent do
   runs. The status line says when a Test starts and how it ended, a Test that stored no outcome
   and one the runner's restart ended included.
 
-  The rows are read again after a saved switch or Delete, on a Test's finish and on the runner's
-  reset, on a `%{refresh: true}` update, and just past the first running backoff's end, which
-  changes a state with no write to tell the page. A Test's start only marks its row, with no
-  read. Each read also reads the saved indexer source that Delete's warning names. The Indexers
-  group's "Indexer source" select saves it with the host's form, so each host sends the component
-  a `%{refresh: true}` update after each saved submit of that form (#1662, #1663).
+  The rows are read again after a saved Add or Edit, a committed import, a saved switch or
+  Delete, on a Test's finish and on the runner's reset, on a `%{refresh: true}` update, and just
+  past the first running backoff's end, which changes a state with no write to tell the page. A
+  Test's start only marks its row, with no read. Each read also reads the saved indexer source
+  that Delete's warning names. The Indexers group's "Indexer source" select saves it with the
+  host's form, so each host sends the component a `%{refresh: true}` update after each saved
+  submit of that form (#1662, #1663).
   The rows render through the stream `:table_rows`. Each read sends every row again, since each
   row's Delete warning and focus target read the other rows. A row that keeps its place is
   patched in place, so the focus on its switch or its Delete stays, and only a new order resets
@@ -53,10 +62,11 @@ defmodule CinderWeb.IndexersComponent do
   and a save whose `indexer` or `secrets` is not a map change nothing. A form value that is not
   text, or under a key the form does not render, is left out of the save.
 
-  After each saved Add or Edit, saved switch, saved Delete, finished Test and `%{refresh: true}`
-  update, the timer's at a backoff's end included, once it has read the rows again, the component
-  sends its host's process `{CinderWeb.IndexersComponent, :indexers_changed}`: `/setup`
-  recomputes its Finish gate on it, and `/settings` ignores it.
+  After each saved Add or Edit, committed import, saved switch, saved Delete, finished Test and
+  `%{refresh: true}` update, the timer's at a backoff's end included, once it has read the rows
+  again, the component sends its host's process
+  `{CinderWeb.IndexersComponent, :indexers_changed}`: `/setup` recomputes its Finish gate on it,
+  and `/settings` ignores it.
 
   Required assigns: `id` and `actor`, the `%User{}` the audit rows name.
   """
@@ -66,7 +76,9 @@ defmodule CinderWeb.IndexersComponent do
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, TestRunner}
   alias Cinder.Indexers
-  alias CinderWeb.{IndexerDialog, IndexerStateText}
+  alias CinderWeb.{IndexerDialog, IndexerStateText, ProwlarrImportDialog}
+
+  import CinderWeb.ProwlarrImportComponents, only: [import_step: 1]
 
   # The types the Add and Edit dialogs handle; Cardigann's form comes with #1676.
   @kinds [:newznab, :torznab]
@@ -248,6 +260,25 @@ defmodule CinderWeb.IndexersComponent do
     end
   end
 
+  def handle_event("open_import", _params, socket),
+    do: {:noreply, assign(socket, dialog: ProwlarrImportDialog.open(), opener: "indexers-import")}
+
+  def handle_event(
+        "import_change",
+        params,
+        %{assigns: %{dialog: %{step: :import, phase: :preview}}} = socket
+      ),
+      do:
+        {:noreply,
+         assign(socket, dialog: ProwlarrImportDialog.change(socket.assigns.dialog, params))}
+
+  def handle_event(
+        "import_submit",
+        params,
+        %{assigns: %{dialog: %{step: :import, phase: :preview}}} = socket
+      ),
+      do: import_submit(socket, params)
+
   def handle_event("back", _params, %{assigns: %{dialog: %{mode: :add}}} = socket),
     do: {:noreply, assign(socket, dialog: %{step: :pick, query: ""})}
 
@@ -287,7 +318,7 @@ defmodule CinderWeb.IndexersComponent do
   # never ran on the element the portal moved to `body` (browser case 13).
   defp close_dialog(socket, opener) do
     opener =
-      if opener == "indexers-add" or
+      if opener in ["indexers-add", "indexers-import"] or
            Enum.any?(socket.assigns.rows, &(opener == "indexer-#{&1.id}-edit")),
          do: opener,
          else: "indexers-add"
@@ -328,6 +359,27 @@ defmodule CinderWeb.IndexersComponent do
 
       {:error, dialog} ->
         {:noreply, socket |> assign(dialog: dialog) |> focus_refusal(dialog)}
+    end
+  end
+
+  # The typed keys go from `params` to the commit and are never assigned. Once the import
+  # committed, the rows are read again, the Tests it started mark their rows as the runner's
+  # `:started` messages reach the page, and the host gets its notice. A refused commit moves
+  # focus to the alert above the rows, else to the first row it refused.
+  defp import_submit(socket, params) do
+    case ProwlarrImportDialog.submit(socket.assigns.dialog, socket.assigns.actor, params) do
+      {:ok, dialog} ->
+        {:noreply, socket |> assign(dialog: dialog) |> load_rows() |> notify_host()}
+
+      {:error, dialog} ->
+        {:noreply, socket |> assign(dialog: dialog) |> focus_import_refusal(dialog)}
+    end
+  end
+
+  defp focus_import_refusal(socket, dialog) do
+    case ProwlarrImportDialog.focus_id(dialog) do
+      nil -> socket
+      id -> push_event(socket, "focus-invalid", %{id: id})
     end
   end
 
@@ -506,7 +558,18 @@ defmodule CinderWeb.IndexersComponent do
   def render(assigns) do
     ~H"""
     <div id={@id} class="mb-4 space-y-2">
-      <div class="flex justify-end">
+      <div class="flex flex-wrap justify-end gap-2">
+        <.button
+          type="button"
+          variant="neutral"
+          size="sm"
+          id="indexers-import"
+          phx-click="open_import"
+          phx-target={@myself}
+          phx-disable-with={gettext("Loading…")}
+        >
+          {gettext("Import from Prowlarr")}
+        </.button>
         <.button
           type="button"
           size="sm"
@@ -640,8 +703,12 @@ defmodule CinderWeb.IndexersComponent do
             role="dialog"
             aria-modal="true"
             aria-labelledby="indexer-dialog-title"
-            class="max-h-full w-full max-w-lg overflow-y-auto rounded-box bg-base-100 p-6 shadow-xl"
+            class={[
+              "max-h-full w-full overflow-y-auto rounded-box bg-base-100 p-6 shadow-xl",
+              if(@dialog.step == :import, do: "max-w-3xl", else: "max-w-lg")
+            ]}
           >
+            <.import_step :if={@dialog.step == :import} dialog={@dialog} myself={@myself} />
             <.pick_step :if={@dialog.step == :pick} dialog={@dialog} myself={@myself} />
             <.form_step :if={@dialog.step == :form} dialog={@dialog} myself={@myself} />
           </.focus_wrap>

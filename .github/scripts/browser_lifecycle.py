@@ -15,7 +15,10 @@ indexers table's switches and Delete in /settings, and checks its width at 390 p
 Escape and the focus it returns, and a save (#1661). Case 14 submits a credential in the base URL,
 the API path and the additional parameters with Enter, in the Add and the Edit dialog, and checks
 that the refusal empties the focused input (#1697). Case 15 retries a refused switch to Built-in
-after closing the Indexers group, which must open again with the select focused (#1662).
+after closing the Indexers group, which must open again with the select focused (#1662). Case 16
+checks the dialog's form stays outside #setup-form (#1663). Case 17 drives the Import from
+Prowlarr dialog against a stubbed Prowlarr API: the portal, a typed key across another row's
+rename, the Tab trap, and Escape with the focus it returns (#1674).
 
 Driving mechanism: `docker exec <container> /app/bin/cinder rpc '<expr>'`, never `eval`. `eval`
 boots a disconnected temporary node (`:nonode@nohost`) whose Catalog broadcasts can never reach
@@ -1351,6 +1354,132 @@ def case_16_setup_dialog_outside_the_setup_form(page):
         delete_indexer(indexer)
 
 
+# Two Newznab indexers whose keys Prowlarr masks, as `/api/v1/indexer` answers them, for case 17.
+CI_PROWLARR_INDEXERS = """(
+  for {id, name} <- [{1, "CI Import One"}, {2, "CI Import Two"}] do
+    %{"id" => id, "name" => name, "implementation" => "Newznab", "protocol" => "usenet",
+      "enable" => true, "priority" => 25, "appProfileId" => 0, "tags" => [],
+      "fields" => [
+        %{"name" => "baseUrl", "value" => "https://ci-import-#{id}.invalid"},
+        %{"name" => "apiPath", "value" => "/api"},
+        %{"name" => "apiKey", "value" => "********"},
+        %{"name" => "additionalParameters"}
+      ]}
+  end
+)"""
+
+
+def stub_prowlarr_api():
+    """Points the running node's Prowlarr API reads at a module this call defines, which answers
+    the two indexers above, no proxy and no global proxy, and saves a Prowlarr URL and key in
+    the app env. The values it replaces go into a persistent term that `restore_prowlarr_api/0`
+    puts back."""
+    rpc(
+        "defmodule CinderCi.ProwlarrStub do\n"
+        '  def get(_connection, "/api/v1/indexer", _query), do: {:ok, '
+        + CI_PROWLARR_INDEXERS
+        + "}\n"
+        '  def get(_connection, "/api/v1/indexerproxy", _query), do: {:ok, []}\n'
+        '  def get(_connection, "/api/v1/config/host", _query), '
+        'do: {:ok, %{"proxyEnabled" => false}}\n'
+        "end\n"
+        "prowlarr = Cinder.Acquisition.IndexerSource.Prowlarr\n"
+        ":persistent_term.put(:ci_case_17, {Application.fetch_env(:cinder, :prowlarr_api), "
+        "Application.fetch_env(:cinder, prowlarr)})\n"
+        "Application.put_env(:cinder, :prowlarr_api, CinderCi.ProwlarrStub)\n"
+        "Application.put_env(:cinder, prowlarr, Keyword.merge("
+        "Application.get_env(:cinder, prowlarr, []), "
+        'base_url: "https://ci-prowlarr.invalid", api_key: "ci-prowlarr-key"))\n'
+        'IO.puts("RPCRESULT:ok")'
+    )
+
+
+def restore_prowlarr_api():
+    rpc(
+        "{api, prowlarr} = :persistent_term.get(:ci_case_17)\n"
+        "restore = fn key, {:ok, value} -> Application.put_env(:cinder, key, value); "
+        "key, :error -> Application.delete_env(:cinder, key) end\n"
+        "restore.(:prowlarr_api, api)\n"
+        "restore.(Cinder.Acquisition.IndexerSource.Prowlarr, prowlarr)\n"
+        ":persistent_term.erase(:ci_case_17)\n"
+        'IO.puts("RPCRESULT:ok")'
+    )
+
+
+def case_17_prowlarr_import_dialog(page):
+    """The Import from Prowlarr dialog of the indexers table (#1674), against a Prowlarr API stub
+    in the running node. With the dialog open: #settings-form's FormData holds no `secrets` or
+    `rows` field and the dialog's form is not inside #settings-form; a key typed in one row
+    stays after another row is renamed, a `phx-change` re-render, since each key input carries
+    `phx-update="ignore"`; Tab stays inside the dialog; Escape closes it and focus returns to
+    "Import from Prowlarr". Nothing is imported."""
+    stub_prowlarr_api()
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        settings = context.new_page()
+        login(settings)
+        settings.goto(f"{BASE_URL}/settings?group=indexer")
+        wait_for_liveview(settings)
+        box = settings.locator("#indexer-dialog-box")
+        button = settings.locator("#indexers-import")
+
+        button.focus()
+        settings.keyboard.press("Enter")
+        expect(box).to_be_visible(timeout=10_000)
+        settings.wait_for_function(
+            "() => document.getElementById('indexer-dialog-box')"
+            "?.contains(document.activeElement)",
+            timeout=5_000,
+        )
+
+        key = settings.locator("#indexer-import-form input[name='secrets[1][api_key]']")
+        other_name = settings.locator("#import-row-2-name")
+        key.fill("ci-import-key")
+        other_name.fill("CI Import Two renamed")
+        expect(settings.locator("#indexer-import-form.phx-change-loading")).to_have_count(0)
+        expect(other_name).to_have_value("CI Import Two renamed")
+        try:
+            expect(key).to_have_value("ci-import-key", timeout=2_000)
+        except AssertionError as e:
+            raise CaseFailure(
+                f"case 17 (key): renaming another row emptied the typed key, {e}"
+            ) from e
+
+        leaks = settings.evaluate(
+            """() => {
+              const form = document.getElementById("settings-form");
+              const names = [...new FormData(form).keys()];
+              return {names: names.filter((n) => /^(rows|secrets)\\[/.test(n)),
+                      nested: form.contains(document.getElementById("indexer-import-form")),
+                      total: names.length};
+            }"""
+        )
+        if leaks["names"] or leaks["nested"] or leaks["total"] == 0:
+            raise CaseFailure(
+                "case 17 (portal): #settings-form holds import fields or the import form, "
+                f"{leaks!r}"
+            )
+
+        for step in range(30):
+            settings.keyboard.press("Tab")
+            if not focus_in(settings, "#indexer-dialog-box"):
+                raise CaseFailure(f"case 17 (Tab): focus left the dialog after {step + 1} Tab(s)")
+
+        settings.keyboard.press("Escape")
+        expect(box).to_have_count(0, timeout=5_000)
+        expect(button).to_be_focused()
+
+        created = rpc(
+            "IO.puts(\"RPCRESULT:#{Enum.count(Cinder.Indexers.list(), "
+            '&String.starts_with?(&1.name, "CI Import"))}")'
+        )
+        if created != "0":
+            raise CaseFailure(f"case 17 (store): the dialog created {created} indexer(s)")
+    finally:
+        context.close()
+        restore_prowlarr_api()
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -1383,6 +1512,7 @@ CASES = [
         "case16_setup_dialog_outside_the_setup_form",
         case_16_setup_dialog_outside_the_setup_form,
     ),
+    ("case17_prowlarr_import_dialog", case_17_prowlarr_import_dialog),
 ]
 
 

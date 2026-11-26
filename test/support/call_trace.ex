@@ -1,7 +1,7 @@
 defmodule Cinder.CallTrace do
   @moduledoc """
-  The calls the test process makes to one function while `fun` runs, each with its arguments and
-  its result, through `:erlang.trace/3`.
+  The calls the test process, or the process the `pid:` option names, makes to one function while
+  `fun` runs, each with its arguments and its result, through `:erlang.trace/3`.
 
   `calls/2` handles three traps of a hand-written call trace:
 
@@ -12,7 +12,7 @@ defmodule Cinder.CallTrace do
   - The runtime can still be delivering trace messages when `fun` returns, so `calls/2` waits for
     `:erlang.trace_delivered/1` before it reads them.
 
-  Only the test process's calls are traced, but a trace pattern is global to the node, and
+  Only the traced process's calls are traced, but a trace pattern is global to the node, and
   `calls/2` turns it off when `fun` returns. Two tests that trace the same function at the same
   time therefore run in modules with `async: false`.
   """
@@ -24,13 +24,18 @@ defmodule Cinder.CallTrace do
   @type call :: %{args: [term()], result: {:return, term()} | {:exception, {atom(), term()}}}
 
   @doc """
-  Runs `fun` in the test process and returns `{fun's result, calls}`: every call to `mfa` it made,
-  in call order. Fails the test when `mfa` names no function. A call to another function that a
+  Runs `fun` in the test process and returns `{fun's result, calls}`: every call to `mfa` the
+  traced process made while `fun` ran, in call order. The traced process is the test process, or
+  the one `opts`' `pid:` names, such as a LiveView's `view.pid`: for that one, `fun` returns only
+  once the calls it waits for have run, as a `render_submit/3` returns after the view's reply,
+  and that process must still live then, or turning its trace off raises.
+  Fails the test when `mfa` names no function. A call to another function that a
   trace pattern set elsewhere matches is left out.
   """
-  @spec calls(mfa(), (-> result)) :: {result, [call()]} when result: term()
-  def calls({module, _name, _arity} = mfa, fun) do
+  @spec calls(mfa(), (-> result), keyword()) :: {result, [call()]} when result: term()
+  def calls({module, _name, _arity} = mfa, fun, opts \\ []) do
     test_pid = self()
+    traced = Keyword.get(opts, :pid, test_pid)
     tracer = start_supervised!({Task, fn -> collect(test_pid, mfa, []) end}, id: make_ref())
 
     Code.ensure_loaded!(module)
@@ -38,17 +43,17 @@ defmodule Cinder.CallTrace do
     assert :erlang.trace_pattern(mfa, [{:_, [], [{:exception_trace}]}], [:local]) == 1,
            "#{inspect(mfa)} matches no function"
 
-    :erlang.trace(self(), true, [:call, {:tracer, tracer}])
+    :erlang.trace(traced, true, [:call, {:tracer, tracer}])
 
     result =
       try do
         fun.()
       after
-        :erlang.trace(self(), false, [:call])
+        :erlang.trace(traced, false, [:call])
         :erlang.trace_pattern(mfa, false, [:local])
       end
 
-    ref = :erlang.trace_delivered(self())
+    ref = :erlang.trace_delivered(traced)
     assert_receive {:trace_delivered, _pid, ^ref}
     send(tracer, :done)
     assert_receive {:call_trace, ^tracer, messages}

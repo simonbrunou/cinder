@@ -7,7 +7,7 @@ defmodule CinderWeb.SetupLiveTest do
   import Cinder.NewznabFixtures, only: [indexer!: 2]
   import Cinder.TestRunnerHelpers
 
-  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus, TestRunner}
   alias Cinder.{ConfigCase, Indexers, Settings}
   alias Cinder.Test.Rendezvous
@@ -740,6 +740,55 @@ defmodule CinderWeb.SetupLiveTest do
       assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
     end
 
+    test "an import whose created indexer's Test passes unlocks Finish with no other click",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup[disabled]")
+
+      import_from_prowlarr(lv, Cinder.ProwlarrApiFixtures.newznab(1, name: "Imported"), %{
+        "secrets[1][api_key]" => @key
+      })
+
+      assert [%{id: id, enabled: true}] = Indexers.list()
+      assert_receive {:test_started, task_pid, ^id}
+      answer(task_pid, :test_success)
+      eventually(fn -> has_element?(lv, "#finish-setup:not([disabled])") end)
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle.text-success")
+    end
+
+    # An indexer created disabled starts no Test, so only the import's own notice to the host
+    # moves the gate's line off "No indexer added".
+    test "an import tells the host, which reads the gate again", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer added")
+
+      import_from_prowlarr(lv, Cinder.ProwlarrApiFixtures.newznab(1, name: "Imported"), %{})
+
+      assert [%{enabled: false}] = Indexers.list()
+      refute_received {:test_started, _task_pid, _id}
+      render(lv)
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer is enabled")
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "the import button opens its dialog outside the setup form", %{conn: conn} do
+      ConfigCase.put_config(Prowlarr, base_url: "https://prowlarr.example", api_key: "k")
+      Cinder.ProwlarrApiFixtures.stub_api([Cinder.ProwlarrApiFixtures.newznab(1)])
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+
+      assert has_element?(
+               lv,
+               "#setup-form #settings-group-indexer #indexers #indexers-import",
+               "Import from Prowlarr"
+             )
+
+      lv |> element("#indexers-import") |> render_click()
+      refute has_element?(lv, "#setup-form #indexer-import-form")
+      assert lv |> element("#indexer-dialog") |> render() =~ ~s(id="indexer-import-form")
+    end
+
     test "the Test button's finish unlocks Finish", %{conn: conn} do
       %{id: id} = indexer!(:newznab, "nzb.example")
       {:ok, lv, _html} = live(conn, ~p"/setup")
@@ -1033,6 +1082,24 @@ defmodule CinderWeb.SetupLiveTest do
       ),
       %{"api_key" => @key}
     )
+  end
+
+  # Imports `indexer` from a Prowlarr the test stubs, through the import dialog, its row ticked
+  # under Prowlarr's name with the `typed` secrets params.
+  defp import_from_prowlarr(lv, indexer, typed) do
+    ConfigCase.put_config(Prowlarr, base_url: "https://prowlarr.example", api_key: "stored-key")
+    Cinder.ProwlarrApiFixtures.stub_api([indexer])
+    lv |> element("#indexers-import") |> render_click()
+
+    rows = %{"1" => %{"ticked" => "true", "name" => indexer["name"]}}
+
+    secrets =
+      for {"secrets[1][api_key]", key} <- typed, into: %{}, do: {"1", %{"api_key" => key}}
+
+    params =
+      if secrets == %{}, do: %{"rows" => rows}, else: %{"rows" => rows, "secrets" => secrets}
+
+    lv |> with_target("#indexers") |> render_submit("import_submit", params)
   end
 
   # The secrets map always holds a key: an empty map would leave the payload (testing.md).

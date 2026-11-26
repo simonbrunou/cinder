@@ -13,6 +13,36 @@ defmodule Cinder.CallTraceTest do
     assert calls == [%{args: [1], result: {:return, 2}}, %{args: [2], result: {:return, 4}}]
   end
 
+  test "pid: records the calls of another process, and none of the test process" do
+    # The caller waits on after its reply: `calls/3` turns the trace off on a live process.
+    caller =
+      start_supervised!(
+        {Task,
+         fn ->
+           receive do
+             {:double, n, reply_to} -> send(reply_to, {:doubled, CallTraceTarget.double(n)})
+           end
+
+           Process.sleep(:infinity)
+         end},
+        id: make_ref()
+      )
+
+    assert {{:doubled, 6}, calls} =
+             CallTrace.calls(
+               {CallTraceTarget, :double, 1},
+               fn ->
+                 CallTraceTarget.double(5)
+                 send(caller, {:double, 3, self()})
+                 assert_receive {:doubled, _} = reply
+                 reply
+               end,
+               pid: caller
+             )
+
+    assert calls == [%{args: [3], result: {:return, 6}}]
+  end
+
   test "pairs nested calls of a recursive function with their own returns" do
     assert {:done, calls} =
              CallTrace.calls({CallTraceTarget, :count_down, 1}, fn ->

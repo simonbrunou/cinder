@@ -1,6 +1,6 @@
 ### Internal
 - **`Cinder.Indexers.ProwlarrImport` previews and commits an import of Prowlarr's indexers as
-  configured indexers, which no page offers yet (#1673).** `preview/0` reads Prowlarr's
+  configured indexers (#1673).** `preview/0` reads Prowlarr's
   `/api/v1/indexer`, `/api/v1/indexerproxy` and `/api/v1/config/host` with the stored Prowlarr URL
   and API key, and gives each Prowlarr indexer one row. A Cardigann indexer is held, and one an
   earlier import linked is already imported. A Newznab or Torznab indexer whose own settings fail
@@ -15,8 +15,8 @@
   since the preview, and creates the ticked rows in one transaction with one audit row, each linked
   to its Prowlarr indexer by `prowlarr_indexer_id`. A direct row for which Prowlarr answers a key,
   which it masks as `********`, is created disabled with no key when the admin types none. After the
-  commit, the Test runner is asked to start the Test of each enabled created indexer. The dialog
-  comes with #1674.
+  commit, the Test runner is asked to start the Test of each enabled created indexer. The indexers
+  table's Import from Prowlarr dialog runs it (#1674).
 - **A content refusal under one side of an import link skips the title from the other side
   (#1673).** A series block that a client rejection, a bad torrent or a bad download file left
   under a Prowlarr indexer now also skips that title from the configured indexer linked to it,

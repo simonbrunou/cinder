@@ -33,6 +33,14 @@ defmodule CinderWeb.IndexerFormText do
   @spec stale?(Ecto.Changeset.t()) :: boolean()
   def stale?(%Ecto.Changeset{errors: errors}), do: Enum.any?(errors, &stale_error?/1)
 
+  @doc """
+  The message of one refusal given as `{field, validation}` with no changeset, as the Prowlarr
+  import's rows carry them (`CinderWeb.ProwlarrImportText`).
+  """
+  @spec refusal(atom(), atom() | nil) :: String.t()
+  def refusal(field, validation),
+    do: message({field, validation}, {"is invalid", [validation: validation]})
+
   defp stale_error?({field, {_message, opts}}),
     do: field == :lock_version and opts[:stale] == true
 
