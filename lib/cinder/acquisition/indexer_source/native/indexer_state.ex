@@ -1,9 +1,8 @@
 defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
   @moduledoc """
   Each configured indexer's condition, read from what Native recorded (#1657, #1619 points 13
-  and 14): the one function the dashboard rows, the source's `health/0` and the gate read, and
-  that the indexers table (#1660) and the setup gate (#1663) are to read. No function here sends
-  a request.
+  and 14): the one function the dashboard rows, the source's `health/0`, the gate, the indexers
+  table (#1660) and the setup gate (#1663) read. No function here sends a request.
 
   ## The states
 
@@ -171,11 +170,15 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
   not pass, and with no enabled indexer the gate fails.
   """
   @spec passes_gate?(DateTime.t()) :: boolean()
-  def passes_gate?(now \\ Native.now()) do
-    Enum.any?(list(now), fn %{state: state} ->
-      usable_state?(state) or match?({:limit_backoff, _until}, state)
-    end)
-  end
+  def passes_gate?(now \\ Native.now()), do: Enum.any?(list(now), &passes?/1)
+
+  @doc """
+  Whether `entry` alone passes the gate `passes_gate?/1` applies to the whole list: it is usable
+  (`usable?/1`) or in a running limit backoff. A disabled entry never passes.
+  """
+  @spec passes?(entry()) :: boolean()
+  def passes?(%{state: state}),
+    do: usable_state?(state) or match?({:limit_backoff, _until}, state)
 
   defp protocol(:newznab), do: :usenet
   defp protocol(_torrent_type), do: :torrent

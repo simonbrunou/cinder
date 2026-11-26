@@ -1,7 +1,7 @@
 defmodule CinderWeb.IndexersComponent do
   @moduledoc """
-  The configured indexers, as a table in the Indexers group of `/settings` (#1660, #1625 points
-  1, 3, 11 and 12). One row per configured indexer, enabled or not, by priority, then id, each
+  The configured indexers, as a table in the Indexers group of `/settings` and of `/setup` (#1660,
+  #1663, #1625 points 1, 3, 11 and 12). One row per configured indexer, enabled or not, by priority, then id, each
   with its state badge, the state's detail text, its last Test, an enable switch, a Test button
   and Delete. A disabled row shows no detail, save "Credentials can't be decrypted: re-enter
   them" when its secrets do not decrypt. The states, the details and the last Test come from
@@ -38,8 +38,8 @@ defmodule CinderWeb.IndexersComponent do
   reset, on a `%{refresh: true}` update, and just past the first running backoff's end, which
   changes a state with no write to tell the page. A Test's start only marks its row, with no
   read. Each read also reads the saved indexer source that Delete's warning names. The Indexers
-  group's "Indexer source" select saves it with `#settings-form`, so `/settings` sends the
-  component a `%{refresh: true}` update after each saved submit of that form (#1662).
+  group's "Indexer source" select saves it with the host's form, so each host sends the component
+  a `%{refresh: true}` update after each saved submit of that form (#1662, #1663).
   The rows render through the stream `:table_rows`. Each read sends every row again, since each
   row's Delete warning and focus target read the other rows. A row that keeps its place is
   patched in place, so the focus on its switch or its Delete stays, and only a new order resets
@@ -52,6 +52,11 @@ defmodule CinderWeb.IndexersComponent do
   client-controlled: an id that is no integer or names no row, a type the dialogs do not add,
   and a save whose `indexer` or `secrets` is not a map change nothing. A form value that is not
   text, or under a key the form does not render, is left out of the save.
+
+  After each saved Add or Edit, saved switch, saved Delete, finished Test and `%{refresh: true}`
+  update, the timer's at a backoff's end included, once it has read the rows again, the component
+  sends its host's process `{CinderWeb.IndexersComponent, :indexers_changed}`: `/setup`
+  recomputes its Finish gate on it, and `/settings` ignores it.
 
   Required assigns: `id` and `actor`, the `%User{}` the audit rows name.
   """
@@ -73,7 +78,7 @@ defmodule CinderWeb.IndexersComponent do
   @impl true
   def update(%{runner: message}, socket), do: {:ok, runner_message(socket, message)}
 
-  def update(%{refresh: true}, socket), do: {:ok, load_rows(socket)}
+  def update(%{refresh: true}, socket), do: {:ok, socket |> load_rows() |> notify_host()}
 
   def update(assigns, socket) do
     socket = assign(socket, assigns)
@@ -100,7 +105,7 @@ defmodule CinderWeb.IndexersComponent do
         row -> assign(socket, notice: test_notice(row, result))
       end
 
-    socket |> assign(testing: TestRunner.running()) |> load_rows()
+    socket |> assign(testing: TestRunner.running()) |> load_rows() |> notify_host()
   end
 
   # A restarted runner ended the Tests it held, and an ended Test sends no finish, so the notice
@@ -318,7 +323,8 @@ defmodule CinderWeb.IndexersComponent do
          socket
          |> assign(notice: notice)
          |> close_dialog(socket.assigns.opener)
-         |> load_rows()}
+         |> load_rows()
+         |> notify_host()}
 
       {:error, dialog} ->
         {:noreply, socket |> assign(dialog: dialog) |> focus_refusal(dialog)}
@@ -348,7 +354,7 @@ defmodule CinderWeb.IndexersComponent do
             do: gettext("%{name} enabled.", name: row.name),
             else: gettext("%{name} disabled.", name: row.name)
 
-        {:noreply, socket |> assign(notice: notice) |> load_rows()}
+        {:noreply, socket |> assign(notice: notice) |> load_rows() |> notify_host()}
 
       {:error, _reason} ->
         {:noreply, assign(socket, notice: not_saved(row))}
@@ -371,11 +377,21 @@ defmodule CinderWeb.IndexersComponent do
     case Indexers.delete(socket.assigns.actor, row.id) do
       :ok ->
         {:noreply,
-         socket |> assign(notice: gettext("%{name} deleted.", name: row.name)) |> load_rows()}
+         socket
+         |> assign(notice: gettext("%{name} deleted.", name: row.name))
+         |> load_rows()
+         |> notify_host()}
 
       {:error, _reason} ->
         {:noreply, assign(socket, notice: not_saved(row))}
     end
+  end
+
+  # A LiveComponent runs in its host's process, so the host LiveView's handle_info gets this message
+  # once the current event or update returns.
+  defp notify_host(socket) do
+    send(self(), {__MODULE__, :indexers_changed})
+    socket
   end
 
   defp not_saved(row),
@@ -435,13 +451,6 @@ defmodule CinderWeb.IndexersComponent do
   defp testable?(row, testing),
     do: row.secrets_readable and not MapSet.member?(testing, row.id)
 
-  # Whether `entry` passes the gate `IndexerState.passes_gate?/1` applies to the whole list: a
-  # usable indexer, or one in a running limit backoff. That module has no per-entry form yet, so
-  # `CinderWeb.SettingsIndexersTest` pins this one to it, one enabled indexer per state.
-  @doc false
-  def passes_gate?(entry),
-    do: IndexerState.usable?(entry) or match?({:limit_backoff, _until}, entry.state)
-
   defp delete_confirm(row, rows, only_source?) do
     question =
       gettext(
@@ -449,8 +458,8 @@ defmodule CinderWeb.IndexersComponent do
         name: row.name
       )
 
-    if only_source? and passes_gate?(row) and
-         not Enum.any?(rows, &(&1.id != row.id and passes_gate?(&1))),
+    if only_source? and IndexerState.passes?(row) and
+         not Enum.any?(rows, &(&1.id != row.id and IndexerState.passes?(&1))),
        do:
          question <>
            " " <>

@@ -9,7 +9,7 @@ defmodule CinderWeb.SettingsComponents do
   A group's section help shows on `/setup` (`show_setup_guidance`); the Indexers group's shows on
   both hosts (#1660), above the `indexers` slot the host fills with its indexers table. Above
   that help, the Indexers group starts with the "Indexer source" select when the host passes
-  `indexer_source` (#1662): `/settings` does, `/setup` does not.
+  `indexer_source` (#1662). Both hosts pass it and fill the slot (#1663).
   """
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
@@ -17,6 +17,7 @@ defmodule CinderWeb.SettingsComponents do
   import CinderWeb.CoreComponents,
     only: [status_badge: 1, button: 1, icon: 1, input: 1, health_reason: 1]
 
+  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.{Health, LibraryKind, Settings}
   alias Cinder.Settings.Definition
   alias CinderWeb.DomainLabels
@@ -30,6 +31,18 @@ defmodule CinderWeb.SettingsComponents do
       fields: Enum.map_join(invalid_keys, ", ", &DomainLabels.t(Settings.describe(&1).label))
     )
   end
+
+  @doc """
+  The `indexer_source` attr of `service_fields/1`: what the Indexers group's source select reads
+  besides the form, the saved source and whether a Prowlarr URL is set, for the line under it,
+  and the host's refusal text to show, if any.
+  """
+  def indexer_source_state(error \\ nil),
+    do: %{
+      saved: Settings.indexer_source(),
+      prowlarr_url?: not is_nil(Prowlarr.saved_base_url()),
+      error: error
+    }
 
   # Each rejected key opens the disclosure its setting definition names.
   defp invalid_groups(keys), do: MapSet.new(keys, &Settings.describe(&1).group)
@@ -48,12 +61,12 @@ defmodule CinderWeb.SettingsComponents do
     doc:
       "the Indexers group's source select (#1662), rendered only when set: `saved` (the " <>
         "`Settings.indexer_source/0` value), `prowlarr_url?` (whether a Prowlarr URL is set) and " <>
-        "`error` (the host's refusal text, or nil); `/setup` passes none yet (#1663)"
+        "`error` (the host's refusal text, or nil), as `indexer_source_state/1` builds it"
 
   slot :indexers,
     doc:
       "the host's indexers table (#1660), placed in the Indexers group after its section help " <>
-        "and before its fields; `/setup` passes none yet (#1663)"
+        "and before its fields"
 
   def service_fields(assigns) do
     [{first_group, _label} | _groups] = Settings.groups()
@@ -694,7 +707,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:indexer),
     do:
       gettext(
-        "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers there first, then copy its URL and the API key from Settings > General."
+        "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
       )
 
   defp setup_section_description(:migration),

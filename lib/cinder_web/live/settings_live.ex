@@ -27,7 +27,6 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Acquisition.IndexerSource.Native.TestRunner
-  alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.{ApiKey, Catalog, DatabaseBackup, Health, Indexers, Settings}
   alias Cinder.Catalog.UpgradeHunter
   alias CinderWeb.{DomainLabels, IndexersComponent}
@@ -41,7 +40,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        open_group: open_group(params),
        form: Settings.form_state(),
-       indexer_source: indexer_source(),
+       indexer_source: indexer_source_state(),
        health: %{},
        form_revision: 0,
        undecryptable_secrets: Settings.undecryptable_secret_keys(),
@@ -139,7 +138,7 @@ defmodule CinderWeb.SettingsLive do
        socket
        |> assign(
          form: Settings.form_state(),
-         indexer_source: indexer_source(),
+         indexer_source: indexer_source_state(),
          health: %{},
          form_revision: socket.assigns.form_revision + 1,
          undecryptable_secrets: Settings.undecryptable_secret_keys()
@@ -153,7 +152,7 @@ defmodule CinderWeb.SettingsLive do
          socket
          |> assign(
            form: Settings.form_state(params, ["indexer_source"]),
-           indexer_source: indexer_source(message)
+           indexer_source: indexer_source_state(message)
          )
          |> push_event("focus-invalid", %{id: "indexer_source"})
          |> put_flash(:error, message)}
@@ -163,21 +162,12 @@ defmodule CinderWeb.SettingsLive do
          socket
          |> assign(
            form: Settings.form_state(params, invalid_keys),
-           indexer_source: indexer_source()
+           indexer_source: indexer_source_state()
          )
          |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
          |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
   end
-
-  # What the Indexers group's source select reads besides the form: the saved source and whether
-  # a Prowlarr URL is set, for the line under it, and the refusal text to show, if any.
-  defp indexer_source(error \\ nil),
-    do: %{
-      saved: Settings.indexer_source(),
-      prowlarr_url?: not is_nil(Prowlarr.saved_base_url()),
-      error: error
-    }
 
   defp source_refusal,
     do:

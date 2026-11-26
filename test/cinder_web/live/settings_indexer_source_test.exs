@@ -81,13 +81,12 @@ defmodule CinderWeb.SettingsIndexerSourceTest do
       assert has_element?(lv, ~s(#indexer_source option[value="native"][selected]))
     end
 
-    test "renders on /settings only, never on /setup", %{conn: conn} do
+    test "renders on /settings and in the Indexers step of /setup (#1663)", %{conn: conn} do
       {:ok, settings, _html} = live(conn, ~p"/settings")
-      assert has_element?(settings, ~s([name="indexer_source"]))
+      assert has_element?(settings, ~s(#settings-form [name="indexer_source"]))
 
       {:ok, setup, _html} = live(conn, ~p"/setup")
-      assert has_element?(setup, "#setup-form #settings-group-indexer")
-      refute has_element?(setup, ~s([name="indexer_source"]))
+      assert has_element?(setup, ~s(#setup-form #settings-group-indexer [name="indexer_source"]))
     end
   end
 

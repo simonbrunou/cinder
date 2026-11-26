@@ -11,8 +11,8 @@
   Prowlarr. The indexers below can still be added, tested and imported; Cinder searches them once
   you switch to Built-in." With Built-in saved and a Prowlarr URL set, in `/settings` or through
   `PROWLARR_URL`, it says grabs already found through Prowlarr still download through it. After each
-  save, Delete's warning in the indexers table follows the saved source. `/setup` shows no select
-  yet, so its form sends no source and its saves leave the stored source as it is.
+  save, Delete's warning in the indexers table follows the saved source. `/setup` shows the same
+  select from #1663 on, and refuses no switch to Built-in.
 
 ### Internal
 - **`Cinder.Indexers.switch_source/1` switches the indexer source outside `/settings`, refused to

@@ -17,7 +17,6 @@ defmodule CinderWeb.SettingsIndexersTest do
   alias Cinder.{ConfigCase, DefinitionFixtures}
   alias Cinder.Indexers
   alias Cinder.Indexers.Definitions
-  alias CinderWeb.IndexersComponent
 
   @now ~U[2026-11-26 12:00:00Z]
 
@@ -101,6 +100,12 @@ defmodule CinderWeb.SettingsIndexersTest do
                "Prowlarr settings guide"
              )
 
+      assert has_element?(
+               lv,
+               "#settings-group-indexer .setup-section-help",
+               "Cinder tests each enabled indexer when you add it."
+             )
+
       for {group, _label} <- Cinder.Settings.groups(), group != :indexer do
         refute has_element?(lv, "#settings-group-#{group} .setup-section-help"),
                "#{group} shows its setup help on /settings"
@@ -121,10 +126,18 @@ defmodule CinderWeb.SettingsIndexersTest do
       assert help < table and table < url
     end
 
-    test "/setup renders no indexers table", %{conn: conn} do
+    test "/setup renders the table in its Indexers step too (#1663)", %{conn: conn} do
       {:ok, lv, _html} = live(conn, ~p"/setup")
-      assert has_element?(lv, "#settings-group-indexer")
-      refute has_element?(lv, "#indexers")
+      assert has_element?(lv, "#setup-form #settings-group-indexer #indexers #indexers-add")
+    end
+
+    # The table sends its host a notice after each change; /setup recomputes its Finish gate on
+    # it, and /settings has nothing to recompute.
+    test "/settings ignores the table's notice", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      before = render(lv)
+      send(lv.pid, {CinderWeb.IndexersComponent, :indexers_changed})
+      assert render(lv) == before
     end
   end
 
@@ -772,8 +785,9 @@ defmodule CinderWeb.SettingsIndexersTest do
     end
 
     # `IndexerState.passes_gate?/1` reads the whole list, so with one enabled indexer at a time
-    # it answers for that indexer alone, which the component's per-row check must match.
-    test "the per-row gate check matches IndexerState.passes_gate?/1 in every state" do
+    # it answers for that indexer alone, which the per-row check the Delete warning reads must
+    # match.
+    test "the per-row gate check IndexerState.passes?/1 matches passes_gate?/1 in every state" do
       cases = [
         usable: &record!(&1, [{:success, 0}]),
         limit_backoff: &record!(&1, [{{:limit, at(600)}, 0}]),
@@ -801,7 +815,7 @@ defmodule CinderWeb.SettingsIndexersTest do
           seed.(indexer)
           row = entry(indexer.id)
           gate = IndexerState.passes_gate?(@now)
-          answer = {name, IndexersComponent.passes_gate?(row), gate, row.state}
+          answer = {name, IndexerState.passes?(row), gate, row.state}
           :ok = Indexers.delete(nil, indexer.id)
           answer
         end

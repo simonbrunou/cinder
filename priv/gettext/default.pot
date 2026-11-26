@@ -1535,7 +1535,7 @@ msgstr ""
 
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen
-msgid "Enter and validate your services. Finish unlocks once every required service is connected."
+msgid "Enter and validate your services. Finish unlocks once every checklist row is green or yellow."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex
@@ -3143,7 +3143,7 @@ msgstr ""
 
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen
-msgid "Finish unlocks once every required service is connected."
+msgid "Finish unlocks once every checklist row is green or yellow."
 msgstr ""
 
 #: lib/cinder_web/live/requests_live.ex
@@ -5231,11 +5231,6 @@ msgstr ""
 msgid "Connect Jellyfin or Plex."
 msgstr ""
 
-#: lib/cinder_web/live/setup_live.ex
-#, elixir-autogen
-msgid "Connect Prowlarr and its indexers."
-msgstr ""
-
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
 msgid "Discord webhook guide"
@@ -5334,11 +5329,6 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
 msgid "Plex token guide"
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex
-#, elixir-autogen
-msgid "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers there first, then copy its URL and the API key from Settings > General."
 msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex
@@ -8400,4 +8390,19 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen, elixir-format
 msgid "Searches go through Prowlarr. The indexers below can still be added, tested and imported; Cinder searches them once you switch to Built-in."
+msgstr ""
+
+#: lib/cinder_web/live/setup_live.ex
+#, elixir-autogen, elixir-format
+msgid "Add your indexers, or connect Prowlarr."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
+msgstr ""
+
+#: lib/cinder_web/live/setup_live.ex
+#, elixir-autogen, elixir-format
+msgid "No usable indexer uses the same protocol as a working download client."
 msgstr ""

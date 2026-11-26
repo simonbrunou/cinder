@@ -5,8 +5,8 @@
   "Test Indexers".
 - **A Test in `/settings` that fails or warns now shows its reason as text (#1657).** The reason
   shows beside the badge, in red or yellow. Before, only the badge's tooltip held it, which
-  keyboard and touch users could not open. `/setup` shows a failed Test's reason the same way;
-  it reads a warning as reachable and shows no reason for it.
+  keyboard and touch users could not open. `/setup` shows a failed or warning Test's reason the
+  same way (#1663).
 
 ### Internal
 - **The native indexer source now reports each configured indexer's state, and can Test one

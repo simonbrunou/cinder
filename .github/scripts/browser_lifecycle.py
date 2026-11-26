@@ -1297,6 +1297,60 @@ def case_15_refused_source_switch_reopens_its_group(page):
         delete_indexer(indexer)
 
 
+def set_setup_complete(value):
+    """Writes the `setup_complete` row, which the `:require_setup` gate reads on each request."""
+    rpc(
+        f'Cinder.Settings.put("setup_complete", "{str(value).lower()}"); '
+        'IO.puts("RPCRESULT:ok")'
+    )
+
+
+def case_16_setup_dialog_outside_the_setup_form(page):
+    """The indexers table in step 2 of /setup (#1663). With setup reopened and an edit dialog
+    open with a name and key typed, #setup-form's FormData holds no indexer field and the
+    dialog's form is not inside #setup-form. Setup is marked complete again whatever happens, so
+    the later cases reach their pages."""
+    indexer = seed_indexer("CI Setup Dialog", 41)
+    context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    try:
+        setup = context.new_page()
+        # `login/1` waits for the redirect to `/`, which an open setup sends to `/setup`.
+        login(setup)
+        set_setup_complete(False)
+        setup.goto(f"{BASE_URL}/setup")
+        wait_for_liveview(setup)
+        group = setup.locator("#settings-group-indexer")
+        if not group.evaluate("(el) => el.open"):
+            setup.locator("#settings-group-indexer > summary").click()
+        expect(group).to_have_js_property("open", True, timeout=5_000)
+
+        setup.locator(f"#indexer-{indexer}-edit").click()
+        expect(setup.locator("#indexer-dialog-box")).to_be_visible(timeout=5_000)
+        setup.locator("#indexer-form-name").fill("CI typed name")
+        setup.locator("#indexer-form input[name='secrets[api_key]']").fill("ci-typed-key")
+        expect(setup.locator("#indexer-form.phx-change-loading")).to_have_count(0)
+
+        leaks = setup.evaluate(
+            """() => {
+              const form = document.getElementById("setup-form");
+              const names = [...new FormData(form).keys()];
+              return {names: names.filter((n) => /^(indexer|secrets)\\[/.test(n)),
+                      nested: form.contains(document.getElementById("indexer-form")),
+                      source: names.includes("indexer_source"),
+                      total: names.length};
+            }"""
+        )
+        if leaks["names"] or leaks["nested"] or not leaks["source"]:
+            raise CaseFailure(
+                "case 16 (portal): #setup-form holds indexer fields or the dialog form, or "
+                f"lacks the source select, {leaks!r}"
+            )
+    finally:
+        context.close()
+        set_setup_complete(True)
+        delete_indexer(indexer)
+
+
 CASES = [
     ("case1_no_flare_on_initial_load", case_1_no_flare_on_initial_load),
     ("case2_exactly_one_flare_on_transition", case_2_exactly_one_flare_on_transition),
@@ -1324,6 +1378,10 @@ CASES = [
     (
         "case15_refused_source_switch_reopens_its_group",
         case_15_refused_source_switch_reopens_its_group,
+    ),
+    (
+        "case16_setup_dialog_outside_the_setup_form",
+        case_16_setup_dialog_outside_the_setup_form,
     ),
 ]
 

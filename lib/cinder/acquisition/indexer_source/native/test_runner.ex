@@ -2,9 +2,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
   @moduledoc """
   Runs the per-indexer Test (`Cinder.Acquisition.IndexerSource.Native.test_indexer/1`) outside
   the page that asks for it (#1660, #1625 point 11), so closing the tab does not cancel it. The
-  indexers table in `/settings` starts it from its Test button and from a save in its Add and
-  Edit dialogs (#1661), and #1663's `/setup` host and #1674's Test after import are to start it
-  the same way, through `start/1`.
+  indexers table in `/settings` and `/setup` (#1663) starts it from its Test button and from a
+  save in its Add and Edit dialogs (#1661), and #1674's Test after import is to start it the same
+  way, through `start/1`.
 
   This process holds the pending mark: each Test runs in a child of
   `Cinder.Acquisition.IndexerSource.Native.TestRunner.TaskSupervisor`, unlinked and monitored,

@@ -4,18 +4,27 @@ defmodule CinderWeb.SetupLiveTest do
 
   import Phoenix.LiveViewTest
   import Mox
+  import Cinder.NewznabFixtures, only: [indexer!: 2]
+  import Cinder.TestRunnerHelpers
 
+  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus, TestRunner}
+  alias Cinder.{ConfigCase, Indexers, Settings}
   alias Cinder.Test.Rendezvous
 
   setup :set_mox_global
   setup :reset_cinder_env
 
-  # Stubs every service green. Submitting the setup form saves a choice for the media server
-  # and for each download protocol (the form sends every select's value), which wires the real
-  # Jellyfin, qBittorrent and SABnzbd clients: their health runs through the Req.Test stubs
-  # below. TMDB, the indexer and the library roots stay on their Mox mocks, and the client
-  # mocks answer only before the first save. Each setup target's probe calls `answer` once, on a
-  # call its health check makes exactly once, and fails when `answer` returns an error.
+  @indexer_help "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
+  @coverage "No usable indexer uses the same protocol as a working download client."
+
+  # Stubs every service green. Submitting the setup form saves a choice for the media server,
+  # for each download protocol and for the indexer source (the form sends every select's value),
+  # which wires the real Jellyfin, qBittorrent, SABnzbd and Prowlarr clients: their health runs
+  # through the Req.Test stubs below. TMDB and the library roots stay on their Mox mocks, and the
+  # indexer and client mocks answer only before the first save. Each setup target's probe calls
+  # `answer` once, on a call its health check makes exactly once, and fails when `answer` returns
+  # an error.
   defp stub_all_services_ok(answer \\ fn -> :ok end) do
     stub(Cinder.Catalog.TMDBMock, :health, answer)
     stub(Cinder.Acquisition.IndexerMock, :health, answer)
@@ -53,6 +62,10 @@ defmodule CinderWeb.SetupLiveTest do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       reply(conn, answer, &Req.Test.json(&1, %{}))
     end)
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      reply(conn, answer, &Req.Test.json(&1, []))
+    end)
   end
 
   # Sends the canned response once `answer` returns `:ok`, and a 503 when it returns an error.
@@ -68,8 +81,12 @@ defmodule CinderWeb.SetupLiveTest do
     :ok
   end
 
-  # Enables qBittorrent + Jellyfin so the loop can validate green.
-  @valid_params %{"torrent_client" => "qbittorrent", "media_server_type" => "jellyfin"}
+  # Enables qBittorrent + Jellyfin and searches through Prowlarr, so the loop can validate green.
+  @valid_params %{
+    "torrent_client" => "qbittorrent",
+    "media_server_type" => "jellyfin",
+    "indexer_source" => "prowlarr"
+  }
   # Book/audiobook roots have no env bootstrap (`Cinder.Settings`'s one-time bootstrap snapshot
   # is cached in `:persistent_term` at first read and never refreshed mid-suite, so mutating
   # `Application.put_env(:cinder, :books_library_path, ...)` inside a test is unreliable — the
@@ -206,7 +223,7 @@ defmodule CinderWeb.SetupLiveTest do
     end
 
     assert has_element?(lv, "#settings-group-tmdb .setup-section-help", "movie and TV metadata")
-    assert has_element?(lv, "#settings-group-indexer .setup-section-help", "finds releases")
+    assert has_element?(lv, "#settings-group-indexer .setup-section-help", @indexer_help)
 
     assert has_element?(
              lv,
@@ -314,7 +331,7 @@ defmodule CinderWeb.SetupLiveTest do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
-    stub(Cinder.Acquisition.IndexerMock, :health, fn -> {:error, :econnrefused} end)
+    Req.Test.stub(Cinder.ProwlarrStub, &Req.Test.transport_error(&1, :econnrefused))
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
     lv |> form("#setup-form", @valid_params) |> render_submit()
@@ -371,9 +388,9 @@ defmodule CinderWeb.SetupLiveTest do
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")
-    # Setup reads the warning as reachable, so no reason text shows beside its badge.
+    # The warning passes, and its reason shows beside its badge, as on /settings (#1663).
     assert has_element?(lv, "#test-target-usenet")
-    refute has_element?(lv, "#test-reason-usenet")
+    assert has_element?(lv, "#test-reason-usenet.text-warning", "Folder name limit is 60")
   end
 
   test "Save & validate checks the setup targets at once, not one after another", %{conn: conn} do
@@ -399,10 +416,10 @@ defmodule CinderWeb.SetupLiveTest do
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
 
-    # The indexer alone gets the shrunk budget (`reset_cinder_env` restores it), and answers green
-    # only well past it: waited out, its row would read OK.
+    # The indexer alone gets the shrunk budget (`reset_cinder_env` restores it), and Prowlarr never
+    # answers: the probe ends only when the budget kills it.
     Application.put_env(:cinder, :health_probe_timeout_ms, %{"indexer" => 200})
-    stub(Cinder.Acquisition.IndexerMock, :health, fn -> sleep_ok(5_000) end)
+    Req.Test.stub(Cinder.ProwlarrStub, fn _conn -> Process.sleep(:infinity) end)
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
     lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
@@ -600,5 +617,444 @@ defmodule CinderWeb.SetupLiveTest do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/setup")
+  end
+
+  describe "the Indexers step" do
+    test "holds the source select and the indexers table, and reads Add your indexers",
+         %{conn: conn} do
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+
+      assert has_element?(
+               lv,
+               "#setup-form #settings-group-indexer select#indexer_source[name=indexer_source]"
+             )
+
+      assert has_element?(lv, "#setup-form #settings-group-indexer #indexers #indexers-add")
+      assert has_element?(lv, "#setup-step-2", "Add your indexers, or connect Prowlarr.")
+      assert has_element?(lv, "#settings-group-indexer .setup-section-help", @indexer_help)
+
+      assert has_element?(
+               lv,
+               "#settings-group-indexer .setup-section-help a",
+               "Prowlarr settings guide"
+             )
+    end
+
+    test "Save & validate stores Built-in with no working indexer, and refuses nothing",
+         %{conn: conn} do
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      stub_all_services_ok()
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+
+      validate(lv, "native")
+
+      assert Settings.indexer_source() == "native"
+      assert has_element?(lv, ~s|#setup-form[data-form-revision="1"]|)
+      refute has_element?(lv, "#flash-error")
+      refute has_element?(lv, "#indexer_source-error")
+      assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer added")
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+  end
+
+  describe "on Built-in" do
+    @now ~U[2026-11-26 12:00:00Z]
+    @key "SYNTH-key-setup-1663"
+
+    setup %{conn: conn} do
+      ConfigCase.put_env(Native, clock: fn -> @now end)
+      block_tests()
+      stop_tests_on_exit()
+      :ok = TestRunner.subscribe()
+      stub_all_services_ok()
+      %{conn: log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())}
+    end
+
+    test "Test-on-save of the first indexer unlocks Finish, and disabling it locks it again",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup[disabled]")
+
+      add_indexer(lv, "Usenet One")
+      assert [%{id: id}] = Indexers.list()
+      assert_receive {:test_started, task_pid, ^id}
+      # The Test still runs: nothing passes yet.
+      render(lv)
+      assert has_element?(lv, "#finish-setup[disabled]")
+
+      answer(task_pid, :test_success)
+      eventually(fn -> has_element?(lv, "#finish-setup:not([disabled])") end)
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle.text-success")
+
+      lv |> element("#indexer-#{id}-enabled") |> render_click()
+      assert has_element?(lv, "#finish-setup[disabled]")
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer is enabled")
+
+      render_hook(lv, "finish", %{})
+      refute Settings.setup_complete?()
+    end
+
+    test "a saved switch to Built-in makes Delete warn about the only working indexer",
+         %{conn: conn} do
+      %{id: id} = usable!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      refute has_element?(lv, "#indexer-#{id}-delete[data-confirm*='only working indexer']")
+
+      validate(lv, "native")
+      assert has_element?(lv, "#indexer-#{id}-delete[data-confirm*='only working indexer']")
+    end
+
+    test "a refused save starts no Test and leaves Finish locked", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      add_indexer(lv, "Broken", %{"base_url" => "not a url"})
+      assert Indexers.list() == []
+      assert TestRunner.running() == MapSet.new()
+      refute_received {:test_started, _task_pid, _id}
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "a Test that ends after a newer edit does not unlock Finish", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      add_indexer(lv, "Usenet One")
+      assert [%{id: id}] = Indexers.list()
+      assert_receive {:test_started, task_pid, ^id}
+
+      # The edit raises `config_version` while the Test runs, so its answer is dropped.
+      lv |> element("#indexer-#{id}-edit") |> render_click()
+      save_dialog(lv, %{"base_url" => "https://moved.example"})
+      assert [%{config_version: 2}] = Indexers.list()
+
+      answer(task_pid, :test_success)
+      assert_receive {TestRunner, :finished, ^id, {:error, :dropped}}
+      eventually(fn -> has_element?(lv, "#indexers-notice", "stored nothing") end)
+      # The table sent its host notice before it showed that result, so this render comes after
+      # the host's recompute.
+      render(lv)
+      assert has_element?(lv, "#finish-setup[disabled]")
+      assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
+    end
+
+    test "the Test button's finish unlocks Finish", %{conn: conn} do
+      %{id: id} = indexer!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup[disabled]")
+
+      lv |> element("#indexer-#{id}-test") |> render_click()
+      assert_receive {:test_started, task_pid, ^id}
+      answer(task_pid, :test_success)
+      eventually(fn -> has_element?(lv, "#finish-setup:not([disabled])") end)
+    end
+
+    test "an edit that disables the indexer locks Finish", %{conn: conn} do
+      %{id: id} = usable!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+
+      lv |> element("#indexer-#{id}-edit") |> render_click()
+      save_dialog(lv, %{"enabled" => "false"})
+      assert [%{enabled: false}] = Indexers.list()
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "deleting the only working indexer locks Finish", %{conn: conn} do
+      %{id: id} = usable!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+
+      lv |> element("#indexer-#{id}-delete") |> render_click()
+      assert Indexers.list() == []
+      assert has_element?(lv, "#finish-setup[disabled]")
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer added")
+    end
+
+    test "finish recomputes the gate from the saved indexers before it completes setup",
+         %{conn: conn} do
+      indexer = usable!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+
+      # Another tab disables it: no message tells this page.
+      {:ok, _row} = Indexers.set_enabled(nil, indexer.id, indexer.lock_version, false)
+
+      lv |> element("#finish-setup") |> render_click()
+      refute Settings.setup_complete?()
+      assert has_element?(lv, "#finish-setup[disabled]")
+      assert has_element?(lv, "#setup-check-indexer .text-error", "No indexer is enabled")
+    end
+
+    test "finish completes setup while the gate still passes", %{conn: conn} do
+      usable!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      lv |> element("#finish-setup") |> render_click()
+      assert Settings.setup_complete?()
+    end
+
+    test "an indexer waiting out a limit, with none usable, unlocks Finish in yellow",
+         %{conn: conn} do
+      indexer!(:newznab, "nzb.example") |> record!({:limit, DateTime.add(@now, 600)})
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+      assert has_element?(lv, "#setup-check-indexer .hero-exclamation-triangle.text-warning")
+      assert has_element?(lv, "#setup-check-indexer .text-warning", "nzb.example")
+    end
+
+    test "a passing indexer beside a failing one unlocks Finish in yellow with the reason",
+         %{conn: conn} do
+      usable!(:newznab, "ok.example")
+      indexer!(:newznab, "fail.example") |> record!(:timeout)
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+      assert has_element?(lv, "#setup-check-indexer .hero-exclamation-triangle.text-warning")
+      assert has_element?(lv, "#setup-check-indexer .text-warning", "fail.example")
+      refute has_element?(lv, "#setup-check-indexer .text-warning", "ok.example")
+    end
+
+    test "a never-checked indexer does not pass", %{conn: conn} do
+      indexer!(:newznab, "nzb.example")
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#finish-setup[disabled]")
+      assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
+    end
+
+    test "a Usenet indexer with only the torrent client working keeps Finish locked",
+         %{conn: conn} do
+      usable!(:newznab, "nzb.example")
+      Req.Test.stub(Cinder.SabnzbdStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#setup-check-group-download .hero-check-circle")
+      assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
+      assert has_element?(lv, "#setup-check-indexer .text-error", @coverage)
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "a torrent indexer with only the Usenet client working keeps Finish locked",
+         %{conn: conn} do
+      # `block_tests/0` maps Newznab alone; with no adapter a Torznab row reads not supported.
+      ConfigCase.put_env(:indexer_adapters, %{
+        newznab: Cinder.Acquisition.IndexerAdapterMock,
+        torznab: Cinder.Acquisition.Indexer.Torznab
+      })
+
+      usable!(:torznab, "tz.example")
+      Req.Test.stub(Cinder.QBittorrentStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#setup-check-group-download .hero-check-circle")
+      assert has_element?(lv, "#setup-check-indexer .text-error", @coverage)
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "a Usenet indexer with the Usenet client working unlocks Finish", %{conn: conn} do
+      usable!(:newznab, "nzb.example")
+      Req.Test.stub(Cinder.QBittorrentStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      refute has_element?(lv, "#setup-check-indexer", @coverage)
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+    end
+
+    test "a torrent indexer with only a warning Usenet client keeps Finish locked",
+         %{conn: conn} do
+      ConfigCase.put_env(:indexer_adapters, %{
+        newznab: Cinder.Acquisition.IndexerAdapterMock,
+        torznab: Cinder.Acquisition.Indexer.Torznab
+      })
+
+      usable!(:torznab, "tz.example")
+      stub_sabnzbd_warning()
+      Req.Test.stub(Cinder.QBittorrentStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#setup-check-group-download .text-warning")
+      assert has_element?(lv, "#setup-check-indexer .text-error", @coverage)
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+
+    test "a Usenet indexer with a warning Usenet client unlocks Finish", %{conn: conn} do
+      usable!(:newznab, "nzb.example")
+      stub_sabnzbd_warning()
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      refute has_element?(lv, "#setup-check-indexer", @coverage)
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+    end
+
+    test "a limit that ends while the page is open locks Finish", %{conn: conn} do
+      indexer!(:newznab, "nzb.example") |> record!({:limit, DateTime.add(@now, 600)})
+      [%{state: {:limit_backoff, until}}] = IndexerState.list(@now)
+      # The table reads its rows again just past the limit's end, from a real timer: the page
+      # opens one second before that end.
+      ConfigCase.put_env(Native, clock: fn -> DateTime.add(until, -1) end)
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+
+      ConfigCase.put_env(Native, clock: fn -> DateTime.add(until, 1) end)
+      eventually(fn -> has_element?(lv, "#finish-setup[disabled]") end)
+      assert has_element?(lv, "#setup-check-indexer .hero-x-circle")
+    end
+
+    test "the protocol check stays silent while no download client works", %{conn: conn} do
+      usable!(:newznab, "nzb.example")
+      Req.Test.stub(Cinder.QBittorrentStub, &Req.Test.transport_error(&1, :econnrefused))
+      Req.Test.stub(Cinder.SabnzbdStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+
+      assert has_element?(lv, "#setup-check-group-download", "None reachable")
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle")
+      refute has_element?(lv, "#setup-check-indexer", @coverage)
+      assert has_element?(lv, "#finish-setup[disabled]")
+    end
+  end
+
+  describe "on Prowlarr" do
+    test "a passing probe unlocks Finish with no protocol check", %{conn: conn} do
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      ConfigCase.put_env(Native, clock: fn -> @now end)
+      stub_all_services_ok()
+      # A Built-in indexer that only the failing Usenet client could take: Built-in's protocol
+      # check would fail it.
+      usable!(:newznab, "nzb.example")
+      Req.Test.stub(Cinder.SabnzbdStub, &Req.Test.transport_error(&1, :econnrefused))
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "prowlarr")
+
+      assert has_element?(lv, "#setup-check-indexer .hero-check-circle")
+      refute has_element?(lv, "#setup-check-indexer", @coverage)
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+    end
+  end
+
+  test "a SABnzbd configuration warning shows yellow with its reason in the download row",
+       %{conn: conn} do
+    conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+    stub_all_services_ok()
+
+    stub_sabnzbd_warning()
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    validate(lv, "prowlarr")
+
+    assert has_element?(lv, "#setup-check-group-download .hero-exclamation-triangle.text-warning")
+
+    assert has_element?(
+             lv,
+             "#setup-check-group-download .text-warning",
+             "Folder name limit is 60"
+           )
+
+    assert has_element?(lv, "#finish-setup:not([disabled])")
+  end
+
+  test "the SABnzbd Test button shows its warning yellow, in its badge and the download row",
+       %{conn: conn} do
+    conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+    stub_all_services_ok()
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    validate(lv, "prowlarr")
+    assert has_element?(lv, "#setup-check-group-download .hero-check-circle")
+
+    stub_sabnzbd_warning()
+    lv |> element("#test-target-usenet") |> render_click()
+
+    assert has_element?(lv, "#test-reason-usenet.text-warning", "Folder name limit is 60")
+    assert has_element?(lv, "#setup-check-group-download .hero-exclamation-triangle.text-warning")
+    assert has_element?(lv, "#finish-setup:not([disabled])")
+  end
+
+  # SABnzbd answers its queue and reports a folder name limit too short for Cinder's job names:
+  # its check passes with a warning.
+  defp stub_sabnzbd_warning do
+    Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        "get_config" ->
+          Req.Test.json(conn, %{"config" => %{"misc" => %{"folder_max_length" => 60}}})
+      end
+    end)
+  end
+
+  defp validate(lv, source) do
+    lv
+    |> form("#setup-form", Map.put(@valid_params_with_books, "indexer_source", source))
+    |> render_submit()
+  end
+
+  defp usable!(type, host), do: indexer!(type, host) |> record!(:success)
+
+  defp record!(indexer, answer) do
+    assert IndexerStatus.record(indexer, answer, @now) in [:written, :unchanged]
+    indexer
+  end
+
+  # Adds a Newznab indexer through the Add dialog: its form starts with the default API path,
+  # priority and enabled box, which a save merges under the typed values.
+  defp add_indexer(lv, name, typed \\ %{}) do
+    lv |> element("#indexers-add") |> render_click()
+    lv |> with_target("#indexers") |> render_click("pick", %{"type" => "newznab"})
+
+    save_dialog(
+      lv,
+      Map.merge(
+        %{
+          "name" => name,
+          "base_url" => "https://#{String.downcase(name) |> String.replace(" ", "-")}.example"
+        },
+        typed
+      ),
+      %{"api_key" => @key}
+    )
+  end
+
+  # The secrets map always holds a key: an empty map would leave the payload (testing.md).
+  defp save_dialog(lv, typed, secrets \\ %{"unused" => ""}) do
+    lv
+    |> with_target("#indexers")
+    |> render_submit("save", %{"indexer" => typed, "secrets" => secrets})
+  end
+
+  # Polls until `check` holds, up to 5 s: a runner message reaches the page, the component and the
+  # page again in turn.
+  defp eventually(check, rounds \\ 250) do
+    cond do
+      check.() ->
+        :ok
+
+      rounds == 0 ->
+        flunk("the page never matched")
+
+      true ->
+        Process.sleep(20)
+        eventually(check, rounds - 1)
+    end
   end
 end

@@ -584,11 +584,11 @@ defmodule Cinder.Settings.Registry do
     new("setup_complete", :boolean, save: :direct, render: :none)
   ]
 
-  # The indexer source every search uses unless its caller names one (#1651). `/settings` renders
-  # its select at the top of the Indexers group (#1662) and saves it with the form; `/setup`
-  # renders none, so its form sends no `indexer_source` and its saves leave the stored source as
-  # it is. `Cinder.Indexers.switch_source/1` writes it alone, and the upgrade migration writes it
-  # too. Each option's `os_env` lists the variables whose value, set and not blank, makes it the
+  # The indexer source every search uses unless its caller names one (#1651). `/settings` and
+  # `/setup` render its select at the top of the Indexers group (#1662, #1663) and save it with
+  # their form; of the two pages, only `/settings` refuses a switch to Built-in.
+  # `Cinder.Indexers.switch_source/1` writes it alone, and the upgrade migration writes it too.
+  # Each option's `os_env` lists the variables whose value, set and not blank, makes it the
   # bootstrap choice; `default` is the fresh-install choice.
   # `Cinder.Settings.Shape.running_indexer_source/3` picks the module. Each option's `label` is an
   # English msgid: the select's option text (#1623 point 8) and the parenthesis of the dashboard's

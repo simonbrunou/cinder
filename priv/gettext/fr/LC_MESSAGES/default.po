@@ -1549,10 +1549,10 @@ msgstr "Activer qBittorrent (torrent)"
 
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen
-msgid "Enter and validate your services. Finish unlocks once every required service is connected."
+msgid "Enter and validate your services. Finish unlocks once every checklist row is green or yellow."
 msgstr ""
-"Saisissez et validez vos services. Terminer se débloque une fois tous les "
-"services requis connectés."
+"Saisissez et validez vos services. Terminer se débloque une fois chaque ligne "
+"de la liste de configuration verte ou jaune."
 
 #: lib/cinder_web/components/core_components.ex
 #: lib/cinder_web/components/search_report_components.ex
@@ -3210,8 +3210,8 @@ msgstr "Filtrer par type"
 
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen
-msgid "Finish unlocks once every required service is connected."
-msgstr "Terminer est déverrouillé une fois chaque service requis connecté."
+msgid "Finish unlocks once every checklist row is green or yellow."
+msgstr "Terminer se débloque une fois chaque ligne de la liste de configuration verte ou jaune."
 
 #: lib/cinder_web/live/requests_live.ex
 #, elixir-autogen
@@ -5429,11 +5429,6 @@ msgstr "Choisissez les dossiers de téléchargement et de médiathèque."
 msgid "Connect Jellyfin or Plex."
 msgstr "Connectez Jellyfin ou Plex."
 
-#: lib/cinder_web/live/setup_live.ex
-#, elixir-autogen
-msgid "Connect Prowlarr and its indexers."
-msgstr "Connectez Prowlarr et ses indexeurs."
-
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
 msgid "Discord webhook guide"
@@ -5551,14 +5546,6 @@ msgstr "Guide de la clé API OpenSubtitles"
 #, elixir-autogen
 msgid "Plex token guide"
 msgstr "Guide du jeton Plex"
-
-#: lib/cinder_web/components/settings_components.ex
-#, elixir-autogen
-msgid "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers there first, then copy its URL and the API key from Settings > General."
-msgstr ""
-"Prowlarr connecte Cinder à vos indexeurs et trouve des releases. Ajoutez-y "
-"d’abord vos indexeurs, puis copiez son URL et la clé API depuis Paramètres > "
-"Général."
 
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
@@ -8756,3 +8743,18 @@ msgstr "Source des indexeurs"
 #, elixir-autogen, elixir-format
 msgid "Searches go through Prowlarr. The indexers below can still be added, tested and imported; Cinder searches them once you switch to Built-in."
 msgstr "Les recherches passent par Prowlarr. Les indexeurs ci-dessous peuvent quand même être ajoutés, testés et importés ; Cinder les interroge une fois la source passée à Intégré."
+
+#: lib/cinder_web/live/setup_live.ex
+#, elixir-autogen, elixir-format
+msgid "Add your indexers, or connect Prowlarr."
+msgstr "Ajoutez vos indexeurs, ou connectez Prowlarr."
+
+#: lib/cinder_web/components/settings_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
+msgstr "Cinder interroge vos indexeurs lui-même (Intégré), ou passe par Prowlarr si vous l’utilisez déjà. Pour Intégré, ajoutez chaque indexeur ci-dessous ; Cinder teste chaque indexeur activé quand vous l’ajoutez. Pour Prowlarr, ajoutez-y vos indexeurs, puis copiez son URL et sa clé API depuis Paramètres > Général."
+
+#: lib/cinder_web/live/setup_live.ex
+#, elixir-autogen, elixir-format
+msgid "No usable indexer uses the same protocol as a working download client."
+msgstr "Aucun indexeur utilisable n’utilise le même protocole qu’un client de téléchargement qui fonctionne."
