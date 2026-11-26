@@ -42,6 +42,15 @@
   keeps a running limit and zeroes the failures, so an indexer edited during a limit passed
   once the limit ended, with no answer under its new settings. The next re-check found it,
   and a third fix commit took the clause out.
+- A requirement that names inputs and their outcome, such as the values an issue refuses, gets
+  a done-when line and a test for each path the change can send those inputs down, such as each
+  implementation, tag or setting the code branches on. The test goes red when that path gives
+  an outcome other than the one the issue sets for it. A fix commit that adds a path adds its
+  line and test. On #1673 (PR #1842) the refused `&apikey=x` and base URL with a password were
+  tested on the direct Newznab path only, and under a proxy tag they still gave a tickable
+  offer. A Spec fix then sent a Torznab row with additional parameters through Prowlarr. A
+  re-check found one with `&apikey=x` offered, and the next hunk check a Newznab one under a
+  proxy tag: two more fix commits and hunk checks.
 - When code reads a stored value against a declaration that can change while the value stays
   stored, such as a definition's settings, a schema or an option list, test each path that
   leaves the value stored without its declaration, with a later declaration that names it
