@@ -64,6 +64,9 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   # the same "no per-install override" reasoning `@ebook_category` above already gives.
   @audiobook_category 3030
 
+  @doc "The Newznab category the free-text movie search is scoped to when its caller names none."
+  def movie_category, do: @movie_category
+
   @doc "The Newznab category the book searches are scoped to."
   def ebook_category, do: @ebook_category
 
