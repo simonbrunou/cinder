@@ -13,9 +13,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
   defp run(input, filters, vars \\ %{}), do: Filters.apply(input, filters, vars, @now)
 
   describe "supported/0" do
-    test "lists the seven filters of this slice" do
+    test "lists the filters of #1670 and #1677" do
       assert Filters.supported() ==
-               ~w(append dateparse re_replace regexp replace split trim)
+               ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode
+                  htmlencode prepend querystring re_replace regexp reltime replace split strdump
+                  timeago timeparse tolower toupper trim urldecode urlencode validate
+                  validfilename)
     end
   end
 
@@ -145,12 +148,13 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
                {:error, {:not_supported, {:date_layout, "fff"}}}
     end
 
-    test "a filter outside this slice is a not-supported tag" do
-      assert run("x", [f("base64decode")]) ==
-               {:error, {:not_supported, {:filter, "base64decode"}}}
+    test "a filter the engine does not run is a not-supported tag" do
+      assert run("x", [f("fuzzytime")]) == {:error, {:not_supported, {:filter, "fuzzytime"}}}
 
-      assert run("x", [f("trim"), f("tolower")]) ==
-               {:error, {:not_supported, {:filter, "tolower"}}}
+      assert run("{}", [f("trim"), f("jsonjoinarray", ["$.a", ","])]) ==
+               {:error, {:not_supported, {:filter, "jsonjoinarray"}}}
+
+      assert run("x", [f("nope")]) == {:error, {:not_supported, {:filter, "nope"}}}
     end
 
     test "input of the wrong shape is an error tag, never a raise" do
@@ -164,6 +168,145 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
 
     test "an empty list gives the input" do
       assert run("x", []) == {:ok, "x"}
+    end
+  end
+
+  describe "the filters of #1677" do
+    # The .NET rows behind each filter are in `DotnetTextTest` and `DotnetDateTest`.
+    test "querystring gives a parameter's first value, and fails the field when there is none" do
+      assert run("/details.php?id=12&x=1", [f("querystring", "id")]) == {:ok, "12"}
+
+      assert run("/details.php?x=1", [f("querystring", "id")]) ==
+               {:error, {:filter_failed, "querystring"}}
+
+      assert run("/details.php", [f("querystring", "id")]) ==
+               {:error, {:filter_failed, "querystring"}}
+
+      assert run("?id=1", [f("querystring", ["id"])]) == {:error, {:filter_args, "querystring"}}
+    end
+
+    test "timeparse reads as dateparse does" do
+      assert run("25/11/2026", [f("timeparse", "dd/MM/yyyy")]) == {:ok, "2026-11-25T00:00:00Z"}
+      assert run("garbage", [f("timeparse", "dd/MM/yyyy")]) == {:ok, "garbage"}
+      assert run("x", [f("timeparse")]) == {:error, {:filter_args, "timeparse"}}
+    end
+
+    test "prepend prepends its argument evaluated as a template" do
+      assert run("Dune", [f("prepend", "{{ .Config.cat }}: ")], %{".Config.cat" => "Movie"}) ==
+               {:ok, "Movie: Dune"}
+    end
+
+    test "tolower and toupper map each character to one, as the invariant culture does" do
+      assert run("Straße İ ΑΒΓ", [f("tolower")]) == {:ok, "straße İ αβγ"}
+      assert run("Straße ᾳ ǅ", [f("toupper")]) == {:ok, "STRAßE ᾼ Ǆ"}
+    end
+
+    test "base64decode and base64encode read and write URL-safe base64" do
+      assert run("0JTRjtC90LA", [f("base64decode")]) == {:ok, "Дюна"}
+      assert run("??>", [f("base64encode")]) == {:ok, "Pz8-"}
+      assert run("a", [f("base64decode")]) == {:error, {:filter_failed, "base64decode"}}
+    end
+
+    test "an encoding option outside the charsets is an error tag, never a raise" do
+      for encoding <- ["UTF-8", :latin9, nil] do
+        assert {encoding, Filters.apply("a b", [f("urlencode")], %{}, @now, encoding: encoding)} ==
+                 {encoding, {:error, :encoding_invalid}}
+      end
+
+      assert Filters.apply("a b", [f("urlencode")], %{}, @now, encoding: :windows_1252) ==
+               {:ok, "a+b"}
+    end
+
+    test "urlencode and urldecode use the definition's encoding, UTF-8 by default" do
+      assert run("Дюна 2", [f("urlencode")]) == {:ok, "%D0%94%D1%8E%D0%BD%D0%B0+2"}
+      assert run("%D0%94%D1%8E+x", [f("urldecode")]) == {:ok, "Дю x"}
+
+      assert Filters.apply("Дюна 2", [f("urlencode")], %{}, @now, encoding: :windows_1251) ==
+               {:ok, "%C4%FE%ED%E0+2"}
+
+      assert Filters.apply("%C4%FE%ED%E0", [f("urldecode")], %{}, @now, encoding: :windows_1251) ==
+               {:ok, "Дюна"}
+    end
+
+    test "htmldecode and htmlencode read and write HTML character references" do
+      assert run("Tom &amp; Jerry &#233;&eacute;&bogus;", [f("htmldecode")]) ==
+               {:ok, "Tom & Jerry éé&bogus;"}
+
+      assert run("<b>é</b>", [f("htmlencode")]) == {:ok, "&lt;b&gt;&#233;&lt;/b&gt;"}
+    end
+
+    test "timeago and reltime write the time the text counts back from now" do
+      assert run("2 hours ago", [f("timeago")]) == {:ok, "2026-11-25T17:45:30Z"}
+      assert run("1 day, 3 hours ago", [f("reltime")]) == {:ok, "2026-11-24T16:45:30Z"}
+      assert run("just now", [f("timeago")]) == {:ok, "2026-11-25T19:45:30Z"}
+      assert run("2 fortnights", [f("timeago")]) == {:error, {:filter_failed, "timeago"}}
+      assert run("3000 years", [f("reltime")]) == {:error, {:filter_failed, "reltime"}}
+    end
+
+    test "validfilename replaces NUL and /" do
+      assert run("AC/DC" <> <<0>>, [f("validfilename")]) == {:ok, "AC_DC_"}
+    end
+
+    test "diacritics replace drops the marks, and any other argument is an error tag" do
+      assert run("ŠĐĆŽ - šđčćž", [f("diacritics", "replace")]) == {:ok, "SĐCZ - sđccz"}
+      assert run("é", [f("diacritics", "strip")]) == {:error, {:filter_args, "diacritics"}}
+      assert run("é", [f("diacritics")]) == {:error, {:filter_args, "diacritics"}}
+    end
+
+    test "validate keeps the words of its list that the text holds" do
+      assert run("Movie.2160P.x265 (1080p)", [f("validate", "1080p, 720p, 2160p, x265")]) ==
+               {:ok, "1080p, 2160p, x265"}
+
+      assert run("x", [f("validate")]) == {:error, {:filter_args, "validate"}}
+    end
+
+    test "hexdump and strdump give their input unchanged, with or without an argument" do
+      input = "a\r\n\u00A0" <> <<0xFF>>
+
+      for filter <- [f("hexdump"), f("strdump"), f("strdump", "tag"), f("strdump", ["x"])] do
+        assert {filter, run(input, [filter])} == {filter, {:ok, input}}
+      end
+    end
+
+    test "a text filter reads bytes that are not UTF-8 as U+FFFD, and never raises" do
+      bad = <<"a", 0xFF, "b">>
+
+      for {filter, out} <- [
+            {f("tolower"), "a\uFFFDb"},
+            {f("toupper"), "A\uFFFDB"},
+            {f("htmldecode"), "a\uFFFDb"},
+            {f("htmlencode"), "a\uFFFDb"},
+            {f("base64encode"), "Ye-_vWI"},
+            {f("urlencode"), "a%EF%BF%BDb"},
+            {f("urldecode"), "a\uFFFDb"},
+            {f("validfilename"), "a\uFFFDb"},
+            {f("diacritics", "replace"), "a\uFFFDb"},
+            {f("validate", "a\uFFFDb"), "a\uFFFDb"},
+            {f("prepend", "x"), "xa\uFFFDb"}
+          ] do
+        assert {filter, run(bad, [filter])} == {filter, {:ok, out}}
+      end
+
+      for {filter, out} <- [
+            {f("querystring", "id"), {:ok, "\uFFFD"}},
+            {f("timeago"), {:ok, "2026-11-25T19:45:30Z"}},
+            {f("base64decode"), {:error, {:filter_failed, "base64decode"}}}
+          ] do
+        input = if filter.name == "querystring", do: <<"?id=", 0xFF>>, else: bad
+        assert {filter, run(input, [filter])} == {filter, out}
+      end
+    end
+
+    test "a keywordsfilters chain runs them in order" do
+      filters = [f("diacritics", "replace"), f("tolower"), f("re_replace", ["\\s+", "."])]
+      assert run("Amélie  Poulain", filters) == {:ok, "amelie.poulain"}
+      assert run("Amélie", [f("toupper"), f("diacritics", "replace")]) == {:ok, "AMELIE"}
+    end
+
+    test "prepend past the output cap is an error tag" do
+      start = String.duplicate("a", 65_534)
+      assert {:ok, _} = run(start, [f("prepend", "b")])
+      assert run(start, [f("prepend", "bb")]) == {:error, :filter_output_cap}
     end
   end
 

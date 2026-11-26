@@ -6,6 +6,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDateTest do
   # kind=Unspecified (the issue's choice).
   use ExUnit.Case, async: true
 
+  alias Cinder.Acquisition.Indexer
   alias Cinder.Acquisition.Indexer.Cardigann.DotnetDate
 
   @now ~U[2026-11-25 19:45:30Z]
@@ -222,6 +223,149 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDateTest do
             <<0xFF>>
           ] do
         cell = {text, DotnetDate.from_unknown(text, @now)}
+        assert cell == {text, :error}
+      end
+    end
+  end
+
+  describe "from_time_ago/2 reads what Prowlarr's FromTimeAgo reads" do
+    # Each row ran in `dotnet fsi` (.NET 8.0.427) on 2026-11-26, through Prowlarr b0b5774's
+    # `DateTimeUtil.FromTimeAgo` with its `ParseUtil.CoerceFloat`, from 2026-11-26 12:00 UTC.
+    # The number is the span .NET subtracts, in 100-nanosecond ticks.
+    @ago_now ~U[2026-11-26 12:00:00Z]
+
+    for {text, ticks} <- [
+          {"2 hours ago", 72_000_000_000},
+          {"1 day, 3 hours ago", 972_000_000_000},
+          {"1h30m", 54_000_000_000},
+          {"5 mins ago", 3_000_000_000},
+          {"Just NOW", 0},
+          {"known", 0},
+          {"now 5 days", 0},
+          {"3 weeks", 18_144_000_000_000},
+          {"2 months", 51_840_000_000_000},
+          {"1 year", 315_360_000_000_000},
+          {"1.5 days", 1_296_000_000_000},
+          {"1,5 days", 12_960_000_000_000},
+          {"foo ago", 0},
+          {"", 0},
+          {".", 0},
+          {"2 days ago.", 1_728_000_000_000},
+          {"1.2.3 hours", 442_800_006_866},
+          {"1.2.3.4 h", 4_442_400_054_931},
+          {"1..5 hours", 54_000_000_000},
+          {"1.5.h", 540_000_000_000},
+          {"5. days", 4_320_000_000_000},
+          {".5 days", 432_000_000_000},
+          {"10 s", 100_000_000},
+          {"3 hrs", 108_000_000_000},
+          {"4 wk", 24_192_000_000_000},
+          {"2 mo", 51_840_000_000_000},
+          {"1 y", 315_360_000_000_000},
+          {"2 d", 1_728_000_000_000},
+          {"7 m", 4_200_000_000},
+          {"1 h", 36_000_000_000},
+          {"1 w", 6_048_000_000_000},
+          {"2 Hours", 72_000_000_000},
+          {"5 DAYS", 4_320_000_000_000},
+          {"1 day 2", 864_000_000_000},
+          {"2 3 hours", 108_000_000_000},
+          {"123456789 seconds", 1_234_567_920_000_000},
+          {"16777217 seconds", 167_772_160_000_000},
+          {"0.1 seconds", 1_000_000},
+          {"1.000000059604644775390625 seconds", 10_000_000},
+          {"1.000000059604644775390625001 seconds", 10_000_001},
+          {"0.00000000000000000000000000000000000000000001 s", 0},
+          {"1 second and 2 minutes", 1_210_000_000},
+          {"an hour ago", 0},
+          {"5 minutes ago and", 3_000_000_000},
+          {"1  \t  day", 864_000_000_000},
+          {"1\u00A0day", 864_000_000_000},
+          {"2days3hours", 1_836_000_000_000},
+          {"1 day-ago", 864_000_000_000},
+          {"12.5 s 3 m", 1_925_000_000},
+          {"1.5 weeks", 9_072_000_000_000},
+          {"0.3 months", 7_776_000_000_000},
+          {"2.7 years", 851_472_000_000_000},
+          {"2026 years", 638_919_360_000_000_000},
+          {"2025.9 years", 638_887_824_000_000_000},
+          {"2 hago", 72_000_000_000},
+          {"2 hand", 72_000_000_000},
+          {"10 sago", 100_000_000},
+          {"1 weekday", 864_000_000_000},
+          {"1 hrmin", 600_000_000},
+          {"1 minsec", 10_000_000},
+          {"1 yearmonth", 25_920_000_000_000},
+          {"2\u180Edays", 1_728_000_000_000},
+          {"1 day\u180E", 864_000_000_000}
+        ] do
+      test "reads #{inspect(text)}" do
+        assert {:ok, time} = DotnetDate.from_time_ago(unquote(text), @ago_now)
+        # The time to the microsecond, rounded toward the past as `canonical/1` then truncates.
+        microseconds = div(unquote(ticks) + 9, 10)
+        assert DateTime.diff(@ago_now, time, :microsecond) == microseconds
+      end
+    end
+
+    test "writes a fraction of a second as the second before" do
+      assert {:ok, time} =
+               DotnetDate.from_time_ago("1.000000059604644775390625001 seconds", @ago_now)
+
+      assert DotnetDate.canonical(time) == "2026-11-26T11:59:58Z"
+    end
+
+    test "reads a long number as .NET does, and a number at the body cap without raising" do
+      # `dotnet fsi` (.NET 8.0.427) on 2026-11-26: `Single.Parse` reads 16777217 followed by 300
+      # zeros as 16777216, the tie to even, and with a 1 after 250 zeros as 16777218; 400 zeros
+      # then 1 read as 1, and `0.` then 400 zeros then 1 as 0. The rows at the body cap
+      # did not run in .NET; each once raised, on a regex match limit or an integer too large
+      # to build. A number with no unit after it adds nothing.
+      cap = Indexer.max_response_bytes()
+      zeros = String.duplicate("0", cap)
+
+      for {label, text, seconds} <- [
+            {"tie, 1 after 250 zeros", "16777217." <> String.duplicate("0", 250) <> "1 s",
+             16_777_218},
+            {"tie, 300 zeros", "16777217." <> String.duplicate("0", 300) <> " s", 16_777_216},
+            {"leading zeros", zeros <> "1 d", 86_400},
+            {"fraction of zeros", "0." <> zeros <> "1 d", 0},
+            {"digits, no unit", String.duplicate("1", cap), 0},
+            {"dots, no unit", String.duplicate(".", cap), 0}
+          ] do
+        assert {:ok, time} = DotnetDate.from_time_ago(text, @ago_now)
+        assert {label, DateTime.diff(@ago_now, time)} == {label, seconds}
+      end
+    end
+
+    test "fails on a whole part past the largest float, however long" do
+      cap = Indexer.max_response_bytes()
+
+      for {label, text} <- [
+            {"40 digits", "1" <> String.duplicate("0", 39) <> " s"},
+            {"at the cap", String.duplicate("1", cap) <> " s"}
+          ] do
+        assert {label, DotnetDate.from_time_ago(text, @ago_now)} == {label, :error}
+      end
+    end
+
+    test "fails where .NET throws: an unknown unit, a number it cannot read, an overflow" do
+      for text <- [
+            "2 fortnights",
+            "1 sandwich",
+            "1 thousand years",
+            "1 déy",
+            "٣ days",
+            "1 ١day",
+            "1e3 seconds",
+            "1\u180Ed",
+            ". days",
+            "99999999 years",
+            "3000 years",
+            "340282356779733661637539395458142568448 seconds",
+            "340282346638528859811704183484516925440 seconds",
+            <<0xFF, " 2 days">>
+          ] do
+        cell = {text, DotnetDate.from_time_ago(text, @ago_now)}
         assert cell == {text, :error}
       end
     end

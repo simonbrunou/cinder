@@ -76,22 +76,30 @@ defmodule Cinder.Indexers.Definitions.Loader do
   The feature list `features/0` holds every code the engine needs code for, each with an on or
   off flag, and `definition.unsupported` lists the codes the copy uses that are off, in that
   order, after the fixed-value slots that hold a value outside the schema
-  (`{:unknown_value, slot}`, in `@unknown_slots` order). Every flag is off in this slice, so no
-  copy with a search path loads. Switching a feature on is the job of the slice that builds it
-  (#1671 onward), and each such slice, like any change to what `load/1` answers, raises the
-  revision in `fingerprint/0`, under which #1667 stores results.
+  (`{:unknown_value, slot}`, in `@unknown_slots` order). The flags on are the field filters
+  #1677 built, which `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0` lists, and the
+  row filter `strdump`, a no-op. Every other flag is off, so no copy with a search path loads.
+  Switching a feature on is the job of the slice that builds it (#1671 onward), and each such
+  slice, like any change to what `load/1` answers, raises the revision in `fingerprint/0`, under
+  which #1667 stores results.
   """
 
   @max_bytes 524_288
   @schema_version 12
   # 2: `Cinder.Indexers.Definitions.LoadCheck` adds the selector codes (#1665).
-  @revision 2
+  # 3: the filters of #1677 load, and `LoadCheck` adds the static pattern codes.
+  @revision 3
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
                     htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
                     jsonjoinarray hexdump strdump validate)
   @row_filters ~w(andmatch strdump)
+  # The filters #1677 built. #1671 switches on those of #1670.
+  @built_filters ~w(querystring timeparse prepend tolower toupper base64decode base64encode
+                    urldecode urlencode htmldecode htmlencode timeago reltime validfilename
+                    diacritics hexdump strdump validate)
+  @built_row_filters ~w(strdump)
   @login_methods ~w(form post cookie get oneurl)
   @setting_types ~w(info text password checkbox select info_category_8000 info_cookie
                     info_flaresolverr info_useragent)
@@ -214,8 +222,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
               selector_case: false,
               selector_remove: false
             ] ++
-              Enum.map(@row_filters, &{{:row_filter, &1}, false}) ++
-              Enum.map(@field_filters, &{{:filter, &1}, false}) ++
+              Enum.map(@row_filters, &{{:row_filter, &1}, &1 in @built_row_filters}) ++
+              Enum.map(@field_filters, &{{:filter, &1}, &1 in @built_filters}) ++
               [
                 download: false,
                 download_before: false,

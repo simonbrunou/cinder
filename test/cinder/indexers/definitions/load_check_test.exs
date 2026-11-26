@@ -161,6 +161,128 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
     end
   end
 
+  describe "the static pattern check" do
+    defp fields_with(filters),
+      do:
+        put_in(@base, ["search", "fields"], %{
+          "title" => %{"selector" => "a", "filters" => filters}
+        })
+
+    defp rx(name, pattern) when name == "regexp", do: %{"name" => name, "args" => pattern}
+    defp rx(name, pattern), do: %{"name" => name, "args" => [pattern, "$1"]}
+
+    # Hand-written copies shaped like the 31 v11 definitions whose 34 patterns do not compile as
+    # written (Prowlarr/Indexers 56b20b19): where each pattern sits and the syntax it uses.
+    @cyrillic "(\\([\\p{IsCyrillic}\\W]+\\))|(^[\\p{IsCyrillic}\\W\\d]+\\/ )|" <>
+                "([\\p{IsCyrillic} \\-]+,+)|([\\p{IsCyrillic}]+)"
+    @balancing "\\(((?>[^()]+|(?<o>)\\(|(?<-o>)\\))*(?(o)(?!)))(?<!\\bHONE)(?<=\\s*- [\\w]+)\\)$"
+
+    defp v11_shapes do
+      [
+        {"rutor and 25 more", fields_with([rx("re_replace", @cyrillic)])},
+        {"thepiratebay",
+         put_in(@base, ["search", "keywordsfilters"], [
+           rx("re_replace", "([\\p{IsCJKUnifiedIdeographs}\\W]+)")
+         ])},
+        {"keepfriends", fields_with([rx("regexp", "([\\u4e00-\\u9fff])")])},
+        {"mikan",
+         fields_with([rx("regexp", "(\\d{4}/\\d{1,2}/\\d{1,2}[\\s\\u00A0]+\\d{1,2}:\\d{2})")])},
+        {"puntotorrent",
+         fields_with([
+           rx("re_replace", "(?i)T[\\s-_]?(\\d{1,2})(.*)\\[(\\d{1,2})[x|\\/|\\\\](\\d{1,2})\\]"),
+           rx("re_replace", "(?i)T[\\s-_]?(\\d{1,2})\\b")
+         ])},
+        {"hawke-uno", fields_with([rx("re_replace", @balancing)])}
+      ]
+    end
+
+    test "only the balancing-group copy among the v11 shapes stays not supported" do
+      # Each list in full: the loader's own codes, then the one the check adds. The loader still
+      # reports `regexp`, `re_replace` and `keywordsfilters`, whose features are off.
+      expected = %{
+        "rutor and 25 more" => [filter: "re_replace"],
+        "thepiratebay" => [:keywords_filters, {:filter, "re_replace"}],
+        "keepfriends" => [filter: "regexp"],
+        "mikan" => [filter: "regexp"],
+        "puntotorrent" => [filter: "re_replace"],
+        "hawke-uno" => [filter: "re_replace", regex: :dotnet_only]
+      }
+
+      for {name, copy} <- v11_shapes() do
+        assert {:ok, definition} = LoadCheck.check(yaml(copy))
+        assert {name, definition.unsupported} == {name, Map.fetch!(expected, name)}
+      end
+    end
+
+    test "each v11 shape's pattern fails without the translation" do
+      # The patterns as written: PCRE refuses \u, the .NET block names and [\s-_].
+      for {name, copy} <- v11_shapes() do
+        {:ok, definition} = Loader.load(yaml(copy))
+
+        refused =
+          Enum.reject(LoadCheck.patterns(definition), fn pattern ->
+            match?({:ok, _}, Regex.compile(pattern, "u"))
+          end)
+
+        assert {name, refused != []} == {name, true}
+      end
+    end
+
+    test "an unknown block name and a pattern that does not compile read as invalid" do
+      for pattern <- ["\\p{IsFoo}", "(", "(?<n>a)", "\\C"] do
+        copy = fields_with([rx("regexp", pattern)])
+
+        assert {:ok, definition} = LoadCheck.check(yaml(copy))
+
+        assert {pattern, definition.unsupported} ==
+                 {pattern, [filter: "regexp", regex: :invalid]}
+      end
+    end
+
+    test "reads every filter list but the row filters, each pattern once" do
+      filters = [rx("regexp", "(a)"), rx("re_replace", "b"), %{"name" => "trim", "args" => "c"}]
+
+      copy =
+        @base
+        |> put_in(["search", "fields"], %{"t" => %{"selector" => "a", "filters" => filters}})
+        |> put_in(["search", "keywordsfilters"], [rx("re_replace", "k")])
+        |> put_in(["search", "preprocessingfilters"], [rx("re_replace", "p")])
+        |> put_in(["search", "rows", "filters"], [
+          %{"name" => "andmatch", "args" => "r"},
+          %{"name" => "regexp", "args" => "r"}
+        ])
+        |> put_in(["login"], %{
+          "selectorinputs" => %{"i" => %{"selector" => "s", "filters" => [rx("regexp", "l")]}}
+        })
+        |> put_in(["download"], %{
+          "selectors" => [%{"selector" => "d", "filters" => [rx("regexp", "(a)")]}]
+        })
+
+      {:ok, definition} = Loader.load(yaml(copy))
+      assert Enum.sort(LoadCheck.patterns(definition)) == Enum.sort(~w|(a) b k p l|)
+    end
+
+    test "adds dotnet_only then invalid, once each, after the selector codes" do
+      fields = %{
+        "a" => %{"selector" => "td /* x */", "filters" => [rx("regexp", "(")]},
+        "b" => %{"selector" => "a", "filters" => [rx("re_replace", @balancing)]},
+        "c" => %{"selector" => "a", "filters" => [rx("regexp", "\\p{IsFoo}")]}
+      }
+
+      copy = put_in(@base, ["search", "fields"], fields)
+      assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
+
+      # The loader's codes for the two slice (a) filters come first.
+      assert unsupported == [
+               {:filter, "regexp"},
+               {:filter, "re_replace"},
+               {:selector, :comment},
+               {:regex, :dotnet_only},
+               {:regex, :invalid}
+             ]
+    end
+  end
+
   describe "check/2" do
     test "lists every code it adds, in its order" do
       assert LoadCheck.codes() ==
@@ -168,7 +290,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
                  ~w(comment escape structure template refused crash timeout memory
                     output_too_large)a,
                  &{:selector, &1}
-               )
+               ) ++ [{:regex, :dotnet_only}, {:regex, :invalid}]
     end
 
     test "adds nothing to a copy whose selectors all pass" do

@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   @moduledoc ~S"""
-  The Cardigann field filters that Nyaa.si and Torrent9 use, and the `andmatch` row filter
-  (#1670, part of #1610), as Prowlarr's `CardigannBase.ApplyFilters` and
-  `IndexerBase.FilterReleasesByQuery` read them.
+  The Cardigann field filters (#1670 and #1677, part of #1610) and the `andmatch` row filter
+  (#1670), as Prowlarr's `CardigannBase.ApplyFilters` and `IndexerBase.FilterReleasesByQuery`
+  read them.
 
   A filter is the loader's record, `%{name: name, args: args}`, where `args` is `nil`, a string
   or a list of strings. A list runs in order, each step on the previous output:
@@ -21,11 +21,30 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
     both ends;
   - `dateparse layout`: the text read by `Cinder.Acquisition.Indexer.Cardigann.DotnetDate` and
     written as its canonical text, or left unchanged when it does not parse, as Prowlarr's
-    filter leaves it. A layout token outside the supported set is an error tag.
+    filter leaves it. A layout token outside the supported set is an error tag. `timeparse` is
+    the same filter.
+
+  The text filters built for #1677 read their input as text, bytes that are not UTF-8 as
+  U+FFFD, through `Cinder.Acquisition.Indexer.Cardigann.DotnetText`, whose functions say what
+  .NET does:
+
+  - `querystring name`: the parameter's first value; a URL with no such parameter is
+    `{:error, {:filter_failed, "querystring"}}`, where Prowlarr throws;
+  - `prepend text`: the text evaluated as a template, prepended;
+  - `tolower`, `toupper`, `htmldecode`, `htmlencode`, `base64encode`, `validfilename`;
+  - `base64decode`: `{:error, {:filter_failed, "base64decode"}}` on text .NET cannot read;
+  - `urlencode` and `urldecode`: in the definition's `encoding`, the `:encoding` option;
+  - `timeago` and `reltime`: `DotnetDate.from_time_ago/2` written as `dateparse` writes, or
+    `{:error, {:filter_failed, name}}` where .NET throws;
+  - `diacritics replace`: any other argument is a `{:filter_args, "diacritics"}` tag;
+  - `validate list`: the words of the list the text holds.
+
+  `hexdump` and `strdump` give their input unchanged, bytes that are not UTF-8 included.
+  Prowlarr logs it at debug level; Cinder logs nothing, since the input can hold a passkey.
 
   Every pattern runs through `Cinder.Acquisition.Indexer.Cardigann.BoundedRegex`. Any other
   filter name is `{:error, {:not_supported, {:filter, name}}}`, and `supported/0` lists the
-  names this slice runs, for a load check. A filter this slice runs, with arguments of the
+  names the engine runs, for a load check. A filter the engine runs, with arguments of the
   wrong shape, is `{:error, {:filter_args, name}}`, and anything that is not a filter record,
   a name that is not a string included, is `{:error, :filter_invalid}`.
 
@@ -37,10 +56,30 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.BoundedRegex
+  alias Cinder.Acquisition.Indexer.Cardigann.Charset
   alias Cinder.Acquisition.Indexer.Cardigann.DotnetDate
+  alias Cinder.Acquisition.Indexer.Cardigann.DotnetText
   alias Cinder.Acquisition.Indexer.Cardigann.Template
 
-  @supported ~w(append dateparse re_replace regexp replace split trim)
+  @supported ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode htmlencode
+                prepend querystring re_replace regexp reltime replace split strdump timeago
+                timeparse tolower toupper trim urldecode urlencode validate validfilename)
+  # The filters that read their input as text: bytes that are not UTF-8 read as U+FFFD, as .NET
+  # decodes a response before any filter runs.
+  @text_filters ~w(base64decode base64encode diacritics htmldecode htmlencode prepend querystring
+                   reltime timeago tolower toupper urldecode urlencode validate validfilename)
+  # Prowlarr's debugging filters, which only log their input. Cinder logs nothing: the input can
+  # hold a passkey.
+  @dump_filters ~w(hexdump strdump)
+  # The text filters that take no argument, each with its `DotnetText` function.
+  @text_functions %{
+    "tolower" => :downcase,
+    "toupper" => :upcase,
+    "base64encode" => :base64url_encode,
+    "htmldecode" => :html_decode,
+    "htmlencode" => :html_encode,
+    "validfilename" => :valid_file_name
+  }
   @common_words ~w(and the an of)
   # .NET's `\w`: letters, non-spacing marks, decimal digits and connector punctuation. PCRE's
   # `\w` under `:ucp` also takes every other number, such as `³`.
@@ -52,13 +91,29 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   @spec supported() :: [String.t()]
   def supported, do: @supported
 
-  @doc "Runs `filters` in order on `input`, under one byte budget."
-  @spec apply(String.t(), [filter()], Template.variables(), DateTime.t()) ::
+  @doc """
+  Runs `filters` in order on `input`, under one byte budget. `opts` takes `:encoding`, the
+  definition's `Cinder.Acquisition.Indexer.Cardigann.Charset` that `urlencode` and `urldecode`
+  read, `:utf8` by default; any value outside `Charset.charsets/0` is
+  `{:error, :encoding_invalid}`.
+  """
+  @spec apply(String.t(), [filter()], Template.variables(), DateTime.t(), keyword()) ::
           {:ok, String.t()} | {:error, term()}
-  def apply(input, filters, variables, %DateTime{} = now)
-      when is_binary(input) and is_list(filters) and is_map(variables) do
+  def apply(input, filters, variables, now, opts \\ [])
+
+  def apply(input, filters, variables, %DateTime{} = now, opts)
+      when is_binary(input) and is_list(filters) and is_map(variables) and is_list(opts) do
+    encoding = Keyword.get(opts, :encoding, :utf8)
+
+    if encoding in Charset.charsets(),
+      do: run(input, filters, %{vars: variables, now: now, encoding: encoding}),
+      else: {:error, :encoding_invalid}
+  end
+
+  def apply(_input, _filters, _variables, _now, _opts), do: {:error, :filter_invalid}
+
+  defp run(input, filters, env) do
     cap = Template.output_cap()
-    env = %{vars: variables, now: now}
 
     Enum.reduce_while(filters, {:ok, input, 0}, fn filter, {:ok, data, spent} ->
       case step(filter, data, env, cap - spent) do
@@ -72,12 +127,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
     end
   end
 
-  def apply(_input, _filters, _variables, _now), do: {:error, :filter_invalid}
-
   defp account(_out, spent, cap) when spent > cap, do: {:halt, {:error, :filter_output_cap}}
   defp account(out, spent, _cap), do: {:cont, {:ok, out, spent}}
 
   # Each step answers its output and the bytes of the templates it evaluated.
+  defp step(%{name: name} = filter, data, env, left) when name in @text_filters,
+    do: text_step(filter, String.replace_invalid(data), env, left)
+
+  defp step(%{name: name}, data, _env, _left) when name in @dump_filters, do: {:ok, data, 0}
+
   defp step(%{name: "re_replace", args: [pattern, replacement]}, data, env, left)
        when is_binary(pattern) and is_binary(replacement) do
     with {:ok, rendered} <- template(replacement, env, left, modifier: &escape_dollar/1),
@@ -124,7 +182,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   defp step(%{name: "trim", args: <<char::utf8, _::binary>>}, data, _env, _left),
     do: {:ok, String.trim(data, <<char::utf8>>), 0}
 
-  defp step(%{name: "dateparse", args: layout}, data, env, _left) when is_binary(layout) do
+  defp step(%{name: name, args: layout}, data, env, _left)
+       when name in ["dateparse", "timeparse"] and is_binary(layout) do
     case DotnetDate.parse(data, layout, env.now) do
       {:ok, time} -> {:ok, DotnetDate.canonical(time), 0}
       {:error, :invalid_date} -> {:ok, data, 0}
@@ -139,6 +198,44 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
     do: {:error, {:not_supported, {:filter, name}}}
 
   defp step(_not_a_filter, _data, _env, _left), do: {:error, :filter_invalid}
+
+  defp text_step(%{name: "querystring", args: name}, data, _env, _left) when is_binary(name),
+    do: data |> DotnetText.query_argument(name) |> succeeded("querystring")
+
+  defp text_step(%{name: "prepend", args: text}, data, env, left) when is_binary(text) do
+    with {:ok, rendered} <- template(text, env, left),
+         do: {:ok, rendered <> data, byte_size(rendered)}
+  end
+
+  defp text_step(%{name: "base64decode"}, data, _env, _left),
+    do: data |> DotnetText.base64url_decode() |> succeeded("base64decode")
+
+  defp text_step(%{name: "urlencode"}, data, env, _left),
+    do: {:ok, DotnetText.url_encode(data, env.encoding), 0}
+
+  defp text_step(%{name: "urldecode"}, data, env, _left),
+    do: {:ok, DotnetText.url_decode(data, env.encoding), 0}
+
+  defp text_step(%{name: name}, data, env, _left) when name in ["timeago", "reltime"] do
+    case DotnetDate.from_time_ago(data, env.now) do
+      {:ok, time} -> {:ok, DotnetDate.canonical(time), 0}
+      :error -> {:error, {:filter_failed, name}}
+    end
+  end
+
+  defp text_step(%{name: "diacritics", args: "replace"}, data, _env, _left),
+    do: {:ok, DotnetText.strip_diacritics(data), 0}
+
+  defp text_step(%{name: "validate", args: list}, data, _env, _left) when is_binary(list),
+    do: {:ok, DotnetText.validate(data, list), 0}
+
+  defp text_step(%{name: name}, data, _env, _left) when is_map_key(@text_functions, name),
+    do: {:ok, Kernel.apply(DotnetText, Map.fetch!(@text_functions, name), [data]), 0}
+
+  defp text_step(%{name: name}, _data, _env, _left), do: {:error, {:filter_args, name}}
+
+  defp succeeded({:ok, out}, _name), do: {:ok, out, 0}
+  defp succeeded(:error, name), do: {:error, {:filter_failed, name}}
 
   defp template(text, env, left, opts \\ []),
     do: Template.render(text, env.vars, env.now, [max_bytes: max(left, 0)] ++ opts)

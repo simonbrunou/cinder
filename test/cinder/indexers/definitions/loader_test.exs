@@ -1,6 +1,7 @@
 defmodule Cinder.Indexers.Definitions.LoaderTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.Acquisition.Indexer.Cardigann.Filters
   alias Cinder.Indexers.Definitions.Loader
 
   # A definition written for Cinder, shaped like Nyaa.si's: no login, an HTML search over two
@@ -139,20 +140,29 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert {:ok, %{unsupported: []}} = Loader.load(yaml(@base))
     end
 
-    test "every feature is off in this slice" do
+    test "the features on are the filters #1677 built, and the engine runs each" do
       features = Loader.features()
       assert length(features) == 72
       assert length(Enum.uniq_by(features, &elem(&1, 0))) == 72
-      assert Enum.all?(features, fn {_code, on?} -> on? == false end)
+
+      built =
+        ~w(querystring timeparse prepend tolower toupper base64decode base64encode urldecode
+           urlencode htmldecode htmlencode timeago reltime validfilename diacritics hexdump
+           strdump validate)
+
+      on = for {code, true} <- features, do: code
+      assert on == [{:row_filter, "strdump"} | Enum.map(built, &{:filter, &1})]
+      assert built -- Filters.supported() == []
     end
 
     test "cinder's application list holds yaml_elixir, so the release starts it" do
       assert :yaml_elixir in Application.spec(:cinder, :applications)
     end
 
-    # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck).
-    test "fingerprint/0 declares schema version 12 and revision 2" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 2}
+    # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck), revision 3
+    # #1677's filters and static pattern check.
+    test "fingerprint/0 declares schema version 12 and revision 3" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 3}
     end
 
     test "unknown values come first, then features in the list's order" do
@@ -619,10 +629,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       end
     end
 
-    test "base64decode and base64encode, new in v12, read as known filters that are not supported" do
+    test "base64decode and base64encode, new in v12, read as known filters the engine runs" do
       for name <- ~w(base64decode base64encode) do
         fields = %{"title" => field(%{"filters" => [filter(name)]})}
-        assert unsupported(["search", "fields"], fields) == [{:filter, name}]
+        assert {name, unsupported(["search", "fields"], fields)} == {name, []}
       end
     end
   end
@@ -881,16 +891,50 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       end
     end
 
-    test "every field filter of v11 and v12 adds its own code" do
-      names =
-        ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append tolower toupper base64decode
-           base64encode urldecode urlencode htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
-           jsonjoinarray hexdump strdump validate)
-
-      for name <- names do
+    test "every field filter of v11 and v12 the engine does not run adds its own code" do
+      for name <-
+            ~w(dateparse regexp re_replace split replace trim append fuzzytime jsonjoinarray) do
         fields = %{"title" => field(%{"filters" => [filter(name)]})}
         assert {name, unsupported(["search", "fields"], fields)} == {name, [{:filter, name}]}
       end
+    end
+
+    test "a definition using each filter #1677 built has no filter code; the rest keep theirs" do
+      filters =
+        Enum.map(
+          ~w(querystring timeparse prepend tolower toupper base64decode base64encode urldecode
+             urlencode htmldecode htmlencode timeago reltime validfilename diacritics hexdump
+             strdump validate),
+          &filter/1
+        )
+
+      fields = %{"title" => field(%{"filters" => filters})}
+      assert unsupported(["search", "fields"], fields) == []
+
+      assert unsupported(["search", "keywordsfilters"], Enum.take(filters, 5)) ==
+               [:keywords_filters]
+
+      assert unsupported(["search", "rows", "filters"], [filter("strdump")]) == []
+
+      more = %{
+        "title" => field(%{"filters" => filters ++ [filter("jsonjoinarray"), filter("rot13")]})
+      }
+
+      assert unsupported(["search", "fields"], more) ==
+               [{:unknown_value, :filter}, {:filter, "jsonjoinarray"}]
+
+      assert {:ok, definition} =
+               Loader.load(
+                 yaml(
+                   Map.put(
+                     put_in(@base, ["search", "fields"], fields),
+                     "encoding",
+                     "windows-1251"
+                   )
+                 )
+               )
+
+      assert definition.unsupported == [:encoding]
     end
   end
 
@@ -963,7 +1007,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "rows", "count"], %{"selector" => "span"}, [:rows_count]},
       {["search", "rows", "dateheaders"], %{"selector" => "td"}, [:rows_dateheaders]},
       {["search", "rows", "filters"], [filter("andmatch")], [{:row_filter, "andmatch"}]},
-      {["search", "rows", "filters"], [filter("strdump")], [{:row_filter, "strdump"}]},
+      {["search", "rows", "filters"], [filter("strdump")], []},
       {["search", "rows", "multiple"], true, []},
       {["search", "rows", "missingAttributeEqualsNoResults"], true, []},
       {["search", "rows", "attribute"], "data", []},
@@ -992,8 +1036,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
        %{
          "selectors" => [%{"selector" => "a", "attribute" => "href", "usebeforeresponse" => true}]
        }, [:download]},
-      {["download"], %{"selectors" => [%{"selector" => "a", "filters" => [filter("urldecode")]}]},
-       [{:filter, "urldecode"}, :download]},
+      {["download"],
+       %{"selectors" => [%{"selector" => "a", "filters" => [filter("jsonjoinarray")]}]},
+       [{:filter, "jsonjoinarray"}, :download]},
       # login
       {["login"], %{"method" => "form", "form" => "f", "submitpath" => "/s", "selectors" => true},
        [{:login, "form"}]},

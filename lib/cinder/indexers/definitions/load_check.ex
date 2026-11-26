@@ -28,10 +28,21 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   ran them all. A failed worker's code is then the only selector code: the gate's codes of that
   copy are dropped with the worker's verdicts.
 
-  The answer is `Loader.load/1`'s with those codes added. This check raised
-  `Loader.fingerprint/0`'s revision to 2, for #1667 to store the answer under.
+  It then checks each static pattern (#1677): the argument of each `regexp` filter and the first
+  argument of each `re_replace` filter, in every field filter list, `keywordsfilters` and
+  `preprocessingfilters`, through `Cinder.Acquisition.Indexer.Cardigann.BoundedRegex.check/1`,
+  which translates the .NET-only syntax first. A .NET balancing group or class subtraction, which
+  PCRE lacks, or a `(?` outside `check/1`'s allowlist of groups, such as `(?x)`, adds
+  `{:regex, :dotnet_only}`, and any other pattern the engine refuses `{:regex, :invalid}`, each
+  once, after the selector codes. A `re_replace` written inside a template is not checked here:
+  it runs, and fails its field, when the template is evaluated.
+
+  The answer is `Loader.load/1`'s with those codes added. The selector check raised
+  `Loader.fingerprint/0`'s revision to 2 and the pattern check to 3, for #1667 to store the
+  answer under.
   """
 
+  alias Cinder.Acquisition.Indexer.Cardigann.BoundedRegex
   alias Cinder.Indexers.Definitions.Loader
   alias Cinder.Indexers.ParserWorker
 
@@ -47,21 +58,68 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     output_too_large: {:selector, :output_too_large}
   ]
 
-  @doc "Every selector code `check/2` can add, in the order it adds them."
-  @spec codes() :: [{:selector, atom()}]
-  def codes, do: Keyword.values(@codes)
+  @regex_codes [{:regex, :dotnet_only}, {:regex, :invalid}]
+
+  @doc "Every code `check/2` can add, in the order it adds them."
+  @spec codes() :: [{:selector, atom()} | {:regex, atom()}]
+  def codes, do: Keyword.values(@codes) ++ @regex_codes
 
   @doc """
-  Loads `bytes` and checks the copy's selectors. `opts` goes to
+  Loads `bytes` and checks the copy's selectors and static patterns. `opts` goes to
   `ParserWorker.check_selectors/2`.
   """
   @spec check(binary(), keyword()) :: {:ok, map()} | {:error, Loader.reason()}
   def check(bytes, opts \\ []) when is_binary(bytes) do
     with {:ok, definition} <- Loader.load(bytes) do
-      {:ok,
-       %{definition | unsupported: definition.unsupported ++ selector_codes(definition, opts)}}
+      codes = selector_codes(definition, opts) ++ regex_codes(definition)
+      {:ok, %{definition | unsupported: definition.unsupported ++ codes}}
     end
   end
+
+  defp regex_codes(definition) do
+    found =
+      definition
+      |> patterns()
+      |> MapSet.new(fn pattern ->
+        case BoundedRegex.check(pattern) do
+          :ok -> :ok
+          {:error, {:not_supported, :dotnet_only}} -> {:regex, :dotnet_only}
+          {:error, _refused} -> {:regex, :invalid}
+        end
+      end)
+
+    for code <- @regex_codes, code in found, do: code
+  end
+
+  @doc false
+  # The static patterns `check/2` reads, in walk order; public for its test.
+  @spec patterns(map()) :: [String.t()]
+  def patterns(definition), do: definition |> walk([]) |> Enum.uniq()
+
+  # `search.rows.filters` holds row filters, which take no pattern.
+  defp walk(map, path) when is_map(map) do
+    Enum.flat_map(map, fn
+      {:filters, _filters} when path == [:rows, :search] ->
+        []
+
+      {key, filters} when key in [:filters, :keywordsfilters, :preprocessingfilters] ->
+        Enum.flat_map(List.wrap(filters), &pattern/1)
+
+      {key, value} ->
+        walk(value, [key | path])
+    end)
+  end
+
+  defp walk(list, path) when is_list(list), do: Enum.flat_map(list, &walk(&1, path))
+  defp walk({key, value}, path) when is_binary(key), do: walk(value, path)
+  defp walk(_value, _path), do: []
+
+  defp pattern(%{name: "regexp", args: pattern}) when is_binary(pattern), do: [pattern]
+
+  defp pattern(%{name: "re_replace", args: [pattern, _replacement]}) when is_binary(pattern),
+    do: [pattern]
+
+  defp pattern(_filter), do: []
 
   # `ParserWorker.check_selectors/2` starts no worker when the gate refuses every selector, or
   # when there is none.

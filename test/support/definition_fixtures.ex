@@ -7,7 +7,7 @@ defmodule Cinder.DefinitionFixtures do
   The mirror holds `tracker.yml` beside 100 filler names, so a first answer passes the 100-name
   floor. `check/1` is the load check the applies run: the pure loader, with the verdict a test
   asks for. The real loader reads every copy with a search path or a setting as not supported,
-  since no engine feature is built yet, so `check/1` clears `unsupported` unless the
+  since no search feature is on yet, so `check/1` clears `unsupported` unless the
   definition's `id` ends in `-ns`, which keeps `[:html_search]`.
   """
 

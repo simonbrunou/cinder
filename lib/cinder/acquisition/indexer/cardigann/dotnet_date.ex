@@ -35,6 +35,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   back. Every function is pure: `now` is a UTC `DateTime` the caller passes.
   """
 
+  alias Cinder.Acquisition.Indexer.Cardigann.DotnetText
+
   @tokens ~w(yyyy yy MMMM MMM MM M dddd ddd dd d HH hh h mm ss tt zzz)
   @format_letters ~c"dfFghHKmMstyz"
   @escapes ~c"'\"\\%"
@@ -42,6 +44,35 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   @months ~w(January February March April May June July August September October November
              December)
   @days ~w(Monday Tuesday Wednesday Thursday Friday Saturday Sunday)
+
+  @year_one ~U[0001-01-01 00:00:00.000000Z]
+  # `FromTimeAgo`'s `\s*?([\d\.]+)\s*?([^\d\s\.]+)`, .NET's `\d` and `\s` spelled out.
+  # The units `FromTimeAgo` checks, in its order: the words a unit holds, the unit alone, and the
+  # ticks per unit or the days per unit.
+  @time_units [
+    {["sec"], "s", {:ticks, 10_000_000}},
+    {["min"], "m", {:ticks, 600_000_000}},
+    {["hour", "hr"], "h", {:ticks, 36_000_000_000}},
+    {["day"], "d", {:days, 1}},
+    {["week", "wk"], "w", {:days, 7}},
+    {["month"], "mo", {:days, 30}},
+    {["year"], "y", {:days, 365}}
+  ]
+  # Halfway between the largest 32-bit float and 2^128: from here a product rounds to infinity.
+  @single_limit (2.0 - 2.0 ** -24) * 2.0 ** 127
+  # A match only starts where a number starts. Inside a number with no unit after it, every later
+  # start fails as the first did, and each retry would cost the rest of the run.
+  # `[\x{9}-\x{D}\x{85}\p{Z}]` is .NET's `\s`, which lacks the U+180E PCRE's holds. The scan
+  # runs with PCRE's default match limit made explicit and `:report_errors`, so a hit would be
+  # `:error`, not a raise; 40 MiB of digits, ten times the body cap, stays under it.
+  @time_ago "(?<![\\p{Nd}.])([\\p{Nd}.]++)[\\x{9}-\\x{D}\\x{85}\\p{Z}]*+" <>
+              "([^\\p{Nd}\\x{9}-\\x{D}\\x{85}\\p{Z}.]++)"
+  @time_ago_limit 10_000_000
+  # A whole part past 39 digits is past the largest 32-bit float, 3.4e38. A fraction past 200
+  # digits rounds as its first 200 digits and a 1 when a later digit is not 0: each value at which
+  # rounding changes has at most 150 fraction digits.
+  @whole_digits 39
+  @fraction_digits 200
 
   @type layout_error :: {:not_supported, {:date_layout, String.t()}}
 
@@ -78,7 +109,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   @doc """
   Reads a date field's value: the canonical text, all ASCII digits as Unix seconds, and any text
   holding `now` in any letter case as `now`. Anything else is `:error`, which leaves the
-  release's publication time unset. Prowlarr's other `FromUnknown` fallbacks go to #1677.
+  release's publication time unset. Prowlarr's other `FromUnknown` fallbacks go to #1802.
   """
   @spec from_unknown(String.t(), DateTime.t()) :: {:ok, DateTime.t()} | :error
   def from_unknown(text, %DateTime{} = now) when is_binary(text) do
@@ -91,6 +122,151 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   end
 
   def from_unknown(_text, _now), do: :error
+
+  @doc """
+  Reads a relative time, as Prowlarr's `timeago` and `reltime` filters do through
+  `DateTimeUtil.FromTimeAgo` (#1677): the text lower-cased; any text holding `now` is `now`;
+  otherwise `,`, `ago` and `and` are dropped and each number followed by a unit, such as
+  `3 hours` or `1h30m`, is summed and subtracted from `now`.
+
+  A number is a run of digits and `.`, every `.` but the last dropped, read as a 32-bit float.
+  A unit holding `sec` or `s` alone counts seconds, `min` or `m` minutes, `hour`, `hr` or `h`
+  hours, `day` or `d` days, `week`, `wk` or `w` 7 days, `month` or `mo` 30 days, and `year` or
+  `y` 365 days, checked in that order. The time is exact to the microsecond, rounded toward the
+  past. `:error` where .NET throws: an unknown unit, a digit outside ASCII, a run of dots alone,
+  or a time before the year 1; and for text that is not UTF-8.
+  """
+  @spec from_time_ago(String.t(), DateTime.t()) :: {:ok, DateTime.t()} | :error
+  def from_time_ago(text, %DateTime{} = now) when is_binary(text) do
+    with true <- String.valid?(text),
+         lower = DotnetText.downcase(text),
+         false <- String.contains?(lower, "now"),
+         {:ok, ticks} <- sum_ticks(lower |> String.replace([",", "ago", "and"], "")),
+         true <- ticks <= DateTime.diff(now, @year_one, :microsecond) * 10 do
+      {:ok, DateTime.add(now, -div(ticks + 9, 10), :microsecond)}
+    else
+      true -> {:ok, now}
+      _failed -> :error
+    end
+  end
+
+  def from_time_ago(_text, _now), do: :error
+
+  defp sum_ticks(text) do
+    {:ok, time_ago} = :re.compile(@time_ago, [:unicode, :ucp])
+    options = [:global, {:capture, :all_but_first, :binary}, {:match_limit, @time_ago_limit}]
+
+    case :re.run(text, time_ago, [:report_errors | options]) do
+      {:match, matches} -> sum_matches(matches)
+      :nomatch -> {:ok, 0}
+      {:error, _limit} -> :error
+    end
+  end
+
+  defp sum_matches(matches) do
+    Enum.reduce_while(matches, {:ok, 0}, fn [number, unit], {:ok, sum} ->
+      with {:ok, value} <- single(number),
+           {:ok, ticks} <- span_ticks(value, unit) do
+        {:cont, {:ok, sum + ticks}}
+      else
+        :error -> {:halt, :error}
+      end
+    end)
+  end
+
+  # .NET's `TimeSpan.From*` multiplies in double precision, exact here for a 32-bit float, and
+  # truncates to ticks. Weeks, months and years first multiply in single precision.
+  defp span_ticks(value, unit) do
+    case Enum.find(@time_units, fn {words, alone, _scale} ->
+           String.contains?(unit, words) or unit == alone
+         end) do
+      {_words, _alone, {:ticks, scale}} -> {:ok, trunc(value * scale)}
+      {_words, _alone, {:days, factor}} -> days(value, factor)
+      nil -> :error
+    end
+  end
+
+  defp days(value, 1), do: {:ok, trunc(value * 864_000_000_000)}
+
+  defp days(value, factor) do
+    with {:ok, product} <- round_single(value * factor), do: days(product, 1)
+  end
+
+  # `ParseUtil.CoerceFloat`: every `.` but the last dropped, then `Single.Parse`. A digit
+  # outside ASCII passes .NET's `\d` and fails the parse.
+  defp single(number) do
+    {whole, fraction} =
+      case String.split(number, ".") do
+        [whole] -> {whole, ""}
+        parts -> {parts |> Enum.drop(-1) |> Enum.join(), List.last(parts)}
+      end
+
+    with true <- whole <> fraction =~ ~r/\A[0-9]+\z/,
+         whole = String.trim_leading(whole, "0"),
+         true <- byte_size(whole) <= @whole_digits do
+      fraction = short_fraction(fraction)
+      nearest_single(String.to_integer("0" <> whole <> fraction), 10 ** byte_size(fraction))
+    else
+      false -> :error
+    end
+  end
+
+  defp short_fraction(fraction) when byte_size(fraction) <= @fraction_digits, do: fraction
+
+  defp short_fraction(fraction) do
+    <<kept::binary-size(@fraction_digits), dropped::binary>> = fraction
+    if dropped =~ ~r/[1-9]/, do: kept <> "1", else: kept
+  end
+
+  # The 32-bit float nearest `numerator / denominator`, ties to even, as `Single.Parse` rounds
+  # its decimal text. Past the largest float .NET reads infinity, which no span holds.
+  defp nearest_single(0, _denominator), do: {:ok, 0.0}
+
+  defp nearest_single(numerator, denominator) do
+    # The exponent that puts the quotient's 24 significant bits before the point, at least
+    # -149, the smallest subnormal's.
+    exponent = max(bit_length(numerator) - bit_length(denominator) - 24, -149)
+    {mantissa, exponent} = scaled_mantissa(numerator, denominator, exponent)
+    single_value(mantissa, exponent)
+  end
+
+  defp scaled_mantissa(numerator, denominator, exponent) do
+    {num, den} =
+      if exponent < 0,
+        do: {Bitwise.bsl(numerator, -exponent), denominator},
+        else: {numerator, Bitwise.bsl(denominator, exponent)}
+
+    quotient = div(num, den)
+
+    if quotient >= 0x1000000 and exponent >= -149 do
+      scaled_mantissa(numerator, denominator, exponent + 1)
+    else
+      remainder = rem(num, den)
+
+      rounded =
+        cond do
+          2 * remainder > den -> quotient + 1
+          2 * remainder == den and rem(quotient, 2) == 1 -> quotient + 1
+          true -> quotient
+        end
+
+      {rounded, exponent}
+    end
+  end
+
+  defp single_value(0x1000000, exponent), do: single_value(0x800000, exponent + 1)
+  defp single_value(_mantissa, exponent) when exponent > 104, do: :error
+  defp single_value(mantissa, exponent), do: {:ok, mantissa * 2.0 ** exponent}
+
+  # A double rounded to the nearest 32-bit float, as .NET's `float * float` gives it.
+  defp round_single(value) when value >= @single_limit, do: :error
+
+  defp round_single(value) do
+    <<single::float-32>> = <<value::float-32>>
+    {:ok, single}
+  end
+
+  defp bit_length(n), do: length(Integer.digits(n, 2))
 
   defp from_canonical(text) do
     with {:ok, time, 0} <- DateTime.from_iso8601(text),
