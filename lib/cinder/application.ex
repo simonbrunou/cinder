@@ -178,7 +178,10 @@ defmodule Cinder.Application do
         Cinder.Requests.WatchlistSync,
         Cinder.Accounts.Janitor,
         Cinder.Accounts.PlexSignInWatch,
-        Cinder.DatabaseBackup
+        Cinder.DatabaseBackup,
+        # Re-checks the stored indexer definitions at boot, then fetches them from GitHub at
+        # boot and every 24 hours (#1669).
+        Cinder.Indexers.Definitions.Updater
       ]
     else
       []

@@ -37,11 +37,13 @@ defmodule Cinder.Indexers.Definitions do
 
   `stale_copies/0` lists the stored copies with no result under the current fingerprint;
   `check_copies/2` runs the load check on them, and `store_results/1` stores the answers in one
-  transaction, with no network call.
+  transaction, with no network call. `Cinder.Indexers.Definitions.Updater` runs them at boot.
 
   ## Reads
 
-  - `set_state/0`: never loaded, loaded, or the last refusal.
+  - `set_state/1`: never loaded, loaded, the last refusal, or an update failing for more than
+    72 hours, read with the update job's run row (`Cinder.Indexers.Definitions.UpdateRun`).
+  - `loaded/0`: the set the mirror holds.
   - `name_status/1`: what the mirror says about one file name.
   - `picker/0`: the mirror's names with their display fields and load results.
 
@@ -77,7 +79,8 @@ defmodule Cinder.Indexers.Definitions do
     Loader,
     LoadResult,
     Set,
-    StoredSet
+    StoredSet,
+    UpdateRun
   }
 
   alias Cinder.Audit
@@ -90,6 +93,8 @@ defmodule Cinder.Indexers.Definitions do
   @set_id 1
   @first_floor 100
   @shrink_floor_percent 90
+  # How long after the last successful update run a run of failures shows as "update failing".
+  @failing_after_s 72 * 3600
   # A check waits for a node slot, then runs under ParserWorker.check_deadline_ms/0. A check past
   # this is dropped with no result, and the next boot re-check runs it again.
   @check_timeout_ms 300_000
@@ -118,7 +123,11 @@ defmodule Cinder.Indexers.Definitions do
              }}
           | {:first_too_small,
              %{commit: String.t(), count: non_neg_integer(), loaded: loaded() | nil}}
-  @type state :: :never_loaded | {:loaded, loaded()} | refusal()
+  @type state ::
+          {:never_loaded, %{error: term()}}
+          | {:loaded, loaded()}
+          | {:update_failing, %{since: DateTime.t(), error: term(), loaded: loaded()}}
+          | refusal()
   @type name_status ::
           :never_loaded
           | :in_mirror
@@ -132,7 +141,7 @@ defmodule Cinder.Indexers.Definitions do
   def check_timeout_ms, do: @check_timeout_ms
 
   @doc """
-  Applies an upstream answer. Returns the new set state, or the refusal, which `set_state/0`
+  Applies an upstream answer. Returns the new set state, or the refusal, which `set_state/1`
   then reads too. `{:error, changeset}` is a refused audit row of a base URL move, which rolls
   the whole apply back.
 
@@ -473,16 +482,46 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   @doc """
-  The set state: never loaded, loaded, or the last apply's refusal, which carries the set the
-  mirror still holds.
+  The set state at `now`, first match:
+
+  - `{:never_loaded, %{error: tag}}`: no set was ever applied or refused; `tag` is the last
+    update run's error tag (`Cinder.Indexers.Definitions.Updater`), nil unless that run failed;
+  - the last apply's refusal, which carries the set the mirror still holds;
+  - `{:update_failing, %{since: at, error: tag, loaded: loaded}}`: a set is loaded, every update
+    run since `at` failed, and the last success ended more than 72 hours before `now` (the set's
+    `loaded_at` when no run succeeded yet). `tag` is the last run's error tag;
+  - `{:loaded, loaded}`.
   """
-  @spec set_state() :: state()
-  def set_state do
+  @spec set_state(DateTime.t()) :: state()
+  def set_state(now \\ DateTime.utc_now()) do
+    run = Repo.get(UpdateRun, UpdateRun.id())
+
     case Repo.get(StoredSet, @set_id) do
-      nil -> :never_loaded
-      row -> state_of(row)
+      nil -> {:never_loaded, %{error: UpdateRun.error(run)}}
+      row -> row |> state_of() |> failing(run, now)
     end
   end
+
+  @doc "The set the mirror holds, nil before any load."
+  @spec loaded() :: loaded() | nil
+  def loaded do
+    case Repo.get(StoredSet, @set_id) do
+      nil -> nil
+      row -> loaded_of(row)
+    end
+  end
+
+  defp failing(
+         {:loaded, loaded} = state,
+         %UpdateRun{first_failure_at: %DateTime{} = since} = run,
+         now
+       ) do
+    if DateTime.diff(now, run.last_success_at || loaded.loaded_at) > @failing_after_s,
+      do: {:update_failing, %{since: since, error: UpdateRun.error(run), loaded: loaded}},
+      else: state
+  end
+
+  defp failing(state, _run, _now), do: state
 
   defp state_of(%StoredSet{state: :loaded} = row), do: {:loaded, loaded_of(row)}
 
@@ -565,18 +604,21 @@ defmodule Cinder.Indexers.Definitions do
     end)
   end
 
-  # A check that raises is a bug in Cinder, not a fact about the copy: it stores no result, so the
-  # next boot re-check runs it again, and the other copies still apply.
+  # A check that raises, throws or exits is a bug in Cinder, not a fact about the copy: it stores
+  # no result, so the next boot re-check runs it again, and the other copies still apply. The
+  # log names the exception's module or the kind, never a message or the task's arguments, which
+  # can quote a URL from the copy; caught here, the task ends normally and prints no crash report.
   defp run_check(check, copy) do
     {:ok, check.(copy.bytes)}
   rescue
-    exception ->
-      Logger.error(
-        "indexer definition load check raised on blob #{copy.blob_sha}: " <>
-          Exception.format(:error, exception, __STACKTRACE__)
-      )
+    exception -> check_raised(copy, inspect(exception.__struct__))
+  catch
+    kind, _value -> check_raised(copy, Atom.to_string(kind))
+  end
 
-      :raised
+  defp check_raised(copy, what) do
+    Logger.error("indexer definition load check raised on blob #{copy.blob_sha}: #{what}")
+    :raised
   end
 
   @doc """

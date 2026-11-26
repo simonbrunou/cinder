@@ -6,7 +6,7 @@ defmodule Cinder.Indexers.Definitions.Source do
 
   `fetch/1` is the one fetch: it reads `master`'s commit and, when that is not the stored set's,
   downloads the commit's zip and reads it with `Cinder.Indexers.Definitions.Archive.read/2`.
-  Nothing stores or schedules the result yet (#1669 does).
+  `Cinder.Indexers.Definitions.Updater` schedules it and stores the result (#1669).
 
   Every error is a closed tag, never a URL, a header or a body, so a caller can store and show
   it: `{:http_status, status}` for a status other than 200, `:timeout`, `:too_large`,

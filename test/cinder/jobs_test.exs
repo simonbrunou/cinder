@@ -20,6 +20,7 @@ defmodule Cinder.JobsTest do
     assert Cinder.DatabaseBackup in modules
     assert Cinder.Subtitles.Sweeper in modules
     assert Cinder.Requests.WatchlistSync in modules
+    assert Cinder.Indexers.Definitions.Updater in modules
     assert Enum.all?(statuses, &is_integer(&1.interval))
   end
 

@@ -10,7 +10,7 @@
   name the copy in the highest folder from `MIN_VERSION` up to 12, records only the number of a
   higher folder that holds another copy, and deletes the copies and load results the new set no
   longer uses. `name_status/1` and `picker/0` read the mirror per file name, and `set_state/0` reads
-  the last outcome. No code outside the tests calls `apply_set/2` yet.
+  the last outcome. The definitions update job (#1669) calls `apply_set/2`.
   `mix cinder.definitions.canary [commit]` load-checks every upstream file in the folders from
   `MIN_VERSION` up to 12 and prints the counts per unsupported feature and per failure reason,
   writing no database row. A release has no Mix, so the task runs only from a checkout.

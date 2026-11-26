@@ -128,6 +128,8 @@ exceptions each own the tables named here and nothing derived:
   (`Native.IndexerCaps`) and `native_indexer_status` (`Native.IndexerStatus`).
 - `lib/cinder/indexers/definitions.ex` (`Cinder.Indexers.Definitions`) is the one writer of the
   `indexer_definition_*` tables.
+- `lib/cinder/indexers/definitions/updater.ex` (`Cinder.Indexers.Definitions.Updater`) is the one
+  writer of `definitions_update_run`, its runs' outcome.
 
 A new exception is legitimate only when a plan calls it out. When it lands, add it to this list.
 

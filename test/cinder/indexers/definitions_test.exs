@@ -3,12 +3,13 @@ defmodule Cinder.Indexers.DefinitionsTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Indexers.Definitions
-  alias Cinder.Indexers.Definitions.{Copy, Entry, Loader, LoadResult, Set, StoredSet}
+  alias Cinder.Indexers.Definitions.{Copy, Entry, Loader, LoadResult, Set, StoredSet, UpdateRun}
   alias Cinder.Indexers.Definitions.Set.{DefinitionFile, Versions}
 
   @commit_a String.duplicate("a", 40)
   @commit_b String.duplicate("b", 40)
   @commit_c String.duplicate("c", 40)
+  @success ~U[2026-11-20 08:00:00Z]
 
   # A definition written for Cinder's tests, as LoadCheckTest's @base, with its own id.
   defp yaml(id, extra \\ %{}) do
@@ -517,7 +518,7 @@ defmodule Cinder.Indexers.DefinitionsTest do
       broken = yaml("broken")
 
       check = fn
-        ^broken -> raise "boom"
+        ^broken -> raise "boom at https://tracker.invalid/"
         bytes -> Loader.load(bytes)
       end
 
@@ -529,7 +530,9 @@ defmodule Cinder.Indexers.DefinitionsTest do
                    Definitions.apply_set(answer(@commit_a, files), check: check)
         end)
 
-      assert log =~ "indexer definition load check raised"
+      assert log =~ "indexer definition load check raised on blob"
+      assert log =~ "RuntimeError"
+      refute log =~ "https"
       assert %{result: :unchecked} = Enum.find(Definitions.picker(), &(&1.name == "broken.yml"))
       assert [%{blob_sha: sha}] = Definitions.stale_copies()
       assert sha == blob_sha(broken)
@@ -763,9 +766,9 @@ defmodule Cinder.Indexers.DefinitionsTest do
     end
   end
 
-  describe "set_state/0" do
+  describe "set_state/1" do
     test "never loaded before the first apply; loaded with count, commit and time after it" do
-      assert Definitions.set_state() == :never_loaded
+      assert Definitions.set_state() == {:never_loaded, %{error: nil}}
 
       before = DateTime.utc_now(:second)
       {:ok, _state} = apply_counting(answer(@commit_a, names(100)))
@@ -778,6 +781,93 @@ defmodule Cinder.Indexers.DefinitionsTest do
       assert DateTime.compare(loaded_at, after_apply) != :gt
 
       assert Repo.get!(StoredSet, 1).versions == %{"MIN_VERSION" => "11", "MAX_VERSION" => "12"}
+    end
+
+    # The update job's run row (`Cinder.Indexers.Definitions.Updater`), written as a run would.
+    defp run_row!(fields) do
+      Repo.insert!(
+        struct(
+          UpdateRun,
+          [id: 1, started_at: @success, ended_at: @success, outcome: :failed] ++ fields
+        )
+      )
+    end
+
+    test "update failing shows once the last success is more than 72 hours old" do
+      {:ok, {:loaded, loaded}} = apply_counting(answer(@commit_a, names(100)))
+      since = DateTime.add(@success, 3600, :second)
+
+      run_row!(
+        last_success_at: @success,
+        first_failure_at: since,
+        error: :erlang.term_to_binary({:http_status, 503})
+      )
+
+      at_72h = DateTime.add(@success, 72 * 3600, :second)
+
+      assert Definitions.set_state(DateTime.add(at_72h, -1, :second)) == {:loaded, loaded}
+      assert Definitions.set_state(at_72h) == {:loaded, loaded}
+
+      assert Definitions.set_state(DateTime.add(at_72h, 1, :second)) ==
+               {:update_failing, %{since: since, error: {:http_status, 503}, loaded: loaded}}
+    end
+
+    test "update failing needs a failure since the last success" do
+      {:ok, {:loaded, loaded}} = apply_counting(answer(@commit_a, names(100)))
+      run_row!(outcome: :unchanged, last_success_at: @success, first_failure_at: nil)
+
+      assert Definitions.set_state(DateTime.add(@success, 100 * 3600, :second)) ==
+               {:loaded, loaded}
+    end
+
+    test "with no successful run yet, update failing counts from the set's load" do
+      {:ok, {:loaded, loaded}} = apply_counting(answer(@commit_a, names(100)))
+
+      run_row!(
+        last_success_at: nil,
+        first_failure_at: loaded.loaded_at,
+        error: :erlang.term_to_binary(:timeout)
+      )
+
+      at_72h = DateTime.add(loaded.loaded_at, 72 * 3600, :second)
+      assert Definitions.set_state(at_72h) == {:loaded, loaded}
+
+      assert {:update_failing, %{error: :timeout}} =
+               Definitions.set_state(DateTime.add(at_72h, 1, :second))
+    end
+
+    test "a refusal stays the state past 72 hours, so its commit stays readable" do
+      {:ok, _state} = apply_counting(answer(@commit_a, names(100)))
+      {:error, refusal} = apply_counting(answer(@commit_b, names(50)))
+
+      run_row!(
+        outcome: :shrank,
+        commit: @commit_b,
+        last_success_at: @success,
+        first_failure_at: @success
+      )
+
+      assert Definitions.set_state(DateTime.add(@success, 100 * 3600, :second)) == refusal
+      assert {:shrank, %{commit: @commit_b}} = refusal
+    end
+
+    test "never loaded carries the last run's error tag, nil after a success or no run" do
+      assert Definitions.set_state() == {:never_loaded, %{error: nil}}
+      run_row!(error: :erlang.term_to_binary(:no_master_ref))
+      assert Definitions.set_state() == {:never_loaded, %{error: :no_master_ref}}
+
+      Repo.update_all(UpdateRun, set: [outcome: :unchanged, error: nil])
+      assert Definitions.set_state() == {:never_loaded, %{error: nil}}
+    end
+  end
+
+  describe "loaded/0" do
+    test "the set the mirror holds, nil before any load and kept by a refusal" do
+      assert Definitions.loaded() == nil
+      {:ok, {:loaded, loaded}} = apply_counting(answer(@commit_a, names(100)))
+      assert Definitions.loaded() == loaded
+      {:error, _refusal} = apply_counting(answer(@commit_b, names(50)))
+      assert Definitions.loaded() == loaded
     end
   end
 end

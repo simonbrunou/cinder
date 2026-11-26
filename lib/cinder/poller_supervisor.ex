@@ -1,8 +1,8 @@
 defmodule Cinder.PollerSupervisor do
   @moduledoc """
-  Isolates the household's 17 background workers (`Cinder.Application.poller_child/0`: search
-  pollers, refreshers, sweeps, the janitor, etc.) from core infrastructure under their own
-  `:one_for_one` supervisor.
+  Isolates the household's 18 background workers (`Cinder.Application.poller_child/0`: search
+  pollers, refreshers, sweeps, the janitor, the indexer definitions update, etc.) from core
+  infrastructure under their own `:one_for_one` supervisor.
 
   Before this, the 16 workers were flat siblings of `Cinder.Repo` and `CinderWeb.Endpoint`
   directly under `Cinder.Supervisor`'s default restart budget (3 restarts / 5 seconds, shared by
@@ -14,9 +14,9 @@ defmodule Cinder.PollerSupervisor do
   along with the web endpoint and DB connection pool — over one misbehaving background feature
   (#456).
 
-  `max_restarts: 17` (default `max_seconds: 5`) is sized to the child count: one independent
-  restart allowance per worker within the window, comfortably covering ordinary transient
-  restarts across all 17.
+  `max_restarts: 17` (default `max_seconds: 5`) was sized to the 17 workers this supervisor had
+  before the definitions update (#1669) joined them: about one restart allowance per worker
+  within the window, which still covers ordinary transient restarts.
 
   Nesting this alone is not enough: a *persistently* bad config value (as opposed to a transient
   blip) crash-loops again immediately on every restart, including after this supervisor's own
