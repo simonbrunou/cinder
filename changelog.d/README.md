@@ -16,7 +16,9 @@ only `test/`, `.forgejo/workflows/`, `scripts/`, `.gitignore`, `AGENTS.md`, `doc
   column 0.
 - Wrap its prose at 100 columns, an entry's later lines indented two spaces under its `- `.
   `test/code_health/agent_doc_line_length_test.exs` fails a longer prose line; its header names
-  the lines it skips, such as a line holding a URL.
+  the lines it skips, such as a line holding a URL. When an edit lengthens a line, rewrap the
+  whole entry with the `fmt` command of [workflow.md](../docs/agents/workflow.md) "Agent docs".
+  On #1780 hand rewraps of one fragment ran past 100 columns three times.
 
 ```markdown
 ### Fixed
