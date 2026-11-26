@@ -530,6 +530,17 @@
   `IndexerMock` without reading config survived it. The fix pointed the key at `InHandIndexerMock`,
   which made the docstring of `Cinder.IndexerStubs.anime_sweep_pick/4` false: a Standards finding,
   two fix commits and a re-check.
+- `config/test.exs` selects `Cinder.Acquisition.IndexerMock` as the indexer source, so a grab's
+  recorded source, `prowlarr` or `native`, is never the selected one. When a fetch through the
+  recorded source fails with an error outside `Download.permanent_submission_errors/0`,
+  `Cinder.Download.GrabFailure.guard_fetch/2` answers `{:error, :indexer_changed}` in its place,
+  the client returns that, and `Cinder.Download` drops the grab with no retry. The `GrabFailure`
+  moduledoc says what each kind does next. A test that makes such a fetch fail and checks
+  anything but that drop (the error the client got, a retry, a strike, a search attempt, a held
+  book's reason) first selects the recorded source with
+  `Cinder.ConfigCase.put_env(:indexer_source, IndexerSource.Prowlarr)`, or `IndexerSource.Native`,
+  as `Cinder.Download.IndexerChangeTest` "a source switch in flight" does. On #1656 the user-info
+  Prowlarr case of `intent_test.exs` lost its retry this way until it selected Prowlarr.
 - A test that checks what a function was called with or returned (the opts a judge got, the
   bytes `:zlib.safeInflate/2` gave back) reads them from `Cinder.CallTrace.calls/2`, whose
   moduledoc lists the traps of a hand-written `:erlang.trace`. On #1646 a hand-written trace
