@@ -15,12 +15,17 @@
 # - "Dev Torznab" (Torznab): one magnet item for `t=movie&imdbid=0000001`;
 # - "Dev limited" (Newznab): 429 with `Retry-After: 3600` to every request;
 # - "Dev rejected" (Newznab): `<error code="100">`, rejected credentials, to every request;
-# - "Dev flaky" (Newznab): 502 to the run's first request to it, then Dev NZB's answers.
+# - "Dev flaky" (Newznab): 502 to the run's first request to it, then Dev NZB's answers;
+# - "Dev text-only" (Torznab): caps whose movie-search lists `q` but no `imdbid`, and two magnet
+#   items for `t=search&q=Movie 2020`, `Movie.2020.1080p.WEB-DL.x264-TXT` and
+#   `Movie.Part.Two.2022.1080p.WEB-DL.x264-TXT`. `Native.search/1` sends it no search request;
+#   the standard movie search of BEST_RELEASE and JUDGED sends it that text (#1632).
 #
 # A `t=caps` request to Dev NZB or Dev Torznab gets caps with `search`, `movie-search` and
-# `tv-search`, and any other request to them an empty feed. Native also searches every other
-# indexer `Cinder.Indexers.searchable/0` returns, so their rows and outcomes show too
-# (`IndexerSource.Native`'s moduledoc names those it sends no request to). The script prints:
+# `tv-search`, and any other request to them or to Dev text-only an empty feed. Native also
+# searches every other indexer `Cinder.Indexers.searchable/0` returns, so their rows and
+# outcomes show too (`IndexerSource.Native`'s moduledoc names those it sends no request to). The
+# script prints:
 #
 # - `HEAD`: the commit the run uses;
 # - `ROWS`: `Native.search("tt1")`'s rows, each with its title, indexer name, protocol,
@@ -30,14 +35,18 @@
 # - `REPORT2`: a second `Native.search("tt1")`'s report, where an indexer in backoff reads
 #   skipped and one with rejected credentials failed, with no request sent to either;
 # - `BEST_RELEASE`: `Cinder.Acquisition.best_release/3`'s pick through Native;
+# - `JUDGED`: each row of `Cinder.Acquisition.judge_movie/3` through Native, with its title,
+#   indexer name, query origins, the stage that dropped it (nil when kept) and its verdict. The
+#   Title.Year rule drops Dev text-only's `Movie.Part.Two` row at `:title_guard`;
 # - `REQUESTS`: each request the listener received, in the order it answered them, with the
 #   milliseconds from the script starting the listener to the request's arrival and the status it
-#   answered, and a `--` line where REPORT2's and BEST_RELEASE's searches start. Dev flaky's 502
-#   and the retry 2 s later show here.
+#   answered, and a `--` line where REPORT2's, BEST_RELEASE's and JUDGED's searches start. Dev
+#   flaky's 502 and the retry 2 s later show here.
 #
 # Edit `DevNativeSearch.Listener.answer/3` for another answer: an `<error>` code, another status,
 # caps without `movie-search`, or a download link that redirects or answers 429. A grab through
-# Native goes at the end, beside `BEST_RELEASE`, with its result printed the same way.
+# Native goes after `JUDGED` and before `REQUESTS`, with a `--` line of its own and its result
+# printed the same way.
 defmodule DevNativeSearch.Listener do
   @behaviour Plug
 
@@ -49,6 +58,11 @@ defmodule DevNativeSearch.Listener do
           ~s(<tv-search available="yes" supportedParams="q,season,ep,tvdbid"/>) <>
           ~s(</searching><categories><category id="2000" name="Movies"/>) <>
           ~s(<category id="5000" name="TV"/></categories></caps>)
+
+  # Dev text-only's caps: the same, with `imdbid` gone from movie-search. The raise stops the
+  # script when an edit to `@caps` leaves nothing for the replace to match.
+  @text_caps String.replace(@caps, ~s(supportedParams="q,imdbid"), ~s(supportedParams="q"))
+  if @text_caps == @caps, do: raise("@caps lost movie-search's \"q,imdbid\"; fix @text_caps")
 
   @nzb ~s(<?xml version="1.0" encoding="UTF-8"?>) <>
          ~s(<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><file poster="dev" date="0" ) <>
@@ -92,7 +106,23 @@ defmodule DevNativeSearch.Listener do
     conn |> put_resp_content_type("application/x-nzb") |> send_resp(200, @nzb)
   end
 
+  defp answer(conn, ["text" | _], %{"t" => "caps"}), do: xml(conn, @text_caps)
+
   defp answer(conn, _path, %{"t" => "caps"}), do: xml(conn, @caps)
+
+  defp answer(conn, ["text" | _], %{"t" => "search", "q" => "Movie 2020"}) do
+    items =
+      for {title, hash} <- [
+            {"Movie.2020.1080p.WEB-DL.x264-TXT", "1111111111111111111111111111111111111111"},
+            {"Movie.Part.Two.2022.1080p.WEB-DL.x264-TXT",
+             "2222222222222222222222222222222222222222"}
+          ] do
+        link = ~s(<torznab:attr name="magneturl" value="magnet:?xt=urn:btih:#{hash}"/>)
+        item(title, link, 7_000_000_000)
+      end
+
+    xml(conn, rss(Enum.join(items)))
+  end
 
   defp answer(conn, ["nzb" | _], %{"t" => "movie", "imdbid" => "0000001"}) do
     link = ~s(<enclosure url="#{base()}/nzb/get/1.nzb" length="1" type="application/x-nzb"/>)
@@ -157,7 +187,8 @@ dev_indexers = [
   {"Dev Torznab", :torznab, "/tor/api"},
   {"Dev limited", :newznab, "/limited/api"},
   {"Dev rejected", :newznab, "/rejected/api"},
-  {"Dev flaky", :newznab, "/flaky/api"}
+  {"Dev flaky", :newznab, "/flaky/api"},
+  {"Dev text-only", :torznab, "/text/api"}
 ]
 
 names = MapSet.new(dev_indexers, &elem(&1, 0))
@@ -221,5 +252,24 @@ pick =
   end
 
 IO.inspect(pick, label: "BEST_RELEASE")
+
+Agent.update(DevNativeSearch.Log, &["-- JUDGED search" | &1])
+
+case Acquisition.judge_movie("tt1", context, indexer_source: Native) do
+  {:ok, judged} ->
+    for row <- judged.rows do
+      release = row.release
+
+      IO.inspect(
+        {release.title, release.indexer_name, release.query_origins, row.dropped_at, row.verdict},
+        label: "JUDGED",
+        limit: :infinity
+      )
+    end
+
+  other ->
+    IO.inspect(other, label: "JUDGED", limit: :infinity)
+end
+
 IO.puts("REQUESTS:")
 DevNativeSearch.Log |> Agent.get(&Enum.reverse/1) |> Enum.each(&IO.puts("  " <> &1))
