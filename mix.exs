@@ -136,6 +136,9 @@ defmodule Cinder.MixProject do
       # Cinder.Indexers.Definitions.Loader reads Cardigann definitions at runtime with the yamerl
       # it brings in, and the code_health fences read the workflows with it.
       {:yaml_elixir, "~> 2.11"},
+      # The Newznab and Torznab adapters parse their caps answers with it
+      # (`Cinder.Acquisition.Indexer.Newznab.XML`), which refuses a document type declaration.
+      {:saxy, "~> 1.7"},
       {:mox, "~> 1.3", only: :test}
     ]
   end

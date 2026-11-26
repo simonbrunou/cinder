@@ -123,6 +123,9 @@ exceptions each own the tables named here and nothing derived:
 - `lib/cinder/library/sidecar_quarantine.ex` owns `sidecar_quarantines`.
 - `lib/cinder/download.ex` writes only its own `download_intents` tables.
 - `lib/cinder/indexers.ex` (`Cinder.Indexers`) is the one writer of `configured_indexers`.
+- `lib/cinder/acquisition/indexer_source/native/` (`Cinder.Acquisition.IndexerSource.Native`'s
+  modules) is the one writer of Native's runtime tables: `native_indexer_caps`
+  (`Native.IndexerCaps`).
 - `lib/cinder/indexers/definitions.ex` (`Cinder.Indexers.Definitions`) is the one writer of the
   `indexer_definition_*` tables.
 

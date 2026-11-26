@@ -152,6 +152,10 @@ config :cinder, Cinder.Acquisition.IndexerSource.Prowlarr,
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
 
+# The Newznab and Torznab adapters' requests (Torznab reads Newznab's key) go to a Req.Test stub.
+config :cinder, Cinder.Acquisition.Indexer.Newznab,
+  req_options: [plug: {Req.Test, Cinder.NewznabStub}]
+
 # The Prowlarr/Indexers definitions adapter's own test routes Req through a Req.Test stub.
 config :cinder, Cinder.Indexers.Definitions.Source.GitHub,
   req_options: [plug: {Req.Test, Cinder.DefinitionsSourceStub}, retry: false]
