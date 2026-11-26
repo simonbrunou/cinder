@@ -27,6 +27,7 @@ defmodule Cinder.Download.IndexerChangeTest do
   alias Cinder.Indexers
   alias Cinder.Indexers.ConfiguredIndexer
   alias Cinder.Repo
+  alias Cinder.TorrentFixture
 
   @moduletag :capture_log
 
@@ -284,11 +285,12 @@ defmodule Cinder.Download.IndexerChangeTest do
         ConfigCase.put_env(:indexer_source, IndexerSource.Native)
         target = target(@kind)
         intent = reserve(target, prowlarr_release(target, @http_link))
-        fetching_client(&Plug.Conn.send_resp(&1, 200, "torrent bytes"), {:error, :add_rejected})
+        torrent = TorrentFixture.minimal()
+        fetching_client(&Plug.Conn.send_resp(&1, 200, torrent), {:error, :add_rejected})
 
         assert {:error, :add_rejected} = submit(target, intent)
 
-        assert_received {:fetched, {:ok, "torrent bytes"}}
+        assert_received {:fetched, {:ok, ^torrent}}
         assert Repo.get(Intent, intent.id) == nil
         assert_refused(target)
       end
@@ -559,7 +561,7 @@ defmodule Cinder.Download.IndexerChangeTest do
     stub(ClientMock, :add, fn release, opts ->
       fetched =
         Keyword.fetch!(opts, :fetch).(release.download_url, release.download_url_origin,
-          max_bytes: 64,
+          max_bytes: 1024,
           error_tag: :torrent_fetch_status,
           plug: {Req.Test, Cinder.IndexerChangeStub},
           resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end

@@ -2,6 +2,7 @@ defmodule Cinder.Download.Client.NzbgetTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Download.Client.{Fetch, Nzbget}
+  alias Cinder.NzbFixture
 
   @key "01234567-89ab-cdef-0123-456789abcdef"
 
@@ -15,7 +16,7 @@ defmodule Cinder.Download.Client.NzbgetTest do
 
         _ ->
           assert conn.host == "93.184.216.34"
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
       end
     end)
   end
@@ -41,7 +42,7 @@ defmodule Cinder.Download.Client.NzbgetTest do
   test "add/2 fetches NZB bytes and appends a recoverable title-bearing job" do
     stub(fn conn, %{"method" => "append", "params" => params} ->
       assert hd(params) == "Movie.cinder-#{@key}.nzb"
-      assert Enum.at(params, 1) == Base.encode64("nzb-bytes")
+      assert Enum.at(params, 1) == Base.encode64(NzbFixture.minimal())
       result(conn, 42)
     end)
 

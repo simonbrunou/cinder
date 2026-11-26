@@ -352,11 +352,25 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              )
   end
 
-  test "add/1 returns :bad_torrent when the URL returns a non-torrent body" do
-    stub_torrent_flow("<html>nope</html>")
+  # The fetch hands qBittorrent only an NZB or a torrent (`DownloadCheck`, #1658). Of these three
+  # 200 bodies from the link's host, the HTML page is a capped `:challenge_page`, the plain body
+  # `:bad_download_file`, and the NZB reaches qBittorrent's own torrent check.
+  for {name, body, reason} <- [
+        {"an HTML page", "<html>nope</html>", :challenge_page},
+        {"a body that is no file", "nope", :bad_download_file},
+        {"an NZB", Cinder.NzbFixture.minimal(), :bad_torrent}
+      ] do
+    @body body
+    @reason reason
 
-    assert {:error, :bad_torrent} =
-             QBittorrent.add(%{download_url: "https://tracker.test/dl/x"}, fetch: &Fetch.bytes/3)
+    test "add/1 answers #{inspect(reason)} when the URL returns #{name}" do
+      stub_torrent_flow(@body)
+
+      assert {:error, @reason} ==
+               QBittorrent.add(%{download_url: "https://tracker.test/dl/x"},
+                 fetch: &Fetch.bytes/3
+               )
+    end
   end
 
   test "status/1 normalizes a completed torrent" do

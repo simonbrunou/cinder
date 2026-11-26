@@ -146,7 +146,8 @@ defmodule Cinder.Acquisition.IndexerSource do
   @doc """
   Fetches a grab's download link for a download client: `{:ok, bytes}`, `{:magnet, link}` for a
   link that redirects to a magnet when `opts` sets `allow_magnet: true`, or `{:error, reason}`, as
-  `Cinder.Download.Client.Fetch.bytes/3` answers. `source_origin` is the origin the release
+  `Cinder.Download.Client.Fetch.bytes/3` answers: `bytes` is an NZB or a torrent
+  (`Cinder.Download.Client.DownloadCheck`, #1658). `source_origin` is the origin the release
   recorded for its link, or `nil`.
 
   `opts` are the client's fetch options, its test seams (`:plug`, `:resolver`) included, plus the

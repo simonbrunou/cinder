@@ -2,6 +2,7 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Acquisition.IndexerSource.Prowlarr
+  alias Cinder.{NzbFixture, TorrentFixture}
 
   test "search/1 queries by IMDb id and normalizes results, falling back to magnetUrl" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
@@ -519,7 +520,7 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
     # The options a client builds, with the test seams `Cinder.Download.Client.Fetch` reads.
     defp fetch_opts(extra \\ []) do
       [
-        max_bytes: 64,
+        max_bytes: 1024,
         error_tag: :torrent_fetch_status,
         allow_magnet: true,
         plug: {Req.Test, Cinder.ProwlarrFetchStub},
@@ -537,9 +538,10 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
     end
 
     test "answers the link's bytes, fetched from the link itself" do
-      stub_fetch(&Plug.Conn.send_resp(&1, 200, "torrent bytes"))
+      torrent = TorrentFixture.minimal()
+      stub_fetch(&Plug.Conn.send_resp(&1, 200, torrent))
 
-      assert {:ok, "torrent bytes"} =
+      assert {:ok, ^torrent} =
                Prowlarr.fetch_download(
                  "https://indexer.example/dl/1.torrent",
                  "https://indexer.example",
@@ -571,11 +573,12 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
 
     # `Cinder.Download` adds the intent's provenance to the options; `Fetch` reads none of it.
     test "fetches the same way with the provenance keys in the options" do
-      stub_fetch(&Plug.Conn.send_resp(&1, 200, "nzb bytes"))
+      nzb = NzbFixture.minimal()
+      stub_fetch(&Plug.Conn.send_resp(&1, 200, nzb))
 
       opts = fetch_opts(indexer_source: "prowlarr", indexer_id: 7, credentials_version: 2)
 
-      assert {:ok, "nzb bytes"} =
+      assert {:ok, ^nzb} =
                Prowlarr.fetch_download(
                  "https://indexer.example/dl/2",
                  "https://indexer.example",

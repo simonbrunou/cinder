@@ -491,9 +491,12 @@ picks those that drop a grab, `refused_release?/1` those on which `abandon_reser
 to block a TV release (never for an operator-initiated intent), and `blocks_book_release?/1`
 those on which the book hold in `abandon_reserved/2` also tries to block the release title. It
 also holds the native provenance check (`check/1`) and the source-switch rule (`guard_fetch/2`)
-that answer `:indexer_changed` (#1656). The movie park in `MovieLifecycle.record_failure/2`
-still sits on the grab call only (#1491). On #1492 the TV block first went into the TV poller's
-grab call, which the retry never reaches: about 23 minutes from the review finding to the fix.
+that answer `:indexer_changed` (#1656). A failure of `add_decrypted_release/3` that `drops?/1`
+keeps goes to `Download.retry_submission/3`, which retries it as `GrabFailure.retry_class/1`
+sorts it and can drop the intent at the cap. Each path above reaches it there, and a cleanup
+intent's removal never does (#1658). The movie park in `MovieLifecycle.record_failure/2` still
+sits on the grab call only (#1491). On #1492 the TV block first went into the TV poller's grab
+call, which the retry never reaches: about 23 minutes from the review finding to the fix.
 
 The completion content check (`ContentPolicy.vet_completed/4`) holds on a walk timeout too. The
 watch answers `:content_check_timeout`, and each poller's `advance/1` keeps the download in

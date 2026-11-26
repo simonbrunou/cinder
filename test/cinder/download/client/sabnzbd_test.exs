@@ -6,6 +6,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   alias Cinder.ConfigCase
   alias Cinder.Download.Client.{Fetch, Sabnzbd}
+  alias Cinder.NzbFixture
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
 
@@ -51,7 +52,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
           respond.(conn)
 
         _ ->
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
       end
     end)
   end
@@ -62,14 +63,14 @@ defmodule Cinder.Download.Client.SabnzbdTest do
         "/getnzb/1" ->
           assert conn.host == "93.184.216.34"
           assert conn.query_string == "apikey=k&id=9"
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
 
         "/api" ->
           assert conn.params["mode"] == "addfile"
           assert conn.params["apikey"] == "test-key"
           assert conn.params["output"] == "json"
           {:ok, body, conn} = Plug.Conn.read_body(conn)
-          assert body =~ "nzb-bytes"
+          assert body =~ NzbFixture.minimal()
           Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["SABnzbd_nzo_abc"]})
       end
     end)
@@ -85,7 +86,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       case conn.request_path do
         "/pinned.nzb" ->
           assert conn.host == "93.184.216.34"
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
 
         "/api" ->
           Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-pinned"]})
@@ -102,7 +103,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub(fn conn ->
       case conn.request_path do
         "/getnzb/1" ->
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
 
         "/api" ->
           # "name" is the addfile field for the uploaded content (an actual file, not a
@@ -610,7 +611,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   # function, which reads the posted body as it is.
   test "add/1 fetches an NZB of exactly the 20 MiB cap and posts all of it to SABnzbd" do
     test_pid = self()
-    nzb = String.duplicate("x", 20 * 1024 * 1024)
+    nzb = NzbFixture.padded(20 * 1024 * 1024)
 
     sabnzbd = fn request ->
       body = request.body |> Enum.to_list() |> IO.iodata_to_binary()
@@ -647,7 +648,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
           conn |> Plug.Conn.put_status(503) |> Req.Test.text("busy")
 
         _ ->
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
       end
     end)
 
@@ -1152,7 +1153,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
             Req.Test.json(conn, %{"nzo_ids" => ["bad"]})
 
           {_, "/getnzb"} ->
-            Req.Test.text(conn, "nzb-bytes")
+            Req.Test.text(conn, NzbFixture.minimal())
 
           {_, "/api"} ->
             conn
@@ -1186,7 +1187,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       case conn.request_path do
         "/getnzb/1" ->
           assert conn.host == "127.0.0.1"
-          Req.Test.text(conn, "nzb-bytes")
+          Req.Test.text(conn, NzbFixture.minimal())
 
         "/api" ->
           assert conn.params["mode"] == "addfile"
@@ -1202,6 +1203,60 @@ defmodule Cinder.Download.Client.SabnzbdTest do
                },
                fetch: &Fetch.bytes/3
              )
+  end
+
+  # The fetch's download check (#1658): an indexer answer is no NZB, and SABnzbd hears nothing.
+  test "add/1 answers :indexer_auth_failed for a Newznab error 100 from the link's own origin" do
+    test_pid = self()
+
+    stub(fn conn ->
+      case conn.request_path do
+        "/getnzb/1" ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/xml")
+          |> Plug.Conn.send_resp(
+            200,
+            ~s(<error code="100" description="Incorrect user credentials"/>)
+          )
+
+        "/api" ->
+          send(test_pid, :sabnzbd_called)
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-1"]})
+      end
+    end)
+
+    assert {:error, :indexer_auth_failed} =
+             Sabnzbd.add(
+               %{
+                 download_url: "http://127.0.0.1:9696/getnzb/1",
+                 download_url_origin: "http://127.0.0.1:9696"
+               },
+               fetch: &Fetch.bytes/3
+             )
+
+    refute_received :sabnzbd_called
+  end
+
+  test "add/1 posts a gzip-compressed NZB to SABnzbd decompressed" do
+    test_pid = self()
+    nzb = NzbFixture.minimal()
+
+    stub(fn conn ->
+      case conn.request_path do
+        "/getnzb/1" ->
+          Plug.Conn.send_resp(conn, 200, :zlib.gzip(nzb))
+
+        "/api" ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test_pid, {:addfile, String.contains?(body, nzb)})
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-gz"]})
+      end
+    end)
+
+    assert {:ok, "nzo-gz"} =
+             Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1"}, fetch: &Fetch.bytes/3)
+
+    assert_received {:addfile, true}
   end
 
   test "status/1 rejects an oversized JSON response" do

@@ -42,6 +42,31 @@ defmodule Cinder.Acquisition.Indexer.Newznab.XML do
     _exception -> {:error, :bad_response}
   end
 
+  @doc """
+  The name of `body`'s root element, read as far as its start tag and no further:
+  `{:ok, name}` or `{:error, :bad_response}`. A body that holds `<!DOCTYPE` or `<!ENTITY`
+  anywhere is refused before Saxy reads it, so the part after the start tag, which Saxy never
+  reads, holds neither. Anything before the start tag must parse. `Cinder.Download.Client.DownloadCheck`
+  recognises an NZB by it (#1658), and the download client reads the rest.
+  """
+  @spec root(term()) :: {:ok, String.t()} | {:error, :bad_response}
+  def root(body) when is_binary(body) do
+    if String.contains?(body, [@declaration, "<!ENTITY"]),
+      do: {:error, :bad_response},
+      else: stream_root(body)
+  end
+
+  def root(_body), do: {:error, :bad_response}
+
+  defp stream_root(body) do
+    case Saxy.parse_string(body, __MODULE__.RootHandler, nil, expand_entity: :keep) do
+      {:halt, name, _rest} when is_binary(name) -> {:ok, name}
+      _error -> {:error, :bad_response}
+    end
+  rescue
+    _exception -> {:error, :bad_response}
+  end
+
   @doc "The child elements of `element`, its text left out."
   @spec elements(element()) :: [element()]
   def elements({_name, _attributes, children}), do: for({_, _, _} = child <- children, do: child)

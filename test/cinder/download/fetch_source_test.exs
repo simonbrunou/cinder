@@ -14,6 +14,7 @@ defmodule Cinder.Download.FetchSourceTest do
   alias Cinder.Download
   alias Cinder.Download.{ClientMock, Intent}
   alias Cinder.Indexers
+  alias Cinder.TorrentFixture
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -90,9 +91,11 @@ defmodule Cinder.Download.FetchSourceTest do
       assert {:ok, intent} = reserve(movie, nil)
       refute Map.has_key?(intent.release, "indexer_source")
 
+      torrent = TorrentFixture.minimal()
+
       Req.Test.stub(Cinder.FetchSourceStub, fn conn ->
         send(test_pid, {:fetched, conn.host, conn.request_path})
-        Plug.Conn.send_resp(conn, 200, "torrent bytes")
+        Plug.Conn.send_resp(conn, 200, torrent)
       end)
 
       stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
@@ -100,7 +103,7 @@ defmodule Cinder.Download.FetchSourceTest do
       stub(ClientMock, :add, fn release, opts ->
         answer =
           Keyword.fetch!(opts, :fetch).(release.download_url, release.download_url_origin,
-            max_bytes: 64,
+            max_bytes: 1024,
             error_tag: :torrent_fetch_status,
             plug: {Req.Test, Cinder.FetchSourceStub},
             resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end
@@ -113,7 +116,7 @@ defmodule Cinder.Download.FetchSourceTest do
       assert :ok = Download.reconcile_pending_intents([:movie])
 
       key = intent.operation_key
-      assert_received {:added, {:ok, "torrent bytes"}, [operation_key: ^key]}
+      assert_received {:added, {:ok, ^torrent}, [operation_key: ^key]}
       assert_received {:fetched, "indexer.example", "/dl/1.torrent"}
       assert Repo.reload!(movie).download_id == "remote-1"
     end

@@ -74,7 +74,13 @@ defmodule Cinder.Download.PermanentSubmissionErrorsTest do
   @anime_first "[GRP] Show S01E01 [1080p]"
   @anime_second "[OTHER] Show S01E01 [1080p]"
 
-  @expected (for reason <- [:unsupported_download_url, :bad_torrent, :add_rejected], into: %{} do
+  @expected (for reason <- [
+                   :unsupported_download_url,
+                   :bad_torrent,
+                   :add_rejected,
+                   :bad_download_file
+                 ],
+                 into: %{} do
                code = to_string(reason)
 
                {reason,

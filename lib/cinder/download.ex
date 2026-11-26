@@ -28,8 +28,6 @@ defmodule Cinder.Download do
   alias Cinder.Catalog.{Grab, MediaProfile, Movie, MovieLifecycle}
   alias Cinder.Download.{GrabFailure, GrabReserve, Intent, IntentEpisode, PollerProgress}
 
-  @retry_base_seconds 5
-  @retry_max_seconds 300
   # The indexer source that fetches a link, by the source name an intent records.
   @fetch_sources %{"prowlarr" => IndexerSource.Prowlarr, "native" => IndexerSource.Native}
 
@@ -809,8 +807,53 @@ defmodule Cinder.Download do
       {:error, reason} ->
         if GrabFailure.drops?(reason),
           do: abandon_reserved(intent, reason),
-          else: schedule_retry(intent, reason)
+          else: retry_submission(intent, reason, GrabFailure.retry_class(reason))
     end
+  end
+
+  # The retry kinds of a kept failure (`GrabFailure.retry_class/1`, #1658). Only a reserved
+  # intent's submission gets here, never a cleanup's, so the cap never drops a remote job's
+  # removal. A limit writes only to the reserved row it read.
+  defp retry_submission(intent, {:indexer_limit, until} = reason, :limit) do
+    own = DateTime.add(DateTime.utc_now(:second), retry_delay(intent), :second)
+
+    claim_retry_generation(intent, %{
+      next_attempt_at: Enum.max([until, own], DateTime),
+      last_error: GrabFailure.retry_error(reason)
+    })
+
+    {:error, reason}
+  end
+
+  defp retry_submission(intent, reason, :capped) do
+    if (intent.attempt_count || 0) + 1 >= GrabFailure.retry_cap(),
+      do: exhaust_retries(intent, reason),
+      else: schedule_retry(intent, reason)
+  end
+
+  defp retry_submission(intent, reason, :uncapped), do: schedule_retry(intent, reason)
+
+  # The attempt that reaches the cap drops the grab with no block row. A movie's drop claims the
+  # attempt count it read, as a retry does, and its strike, for a movie still in the search pass,
+  # shares that transaction; a stale claim drops and counts nothing. A TV intent's episodes and a
+  # movie search again; a book target, with no search pass, is held. Every kind's drop claims the
+  # row first, so an intent a cancel turned into a cleanup during the add stays as it is.
+  defp exhaust_retries(%Intent{kind: :movie} = intent, reason) do
+    Logger.warning("movie #{intent.target_id} grab hit its retry cap after #{inspect(reason)}")
+
+    MovieLifecycle.record_submission_failure(intent.target_id, :grab_retries_exhausted, fn ->
+      claim_retry_generation(intent, :delete)
+    end)
+
+    {:error, :grab_retries_exhausted}
+  end
+
+  defp exhaust_retries(intent, reason) do
+    Logger.warning("intent #{intent.id} grab hit its retry cap after #{inspect(reason)}")
+
+    if claim_retry_generation(intent, :delete) == :ok,
+      do: abandon_reserved(intent, :grab_retries_exhausted),
+      else: {:error, reason}
   end
 
   @doc """
@@ -896,14 +939,13 @@ defmodule Cinder.Download do
     intent |> Intent.changeset(%{remote_id: remote_id}) |> Repo.update()
   end
 
-  defp schedule_retry(intent, reason) do
-    attempt = (intent.attempt_count || 0) + 1
-    delay = min(@retry_base_seconds * Integer.pow(2, min(attempt - 1, 6)), @retry_max_seconds)
+  defp retry_delay(intent), do: GrabFailure.retry_delay((intent.attempt_count || 0) + 1)
 
+  defp schedule_retry(intent, reason) do
     retry_attrs = %{
-      attempt_count: attempt,
-      next_attempt_at: DateTime.utc_now(:second) |> DateTime.add(delay, :second),
-      last_error: retry_error(reason)
+      attempt_count: (intent.attempt_count || 0) + 1,
+      next_attempt_at: DateTime.utc_now(:second) |> DateTime.add(retry_delay(intent), :second),
+      last_error: GrabFailure.retry_error(reason)
     }
 
     case intent do
@@ -920,33 +962,27 @@ defmodule Cinder.Download do
   end
 
   # Counts this failure once: the reserved intent's attempt count must still be the one this
-  # process read, so a concurrent reconcile that already counted it leaves `:stale`.
+  # process read, so a concurrent reconcile that already counted it leaves `:stale`. `:delete`
+  # drops the intent instead of writing `retry_attrs` (`exhaust_retries/2`).
   defp claim_retry_generation(intent, retry_attrs) do
     observed_attempt = intent.attempt_count || 0
 
-    case Repo.update_all(
-           from(i in Intent,
-             where:
-               i.id == ^intent.id and i.status == :reserved and
-                 i.attempt_count == ^observed_attempt
-           ),
-           set: Map.to_list(retry_attrs) ++ [updated_at: DateTime.utc_now(:second)]
-         ) do
-      {1, _} -> :ok
-      {0, _} -> :stale
-    end
+    query =
+      from(i in Intent,
+        where:
+          i.id == ^intent.id and i.status == :reserved and i.attempt_count == ^observed_attempt
+      )
+
+    claimed =
+      if retry_attrs == :delete,
+        do: Repo.delete_all(query),
+        else:
+          Repo.update_all(query,
+            set: Map.to_list(retry_attrs) ++ [updated_at: DateTime.utc_now(:second)]
+          )
+
+    if match?({1, _}, claimed), do: :ok, else: :stale
   end
-
-  defp retry_error(reason) when is_atom(reason), do: inspect(reason)
-
-  defp retry_error({tag, value}) when is_atom(tag) and (is_atom(value) or is_integer(value)),
-    do: inspect({tag, value})
-
-  # Downloader errors can contain response bodies, request URLs, or exception
-  # structs. Keep only the stable error class for those shapes.
-  defp retry_error({tag, _value}) when is_atom(tag), do: inspect(tag)
-
-  defp retry_error(_reason), do: "client_error"
 
   defp retry_due?(%Intent{next_attempt_at: nil}), do: true
 

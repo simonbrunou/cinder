@@ -101,14 +101,23 @@ defmodule Cinder.Download.Poller do
       #   :download_intent_busy another intent for the movie appeared after start/1 looked
       #   :intent_completed     the intent start/1 picked up was gone when it acted on it
       #   :indexer_changed      the grab's indexer changed after the search; dropped (#1656)
+      #   :grab_retries_exhausted  the intent's capped retries reached the cap: its drop counted
+      #                         any strike, or a stale claim left both to the process that
+      #                         counted the attempt (#1658)
+      #   {:indexer_limit, _}   the indexer asked to wait: no strike, and the reserved intent, if
+      #                         still the one read, waits (#1658)
       {:error, reason}
       when reason in [
              :stale_status,
              :intent_backoff,
              :download_intent_busy,
              :intent_completed,
-             :indexer_changed
+             :indexer_changed,
+             :grab_retries_exhausted
            ] ->
+        :ok
+
+      {:error, {:indexer_limit, _until}} ->
         :ok
 
       # Not a failed search either: it reached no indexer, since every indexer that could take a

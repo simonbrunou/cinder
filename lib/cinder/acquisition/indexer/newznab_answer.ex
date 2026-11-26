@@ -2,8 +2,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
   @moduledoc """
   Classifies one Newznab or Torznab answer (#1653): the search answers of
   `Cinder.Acquisition.Indexer.Newznab` and `Cinder.Acquisition.Indexer.Torznab`, their `t=caps`
-  answers, and later the grab answers of #1658. The rules are #1619 point 1 as #1636 point 2
-  amends it; the first that matches gives the class:
+  answers, and the download link answers `Cinder.Download.Client.DownloadCheck` sorts (#1658).
+  The rules are #1619 point 1 as #1636 point 2 amends it; the first that matches gives the class:
 
   0. A body over 4 MiB is `:too_large`, whatever its status. `Cinder.Acquisition.Indexer.request/3`
      refuses such a body with the same tag before it reaches this module.
@@ -114,7 +114,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabAnswer do
   @doc """
   When a limit that `now` answered ends (#1654): `wait`, the time a limit class carries or a
   number of seconds after `now`, else 1 h after `now`, clamped between 1 min and 24 h after
-  `now`. The answer is whole seconds. #1658 and #1659 are to end a grab's limit with it.
+  `now`. The answer is whole seconds. `Cinder.Download.Client.DownloadCheck` ends a grab's limit
+  with it (#1658).
   """
   @spec limit_until(wait() | non_neg_integer(), DateTime.t()) :: DateTime.t()
   def limit_until(wait, %DateTime{} = now) do

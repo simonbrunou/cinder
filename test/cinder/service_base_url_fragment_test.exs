@@ -17,6 +17,7 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.Library.MigrationSource.{Radarr, Readarr, Sonarr}
   alias Cinder.Notifier.{Discord, Webhook}
+  alias Cinder.NzbFixture
   alias Cinder.Subtitles.Provider.OpenSubtitles
   alias Cinder.Subtitles.Translator.LibreTranslate
 
@@ -37,7 +38,7 @@ defmodule Cinder.ServiceBaseUrlFragmentTest do
   defp sabnzbd_add(conn) do
     case conn.request_path do
       "/api" -> Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["SABnzbd_nzo_abc"]})
-      _nzb -> Req.Test.text(conn, "nzb-bytes")
+      _nzb -> Req.Test.text(conn, NzbFixture.minimal())
     end
   end
 

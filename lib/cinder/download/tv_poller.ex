@@ -850,7 +850,8 @@ defmodule Cinder.Download.TvPoller do
   # writes the `updated_at` the search backoff reads, and the block is best-effort, so the search
   # budget still bounds re-picking the release in a sweep that grabs and holds nothing. A grab
   # dropped because its indexer changed after the search returns the ids too, as a disk skip does:
-  # nothing about the release failed, so this sweep spends no search attempt on them (#1656).
+  # nothing about the release failed, so this sweep spends no search attempt on them (#1656). So
+  # does a grab that waits out the indexer's limit (#1658).
   defp grab_release(release, episode_ids) do
     if Download.grab_space_available?(release.size) do
       case Download.grab_episodes(release, episode_ids) do
@@ -860,6 +861,15 @@ defmodule Cinder.Download.TvPoller do
         {:error, :indexer_changed} ->
           Logger.info(
             "tv grab dropped (#{HTTPPolicy.sanitize_log(release.title)}): its indexer changed"
+          )
+
+          episode_ids
+
+        # The indexer asked Cinder to wait: the intent keeps the episodes and waits, so this sweep
+        # spends no search attempt either (#1658). The line names the episodes, not the title.
+        {:error, {:indexer_limit, until}} ->
+          Logger.info(
+            "tv grab of episodes #{inspect(episode_ids)} waits: indexer limit until #{until}"
           )
 
           episode_ids
