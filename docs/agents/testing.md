@@ -310,6 +310,22 @@
   version survived every test, an older one with `MAX_VERSION` 11 and files only in v11 and v13
   included. The fix took a test with files in v13 under `MAX_VERSION` 13 and in v12 under 11,
   a fix commit and a re-check.
+- A hand-written row that stands in for the answer of a named indexer source, Prowlarr's or
+  Native's, as a parity record or replay holds it, carries the `query_origins` that source sets
+  on that callback. Read them in the source: `Cinder.Acquisition.IndexerSource.Prowlarr` tags
+  a callback only where it calls `tag_query_origin/2` (#1739 tracks the callbacks it leaves
+  untagged). The "Rows and order" section of the `IndexerSource.Native` moduledoc says which
+  rows Native keeps, and the `requests/2` clauses of `Cinder.Acquisition.Indexer.Newznab` and
+  each ask's `origin:` in `Cinder.Acquisition.Indexer.Cardigann.Query` say which origin each
+  callback gets. A test of a caller's own origin guard, with rows behind `IndexerMock`, keeps
+  one row per form the guard tells apart instead. Code that groups or matches rows by origin
+  can pass a test whose rows carry made-up tags and still never fire on the tags the source
+  sets. On #1683 (PR #1865) the parity check's row cap looked Native's count up by indexer
+  and origin. Its unit tests tagged Prowlarr's `search_movie_query/2` rows `[:free_text]`,
+  which that source did not set, and its engine test left both sides untagged, which Native
+  never does. The release-parser review found the cap dead on every call whose Prowlarr rows
+  carry no origin, and a re-check found two more fixtures with tags their source did not set:
+  two fix commits, a re-check and a hunk check.
 - A negative test of code that rescues every raise, such as `Subtitles.fetch_missing/3` (its
   `fetch_one/6`) or a poller's `poll/1` (`isolate/2` in `Cinder.Download.PollerSkeleton`), stubs
   the action to succeed and to send the test process a message, then runs `refute_received` on
