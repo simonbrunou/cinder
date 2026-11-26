@@ -26,11 +26,12 @@ defmodule Cinder.Download.GrabFailure do
       attempt waits until `until` or the intent's own delay, whichever is later.
     * `:capped`: the indexer or a host on the link's way failed to send the file. Every fetch
       status the check keeps (`{:nzb_fetch_status, status}`, `{:torrent_fetch_status, status}`),
-      `{:indexer_error, code}`, `:indexer_disabled`, `:challenge_page`, `:https_downgrade` and
-      `:too_many_redirects`. Each attempt counts, with a strike for a movie still in the search
-      pass. The attempt that reaches `retry_cap/0` drops the grab with no block: a movie or TV
-      item searches again while its search budget lasts, and a book target still monitored is
-      held under `:grab_retries_exhausted`.
+      `{:indexer_error, code}`, `:indexer_disabled`, `:challenge_page`, `:https_downgrade`,
+      `:too_many_redirects`, and each `{:cardigann_grab, tag}` of a Cardigann grab
+      (`Cinder.Acquisition.Indexer.Cardigann.Grab`, #1672). Each attempt counts, with a strike
+      for a movie still in the search pass. The attempt that reaches `retry_cap/0` drops the
+      grab with no block: a movie or TV item searches again while its search budget lasts, and a
+      book target still monitored is held under `:grab_retries_exhausted`.
     * `:uncapped`: anything else, such as a transport error or another failure of the client's
       own API, retries with no cap, as before #1658. `:response_too_large` is one, since a
       client's own API reply past its size cap gives it too, after the client may have queued
@@ -70,6 +71,7 @@ defmodule Cinder.Download.GrabFailure do
     do: :capped
 
   def retry_class({:indexer_error, code}) when is_integer(code), do: :capped
+  def retry_class({:cardigann_grab, tag}) when is_atom(tag), do: :capped
   def retry_class(reason) when reason in @capped, do: :capped
   def retry_class(_reason), do: :uncapped
 

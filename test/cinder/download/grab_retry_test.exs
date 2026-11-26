@@ -289,6 +289,26 @@ defmodule Cinder.Download.GrabRetryTest do
       assert Repo.reload!(movie).search_attempts == 4
     end
 
+    # A Cardigann grab's own failures (`Cinder.Acquisition.Indexer.Cardigann.Grab`, #1672).
+    test "a Cardigann grab's tag is capped, and the intent keeps it as its last error" do
+      {:movie, movie} = target = target(:movie)
+      kept = target |> reserve() |> with_attempts(3)
+      stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+      stub(ClientMock, :add, fn _release, _opts -> {:error, {:cardigann_grab, :no_link}} end)
+
+      assert :ok = Download.reconcile_pending_intents([:movie])
+
+      assert %Intent{attempt_count: 4, last_error: "{:cardigann_grab, :no_link}"} =
+               Repo.get(Intent, kept.id)
+
+      Repo.delete!(Repo.get(Intent, kept.id))
+      dropped = target |> reserve() |> with_attempts(4)
+
+      assert :ok = Download.reconcile_pending_intents([:movie])
+      assert Repo.get(Intent, dropped.id) == nil
+      assert Repo.reload!(movie).search_attempts == 5
+    end
+
     # Each answer, at the fourth attempt, drops the grab at the fifth.
     for {name, plug} <- [
           {"another 4xx", :not_found},

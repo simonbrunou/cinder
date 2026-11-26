@@ -135,10 +135,16 @@ defmodule Mix.Tasks.Cinder.Definitions.CanaryTest do
 
   describe "the fixed-query half" do
     # The Nyaa- and Torrent9-shaped definitions written for Cinder, under the file names the
-    # task asks for, behind the `Cinder.CardigannStub` plug.
+    # task asks for, behind the `Cinder.CardigannStub` plug. The Torrent9-shaped site answers
+    # one row.
     defp fixed_zip(nyaa_rows) do
       Cinder.CardigannFixtures.route(%{
-        "nyaa.test" => fn _conn, _query -> Cinder.CardigannFixtures.nyaa_page(nyaa_rows) end
+        "nyaa.test" => fn _conn, _query -> Cinder.CardigannFixtures.nyaa_page(nyaa_rows) end,
+        "t9.test" => fn _conn, _query ->
+          Cinder.CardigannFixtures.torrent9_page([
+            %{title: "Dune 2021 MULTi 1080p", href: "/torrent/1", size: "2.1 Go", icon: "film"}
+          ])
+        end
       })
 
       DefinitionsZip.codeload(@commit, [
@@ -173,12 +179,13 @@ defmodule Mix.Tasks.Cinder.Definitions.CanaryTest do
 
       assert Enum.take(lines, -2) == [
                "fixed query: nyaasi: 1 rows, every required field",
-               "fixed query: torrent9: not supported: :download"
+               "fixed query: torrent9: 1 rows, every required field"
              ]
 
-      # The query went out to the definition's first link.
+      # Each query went out to its definition's first link.
       assert_received {:cardigann_request, "nyaa.test", "/", %{"q" => "frieren"}, _headers}
-      refute Enum.any?(lines, &(&1 =~ "nyaa.test" or &1 =~ "magnet:"))
+      assert_received {:cardigann_request, "t9.test", "/search/dune.html", _query, _headers}
+      refute Enum.any?(lines, &(&1 =~ "nyaa.test" or &1 =~ "t9.test" or &1 =~ "magnet:"))
     end
 
     test "names the missing required field of a failing row" do

@@ -304,8 +304,8 @@ defmodule Cinder.Acquisition.IndexerSource.NativeFetchTest do
       refute_received {:grab_request, _path}
     end
 
-    # The Cardigann adapter has no `fetch_download/3`: its grab is #1672's.
-    test "a Cardigann configured indexer reads not supported with no request" do
+    # The Cardigann adapter's grab (#1672, `CardigannGrabTest`) reads the running copy first.
+    test "a Cardigann configured indexer with no pinned copy is changed, with no request" do
       cardigann =
         Repo.insert!(%Cinder.Indexers.ConfiguredIndexer{
           name: "Cardigann",
@@ -316,7 +316,7 @@ defmodule Cinder.Acquisition.IndexerSource.NativeFetchTest do
 
       link_answers(fn _conn -> NzbFixture.minimal() end)
 
-      assert {:error, :not_supported} = fetch(cardigann, "#{@lan}/download/1.torrent")
+      assert {:error, :indexer_changed} = fetch(cardigann, "#{@lan}/download/1.torrent")
       refute_received {:grab_request, _path}
     end
   end

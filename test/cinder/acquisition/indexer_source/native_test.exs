@@ -659,8 +659,10 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
   end
 
   describe "the other callbacks" do
-    # A Newznab or Torznab row fetches (`NativeFetchTest`); Cardigann's download block is #1672's.
-    test "fetch_download/3 answers not supported for a Cardigann row, with no request" do
+    # A Newznab or Torznab row fetches (`NativeFetchTest`), a Cardigann row with a running copy
+    # too (`CardigannGrabTest`). This row has no pinned copy.
+    test "fetch_download/3 answers :indexer_changed for a Cardigann row with no copy, with no request" do
+      adapters(%{cardigann: Cinder.Acquisition.Indexer.Cardigann})
       c = cardigann!(%{})
 
       {result, events} =
@@ -672,7 +674,7 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
           )
         end)
 
-      assert result == {:error, :not_supported}
+      assert result == {:error, :indexer_changed}
       assert for({_m, %{caller: caller}} <- events, caller == self(), do: caller) == []
     end
 

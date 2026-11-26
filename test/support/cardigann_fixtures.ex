@@ -151,8 +151,9 @@ defmodule Cinder.CardigannFixtures do
   A definition shaped like Torrent9's: public, `followredirect` on, one GET path whose template
   picks a search page or the latest page, keyword filters that turn a season suffix into
   `season N` and spaces into `-`, the `andmatch` row filter, a `case` block, templated
-  selectors that read `.Keywords`, an `info_flaresolverr` setting and a `download` block, which
-  `without_download/1` drops.
+  selectors that read `.Keywords`, an `info_flaresolverr` setting, `testlinktorrent` off and a
+  `download` block, which `without_download/1` drops. Its two download selectors read a details
+  page's magnet link, then a magnet quoted inside a `<script>` through a `regexp` filter.
   """
   def torrent9_like(edit \\ & &1) do
     %{
@@ -189,8 +190,15 @@ defmodule Cinder.CardigannFixtures do
         },
         select("multilanguage", "FRENCH", obj([{"FRENCH", "FRENCH"}, {"ENGLISH", "ENGLISH"}]))
       ],
+      "testlinktorrent" => "false",
       "download" => %{
-        "selectors" => [%{"selector" => ~S|a[href^="magnet:?"]|, "attribute" => "href"}]
+        "selectors" => [
+          %{"selector" => ~S|a[href^="magnet:?"]|, "attribute" => "href"},
+          %{
+            "selector" => ~S|script:contains("magnet:?")|,
+            "filters" => [%{"name" => "regexp", "args" => ~S|'(magnet:\?[^']+)'|}]
+          }
+        ]
       },
       "search" => %{
         "paths" => [
@@ -404,6 +412,29 @@ defmodule Cinder.CardigannFixtures do
     <tbody>
     #{body}
     </tbody></table></body></html>
+    """
+  end
+
+  @doc """
+  A details page of the Torrent9-shaped definition. `:link` writes `<a class="dl">` whose `href`
+  is the given value, `:script` a `<script>` that quotes the given magnet in single quotes, and
+  `:extra` any HTML before them.
+  """
+  def torrent9_details(parts) do
+    link = if parts[:link], do: ~s(<a class="dl" href="#{parts[:link]}">Get it</a>), else: ""
+
+    script =
+      if parts[:script],
+        do: "<script>\nvar link = 'x';\nvar go = '#{parts[:script]}';\n</script>",
+        else: ""
+
+    """
+    <!doctype html><html><head><title>T9 details</title></head><body>
+    <h1>Details</h1>
+    #{parts[:extra]}
+    #{link}
+    #{script}
+    </body></html>
     """
   end
 end

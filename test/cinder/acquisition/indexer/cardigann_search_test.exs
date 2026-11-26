@@ -709,6 +709,55 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
       assert [{"nyaa.test", "/", _query}] = requests()
     end
 
+    # A Nyaa-shaped indexer with a stored passkey that no template reads, which follows redirects,
+    # its search page redirecting to `location`.
+    defp redirecting_to!(location, secret \\ @secret) do
+      redirecting = fn definition ->
+        definition |> with_passkey_setting() |> Map.put("followredirect", "true")
+      end
+
+      [indexer] =
+        setup!([{"nyaa.yml", nyaa_like(redirecting)}], [
+          {"nyaa.yml", nyaa_base(), %{"passkey" => secret}}
+        ])
+
+      route(%{
+        "nyaa.test" => fn conn, _query ->
+          if conn.request_path == "/",
+            do: {:redirect, 302, location},
+            else: nyaa_page(frieren())
+        end,
+        "elsewhere.test" => fn _conn, _query -> nyaa_page(frieren()) end
+      })
+
+      indexer
+    end
+
+    test "a redirect whose Location is not UTF-8 keeps the secret off other hosts" do
+      indexer =
+        redirecting_to!("https://elsewhere.test/caf\xe9?k=" <> URI.encode_www_form(@secret))
+
+      assert {[], outcomes} = search_answer(Native.search_tv_query("frieren", categories: [5070]))
+      assert outcomes == %{indexer.id => {:failed, :secret_host}}
+      assert [{"nyaa.test", "/", _query}] = requests()
+    end
+
+    test "a lone non-UTF-8 byte before a capitalised secret does not hide it from the check" do
+      # `String.downcase/1` leaves the character after a lone 0xC3 byte as it is.
+      indexer = redirecting_to!("https://elsewhere.test/\xc3Hunter2-passkey", "Hunter2-passkey")
+
+      assert {[], outcomes} = search_answer(Native.search_tv_query("frieren", categories: [5070]))
+      assert outcomes == %{indexer.id => {:failed, :secret_host}}
+      assert [{"nyaa.test", "/", _query}] = requests()
+    end
+
+    test "a redirect whose Location is not UTF-8 is followed on the indexer's own host" do
+      indexer = redirecting_to!("https://nyaa.test/caf\xe9")
+
+      assert {:ok, [_ | _], report} = Native.search_tv_query("frieren", categories: [5070])
+      assert outcomes(report) == %{indexer.id => :asked}
+    end
+
     test "a search template that transforms the secret still keeps its URL off other hosts" do
       # `re_replace` changes the value, so only the reference to the setting shows it.
       transformed = fn definition ->
@@ -1336,14 +1385,30 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
   end
 
   describe "the running copy and the Test" do
+    # A `download` block with `selectors` loads since #1672; `method: post` is #1679's.
     test "a copy that reads not supported is not asked and its Test sends nothing" do
-      [indexer] = setup!([{"t9.yml", torrent9_like()}], [{"t9.yml", torrent9_base(), %{}}])
+      post = fn definition -> put_in(definition, ["download", "method"], "post") end
+      [indexer] = setup!([{"t9.yml", torrent9_like(post)}], [{"t9.yml", torrent9_base(), %{}}])
       route(%{"t9.test" => fn _conn, _query -> torrent9_page([]) end})
 
       assert {:ok, [], report} = Native.search_movie_query("dune", [])
-      assert outcomes(report) == %{indexer.id => {:not_asked, {:not_supported, :download}}}
-      assert Native.test_indexer(indexer.id) == {:error, {:not_supported, :download}}
+      assert outcomes(report) == %{indexer.id => {:not_asked, {:not_supported, :download_post}}}
+      assert Native.test_indexer(indexer.id) == {:error, {:not_supported, :download_post}}
       assert requests() == []
+    end
+
+    test "a Torrent9-shaped copy with its download block is asked" do
+      [indexer] = setup!([{"t9.yml", torrent9_like()}], [{"t9.yml", torrent9_base(), %{}}])
+
+      route(%{
+        "t9.test" => fn _conn, _query ->
+          torrent9_page([%{title: "Dune 2021 1080p", href: "/torrent/1", size: "2.1 Go"}])
+        end
+      })
+
+      assert {:ok, [row], report} = Native.search_movie_query("dune", [])
+      assert outcomes(report) == %{indexer.id => :asked}
+      assert row.download_url == "https://t9.test/torrent/1"
     end
 
     test "a copy the current loader has not checked is not asked until the boot re-check runs" do

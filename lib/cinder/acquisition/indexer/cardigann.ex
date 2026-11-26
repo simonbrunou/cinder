@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann do
   @moduledoc """
   The Cardigann adapter of `Cinder.Acquisition.Indexer` (#1671): Cardigann slice (a), the HTML
-  search of a definition with no login, as Nyaa.si and Torrent9 use it. It has no
-  `fetch_download/3`, so a grab of a Cardigann row reads "not supported" until #1672.
+  search of a definition with no login, as Nyaa.si and Torrent9 use it. Its `fetch_download/3`
+  is `Cinder.Acquisition.Indexer.Cardigann.Grab`'s (#1672).
 
   ## Which copy runs
 
@@ -54,7 +54,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Fetch, Query, Rows}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Fetch, Query, Rows, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
@@ -82,9 +82,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     if code |> Tuple.to_list() |> Enum.all?(&is_atom/1), do: code, else: elem(code, 0)
   end
 
+  @doc "Fetches a grab's link through `Cinder.Acquisition.Indexer.Cardigann.Grab`."
+  @impl Indexer
+  defdelegate fetch_download(indexer, url, opts), to: Cinder.Acquisition.Indexer.Cardigann.Grab
+
   # --- the copy ---
 
-  defp copy(%ConfiguredIndexer{} = indexer) do
+  @doc """
+  The running copy of `indexer` as a search and a grab run it, or `{:not_supported, feature}`
+  as the moduledoc's "Which copy runs" lists.
+  """
+  @spec copy(ConfiguredIndexer.t()) :: {:ok, map()} | {:not_supported, Report.feature()}
+  def copy(%ConfiguredIndexer{} = indexer) do
     case Definitions.running_copy(indexer.id) do
       {:ok, %{result: :loads, definition: definition}} -> {:ok, running(indexer, definition)}
       {:ok, %{result: {:not_supported, [code | _]}}} -> {:not_supported, report_feature(code)}
@@ -115,6 +124,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
           secret_referenced?: referenced?(search_texts(definition.search), secret_values),
           link_secret_referenced?:
             referenced?(field_texts(definition.search.fields), secret_values),
+          download_secret_referenced?:
+            referenced?(Variables.download_texts(definition.download), secret_values),
           credential_hosts:
             CredentialHosts.hosts(definition, %{
               stored_url: indexer.base_url,

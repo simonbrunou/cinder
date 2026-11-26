@@ -62,6 +62,22 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Grab do
   def fetch_download(%ConfiguredIndexer{} = indexer, url, opts) when is_binary(url) do
     origin = HTTPPolicy.source_origin(indexer.base_url)
     {fetched, from_source} = Fetch.attributed(url, origin, opts)
+    checked_and_recorded(indexer, fetched, from_source, opts)
+  end
+
+  @doc """
+  Checks `fetched`, a `Fetch.attributed/3`-shaped answer beside `from_source`, through
+  `DownloadCheck.check_classified/2` under `opts`, records in `indexer`'s backoff state what the
+  moduledoc's table says, and answers the check's answer.
+  `Cinder.Acquisition.Indexer.Cardigann.Grab` shares the table (#1672).
+  """
+  @spec checked_and_recorded(
+          ConfiguredIndexer.t(),
+          {:ok, Fetch.answer()} | {:magnet, String.t()} | {:error, term()},
+          boolean(),
+          keyword()
+        ) :: {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
+  def checked_and_recorded(%ConfiguredIndexer{} = indexer, fetched, from_source, opts) do
     {checked, class} = DownloadCheck.check_classified(fetched, opts)
 
     case recorded(checked, fetched, class, from_source) do

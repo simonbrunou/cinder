@@ -125,6 +125,14 @@ defmodule Cinder.Download.Client.DownloadCheck do
 
   # --- gzip ---
 
+  @doc """
+  `body` as the check's step 1 reads it: every gzip member inflated under `max_bytes`, past
+  which it is `{:error, :response_too_large}`, and any other body as it came. A Cardigann grab
+  reads a link's first byte from it (#1672).
+  """
+  @spec inflated(term(), pos_integer()) :: {:ok, term()} | {:error, :response_too_large}
+  def inflated(body, max_bytes), do: inflate(body, max_bytes)
+
   defp inflate(<<0x1F, 0x8B, _rest::binary>> = body, max_bytes),
     do: members(body, [], max_bytes, body)
 

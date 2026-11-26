@@ -29,8 +29,8 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
     A URL whose scheme comes from a filled value is not read.
 
   The Cardigann adapter's request path (`Cinder.Acquisition.Indexer.Cardigann.Fetch`, #1671)
-  calls `hosts/2` at run time, as #1672's grab is to; the hold rules compare a candidate copy's
-  set with the running copy's (`Cinder.Indexers.Definitions.Hold`).
+  calls `hosts/2` at run time, and so does its grab (#1672); the hold rules compare a candidate
+  copy's set with the running copy's (`Cinder.Indexers.Definitions.Hold`).
   """
 
   @type host :: String.t() | {:unknown, String.t()}

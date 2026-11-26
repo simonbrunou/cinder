@@ -57,8 +57,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
           required(:secrets) => [String.t()],
           required(:secret_referenced?) => boolean(),
           required(:link_secret_referenced?) => boolean(),
+          optional(:download_secret_referenced?) => boolean(),
           required(:credential_hosts) => MapSet.t(),
-          required(:now) => DateTime.t()
+          required(:now) => DateTime.t(),
+          optional(:resolver) => HTTPPolicy.resolver() | nil,
+          optional(:req_options) => keyword() | nil
         }
 
   @doc "The largest body in bytes one request reads: 2 MiB."
@@ -97,9 +100,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   defp redirect(target, response, request, hops) do
     case Req.Response.get_header(response, "location") do
       [location | _] when request.follow_redirects? and hops < @max_redirects ->
-        with {:ok, next} <- redirect_target(target, location, request) do
-          hop(next, request, hops + 1)
-        end
+        target |> redirect_target(location, request) |> followed(request, hops)
 
       [_location | _] when request.follow_redirects? ->
         {:error, :too_many_redirects}
@@ -109,23 +110,64 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     end
   end
 
-  defp redirect_target(target, location, request) do
-    case next_target(target.uri, location) do
-      {:ok, next} ->
-        with :ok <- secret_check(URI.to_string(next.uri), next.uri, request), do: {:ok, next}
+  defp followed({:ok, next}, request, hops), do: hop(next, request, hops + 1)
+  defp followed({:error, :secret_host} = refused, _request, _hops), do: refused
+  defp followed({:error, reason}, _request, _hops), do: {:error, refusal(reason, :bad_response)}
 
-      {:error, reason} ->
-        {:error, refusal(reason, :bad_response)}
+  @doc """
+  The pinned target of a redirect from `target` to `location` under `request`, or the refusal:
+  `:secret_host` from the secret check, which runs on the merged URL before any DNS lookup, so
+  a host built from a secret is never resolved; else `HTTPPolicy.untrusted_redirect_target/3`'s
+  own reason, `:https_downgrade` and a URL's text refusal included. The resolver is the
+  request's `resolver` when it holds one.
+  """
+  @spec redirect_target(HTTPPolicy.request_target(), String.t(), request()) ::
+          {:ok, HTTPPolicy.request_target()} | {:error, atom() | String.t()}
+  def redirect_target(target, location, request) do
+    with :ok <- merged_secret_check(target.uri, location, request) do
+      next_target(target.uri, location, request)
+    end
+  end
+
+  # A `Location` that is not UTF-8 goes through the check too: `URI.merge/2` reads it,
+  # `holds_secret?/2` reads each invalid sequence as U+FFFD, and a host holding such a byte is no
+  # credential host. A merge that raises, which no `Location` tried for #1672 did, is refused
+  # while the indexer holds a secret value; a secret reference needs one, so `secrets` alone
+  # decides.
+  defp merged_secret_check(uri, location, request) do
+    case merged(uri, location) do
+      {:ok, next} -> secret_check(URI.to_string(next), next, request)
+      :error -> if request.secrets != [], do: {:error, :secret_host}, else: :ok
+    end
+  end
+
+  # The URL a redirect names, before any check; `:error` for one `URI.merge/2` cannot read.
+  defp merged(uri, location) do
+    {:ok, URI.merge(uri, location)}
+  rescue
+    _invalid -> :error
+  end
+
+  @doc """
+  The pinned target of a request to `url` under `request`, or the refusal: `:definition_error`
+  for a URL with no host, `:secret_host` from the secret check, else
+  `HTTPPolicy.untrusted_request_target/2`'s own reason. The resolver is the request's `resolver`
+  when it holds one.
+  """
+  @spec request_target(String.t(), request()) ::
+          {:ok, HTTPPolicy.request_target()} | {:error, atom() | String.t()}
+  def request_target(url, request) when is_binary(url) do
+    with {:ok, uri} <- parse(url),
+         :ok <- secret_check(url, uri, request) do
+      pinned_target(url, request)
     end
   end
 
   defp target(url, request, text_refusal) do
-    with {:ok, uri} <- parse(url),
-         :ok <- secret_check(url, uri, request) do
-      case request_target(url) do
-        {:ok, target} -> {:ok, target}
-        {:error, reason} -> {:error, refusal(reason, text_refusal)}
-      end
+    case request_target(url, request) do
+      {:ok, target} -> {:ok, target}
+      {:error, reason} when reason in [:definition_error, :secret_host] -> {:error, reason}
+      {:error, reason} -> {:error, refusal(reason, text_refusal)}
     end
   end
 
@@ -140,21 +182,23 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   defp refusal(:dns_resolution_failed, _text), do: :dns
   defp refusal(_reason, text), do: text
 
-  # HTTPPolicy's own resolver unless `config :cinder, Cinder.Acquisition.Indexer.Cardigann`
-  # names one (a test's).
-  defp request_target(url) do
-    case Keyword.get(config(), :resolver) do
+  # HTTPPolicy's own resolver unless the request holds one (a grab's client options) or
+  # `config :cinder, Cinder.Acquisition.Indexer.Cardigann` names one (a test's).
+  defp pinned_target(url, request) do
+    case resolver(request) do
       nil -> HTTPPolicy.untrusted_request_target(url)
       resolver -> HTTPPolicy.untrusted_request_target(url, resolver)
     end
   end
 
-  defp next_target(uri, location) do
-    case Keyword.get(config(), :resolver) do
+  defp next_target(uri, location, request) do
+    case resolver(request) do
       nil -> HTTPPolicy.untrusted_redirect_target(uri, location)
       resolver -> HTTPPolicy.untrusted_redirect_target(uri, location, resolver)
     end
   end
+
+  defp resolver(request), do: Map.get(request, :resolver) || Keyword.get(config(), :resolver)
 
   @doc """
   True when `link`, a row's link, holds a secret under `request` and is not an http(s) URL on a
@@ -187,8 +231,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
        else: :ok
   end
 
+  # Each invalid sequence reads as U+FFFD first: `String.downcase/1` leaves the character after a
+  # lone byte such as 0xC3 as it is, which hid a capitalised secret behind it (#1672).
   defp holds_secret?(url, secrets) do
-    lowered = String.downcase(url)
+    lowered = url |> String.replace_invalid() |> String.downcase()
 
     Enum.any?(secrets, fn secret ->
       Enum.any?(forms(secret), &String.contains?(lowered, String.downcase(&1)))
@@ -206,28 +252,43 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     ])
   end
 
-  defp credential_host?(%URI{host: host}, hosts) when is_binary(host),
+  @doc "Whether `uri`'s host, in lower case and without a trailing dot, is one of `hosts`."
+  @spec credential_host?(URI.t(), MapSet.t()) :: boolean()
+  def credential_host?(%URI{host: host}, hosts) when is_binary(host),
     do: MapSet.member?(hosts, host |> String.downcase() |> String.trim_trailing("."))
 
-  defp credential_host?(_uri, _hosts), do: false
+  def credential_host?(_uri, _hosts), do: false
 
   # --- one request ---
 
-  defp send_request(target, request) do
+  defp send_request(target, request), do: send_get(target, request)
+
+  @doc """
+  Sends one GET to `target` under `request` through `Cinder.Acquisition.Indexer.request/3`, with
+  `accept-encoding: identity`, Req's redirects and retry off and the path out of the request
+  telemetry, and answers `request/3`'s answer. `opts` takes `headers` (more request headers),
+  `max_bytes` (`max_bytes/0` by default), `timeout_ms` (`request_timeout_ms/0` by default) and
+  `retry` (`request/3`'s one retry, true by default). The plug is the request's `req_options`
+  when it holds them, else the adapter config's.
+  """
+  @spec send_get(HTTPPolicy.request_target(), request(), keyword()) ::
+          {:ok, Req.Response.t()} | {:error, atom()}
+  def send_get(target, request, opts \\ []) do
     options =
       HTTPPolicy.request_options(
         target,
-        Keyword.merge(req_options(),
+        Keyword.merge(Map.get(request, :req_options) || req_options(),
           method: :get,
-          headers: [{"accept-encoding", "identity"}]
+          headers: [{"accept-encoding", "identity"} | Keyword.get(opts, :headers, [])]
         )
       )
 
     Indexer.request(request.context, options,
       raw_body: true,
-      max_bytes: @max_bytes,
-      timeout_ms: @request_timeout_ms,
-      redact_path: true
+      max_bytes: Keyword.get(opts, :max_bytes, @max_bytes),
+      timeout_ms: Keyword.get(opts, :timeout_ms, @request_timeout_ms),
+      redact_path: true,
+      retry: Keyword.get(opts, :retry, true)
     )
   end
 
@@ -253,7 +314,13 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     |> Enum.any?(&String.contains?(String.downcase(&1), "cloudflare"))
   end
 
-  defp decoded(response) do
+  @doc """
+  The body of a 2xx `response` as the moduledoc says: inflated when its `content-encoding` is
+  `gzip` or `x-gzip`, up to `max_bytes/0` of output (`:too_large` past it), `:bad_response` for
+  a gzip body that does not inflate whole or any other encoding.
+  """
+  @spec decoded(Req.Response.t()) :: {:ok, binary()} | {:error, :too_large | :bad_response}
+  def decoded(response) do
     case encodings(response) do
       [] -> {:ok, body(response)}
       [gzip] when gzip in ["gzip", "x-gzip"] -> gunzip(body(response))

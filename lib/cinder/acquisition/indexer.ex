@@ -29,9 +29,11 @@ defmodule Cinder.Acquisition.Indexer do
   `Cinder.Acquisition.IndexerSource.Native.Lease` while the adapter sends the request and records
   its answer.
 
-  A grab's link fetch (`fetch_download/3`) is no adapter request: it goes through
-  `Cinder.Download.Client.Fetch` under the download client's options, with neither `request/3`'s
-  budget and retry nor the slot (#1659, #1619 point 8).
+  A grab's link fetch (`fetch_download/3`) holds no slot (#1659, #1619 point 8). Newznab and
+  Torznab fetch through `Cinder.Download.Client.Fetch` under the download client's options, with
+  neither `request/3`'s budget nor its retry. A Cardigann grab sends each request through
+  `request/3` under the grab's own deadline, with `retry: false`
+  (`Cinder.Acquisition.Indexer.Cardigann.Grab`, #1672).
   """
 
   alias Cinder.Acquisition.IndexerSource.Native
@@ -173,10 +175,14 @@ defmodule Cinder.Acquisition.Indexer do
     labelled JSON that does not decode), as `Cinder.Acquisition.IndexerSource.Report` defines
     them.
 
-  With `raw_body: true` the response's `content-type` header is dropped before
-  `Cinder.HTTPPolicy.bounded_request/3` reads it, so a body labelled JSON comes back as its bytes,
-  whatever its status, and never reads `:bad_response` here. The Newznab and Torznab adapters
-  read every body themselves (`Cinder.Acquisition.Indexer.NewznabAnswer`).
+  With `raw_body: true` the response's `content-type` header is moved out of the headers, into
+  the response's private `:cinder_content_type`, before `Cinder.HTTPPolicy.bounded_request/3`
+  reads it, so a body labelled JSON comes back as its bytes, whatever its status, and never
+  reads `:bad_response` here. The Newznab and Torznab adapters read every body themselves
+  (`Cinder.Acquisition.Indexer.NewznabAnswer`), and a Cardigann grab reads the label back for
+  `Cinder.Download.Client.DownloadCheck` (#1672).
+
+  With `retry: false` no answer is retried: a Cardigann grab's requests (#1672).
 
   With `redact_path: true` the request's URL path stays out of `Cinder.HTTPPolicy`'s request
   telemetry (`Cinder.HTTPPolicy.redact_path/1`): a Cardigann path can hold a setting's value.
@@ -184,8 +190,10 @@ defmodule Cinder.Acquisition.Indexer do
   @spec request(context(), keyword(), keyword()) ::
           {:ok, Req.Response.t()} | {:error, atom()}
   def request(context, request_options, opts \\ []) do
+    retry? = Keyword.get(opts, :retry, true)
+
     case send_once(context, request_options, opts) do
-      {:ok, %Req.Response{status: status}} when status in @retry_statuses ->
+      {:ok, %Req.Response{status: status}} when retry? and status in @retry_statuses ->
         retry(context, request_options, opts)
 
       answer ->
@@ -237,8 +245,16 @@ defmodule Cinder.Acquisition.Indexer do
   defp redact_path(request, true), do: HTTPPolicy.redact_path(request)
   defp redact_path(request, false), do: request
 
-  defp drop_content_type({request, response}),
-    do: {request, Req.Response.delete_header(response, "content-type")}
+  defp drop_content_type({request, response}) do
+    case Req.Response.get_header(response, "content-type") do
+      [] ->
+        {request, response}
+
+      values ->
+        response = Req.Response.delete_header(response, "content-type")
+        {request, Req.Response.put_private(response, :cinder_content_type, values)}
+    end
+  end
 
   defp classify({:ok, response}, _cut_by_deadline?, _deadline_at), do: {:ok, response}
 

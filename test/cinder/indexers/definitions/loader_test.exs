@@ -134,8 +134,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
 
     test "the features on are the filters #1670 and #1677 built and what slice (a) builds" do
       features = Loader.features()
-      assert length(features) == 75
-      assert length(Enum.uniq_by(features, &elem(&1, 0))) == 75
+      assert length(features) == 78
+      assert length(Enum.uniq_by(features, &elem(&1, 0))) == 78
 
       filters =
         ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append
@@ -153,6 +153,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                ] ++
                  Enum.map(filters, &{:filter, &1}) ++
                  [
+                   :download,
                    :request_delay,
                    :follow_redirect,
                    :category_default,
@@ -172,9 +173,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     end
 
     # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck), revision 3
-    # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671).
-    test "fingerprint/0 declares schema version 12 and revision 4" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 4}
+    # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671), revision
+    # 5 the grab's download block (#1672).
+    test "fingerprint/0 declares schema version 12 and revision 5" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 5}
     end
 
     test "unknown values come first, then features in the list's order" do
@@ -183,14 +185,15 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         |> put_in(["search", "paths"], [%{"path" => "/", "response" => %{"type" => "csv"}}])
         |> put_in(["type"], "secret")
         |> put_in(["certificates"], ["ab12"])
-        |> put_in(["download"], %{})
+        |> put_in(["download"], %{"method" => "post", "headers" => %{"A" => ["b"]}})
 
       assert {:ok, %{unsupported: unsupported}} = Loader.load(yaml(definition))
 
       assert unsupported == [
                {:unknown_value, :privacy_type},
                {:unknown_value, :response_type},
-               :download,
+               :download_post,
+               :download_headers,
                :certificates
              ]
     end
@@ -1045,23 +1048,36 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
            field(%{"attribute" => "href", "optional" => true, "default" => "x", "text" => "y"})
        }, []},
       # download
-      {["download"], %{"method" => "get", "headers" => %{"A" => ["b"]}}, [:download]},
+      {["download"], %{}, []},
+      {["download"], %{"method" => "get"}, []},
+      {["download"], %{"method" => "put"}, []},
+      {["download"], %{"method" => "post"}, [:download_post]},
+      {["download"], %{"headers" => %{"A" => ["b"]}}, [:download_headers]},
+      {["download"], %{"headers" => %{}}, []},
+      {["download"],
+       %{"selectors" => [%{"selector" => "a", "attribute" => "href", "filters" => []}]}, []},
       {["download"],
        %{"before" => %{"path" => "/b", "method" => "post", "inputs" => %{"a" => "b"}}},
-       [:download, :download_before]},
+       [:download_before]},
       {["download"],
        %{"before" => %{"pathselector" => %{"selector" => "a", "filters" => [filter("trim")]}}},
-       [:download, :download_before]},
+       [:download_before]},
       {["download"],
        %{"infohash" => %{"hash" => %{"selector" => "h"}, "title" => %{"selector" => "t"}}},
-       [:download, :download_infohash]},
+       [:download_infohash]},
       {["download"],
        %{
          "selectors" => [%{"selector" => "a", "attribute" => "href", "usebeforeresponse" => true}]
-       }, [:download]},
+       }, [:download_use_before_response]},
+      {["download"],
+       %{
+         "selectors" => [
+           %{"selector" => "a", "attribute" => "href", "usebeforeresponse" => false}
+         ]
+       }, []},
       {["download"],
        %{"selectors" => [%{"selector" => "a", "filters" => [filter("jsonjoinarray")]}]},
-       [{:filter, "jsonjoinarray"}, :download]},
+       [{:filter, "jsonjoinarray"}]},
       # login
       {["login"], %{"method" => "form", "form" => "f", "submitpath" => "/s", "selectors" => true},
        [{:login, "form"}]},

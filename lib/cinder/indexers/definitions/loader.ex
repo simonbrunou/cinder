@@ -86,9 +86,12 @@ defmodule Cinder.Indexers.Definitions.Loader do
   `case`, the `andmatch` row filter, `requestDelay`, the definition's own `followredirect`
   (`follow_redirect`; one on a search path is `path_follow_redirect`; a `search.path` is
   `search_path`, #1679's), a `categorymappings` entry marked `default` (`category_default`), and
-  settings of type `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`. A
-  field whose name holds `|`, a modifier Prowlarr reads after the name, is `field_modifier`.
-  Every other flag is off.
+  settings of type `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`, and
+  the `download` block the grab runs (#1672): its `selectors`, with `testlinktorrent`. A
+  `download` block's `before` is `download_before`, its `infohash` `download_infohash`, a
+  `method: post` `download_post`, non-empty `headers` `download_headers` and a selector's
+  `usebeforeresponse` `download_use_before_response`, all #1679's. A field whose name holds `|`,
+  a modifier Prowlarr reads after the name, is `field_modifier`. Every other flag is off.
   """
 
   @max_bytes 524_288
@@ -97,7 +100,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # 3: the filters of #1677 load, and `LoadCheck` adds the static pattern codes.
   # 4: Cardigann slice (a) switches on what Nyaa.si and Torrent9 use, and `LoadCheck` adds the
   #    static layout code (#1671).
-  @revision 4
+  # 5: the grab runs a `download` block with `selectors` (#1672), and `LoadCheck` renders a
+  #    download selector that holds a template.
+  @revision 5
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -235,9 +240,12 @@ defmodule Cinder.Indexers.Definitions.Loader do
               Enum.map(@row_filters, &{{:row_filter, &1}, &1 in @built_row_filters}) ++
               Enum.map(@field_filters, &{{:filter, &1}, &1 in @built_filters}) ++
               [
-                download: false,
+                download: true,
                 download_before: false,
                 download_infohash: false,
+                download_post: false,
+                download_headers: false,
+                download_use_before_response: false,
                 request_delay: true,
                 follow_redirect: true,
                 path_follow_redirect: false,
@@ -850,7 +858,12 @@ defmodule Cinder.Indexers.Definitions.Loader do
     [
       :download,
       if(download.before, do: :download_before),
-      if(download.infohash, do: :download_infohash)
+      if(download.infohash, do: :download_infohash),
+      if(download.method == "post", do: :download_post),
+      if(download.headers != [], do: :download_headers),
+      if(Enum.any?(download.selectors, & &1.usebeforeresponse),
+        do: :download_use_before_response
+      )
     ]
     |> Enum.reject(&is_nil/1)
   end

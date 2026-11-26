@@ -21,8 +21,13 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   first (#1671): one that reads `.Result` gets `{:selector, :result_template}` and is not
   checked further; any other is rendered twice, every search variable blank and then every one
   set (`Cinder.Acquisition.Indexer.Cardigann.Variables`), and each rendering that is not blank is
-  checked as a selector. A template that does not render gets `{:selector, :template}`. Any
-  other selector that holds `{{` gets that code from the gate.
+  checked as a selector. A template that does not render gets `{:selector, :template}`. A
+  `download.selectors` entry that holds `{{` is a template the grab renders with its own
+  variables first (#1672): it is rendered twice, every grab variable blank and then every one
+  set (`Variables.download/3`: the settings and the link's `.DownloadUri.*` names, each
+  `.DownloadUri.Query.<key>` it names included), each rendering checked the same way. One that
+  does not render, as one that reads `.Result` or `.Keywords`, gets `{:selector, :template}`.
+  Any other selector that holds `{{` gets that code from the gate.
 
   Each passes through `Cinder.Indexers.Selector.compile/2`, and those that pass run in one worker
   (`Cinder.Indexers.ParserWorker.check_selectors/2`). Each problem adds its code to the copy's
@@ -50,8 +55,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   it runs, and fails its field, when the template is evaluated.
 
   The answer is `Loader.load/1`'s with those codes added. The selector check raised
-  `Loader.fingerprint/0`'s revision to 2, the pattern check to 3 and the layout check, with the
-  features #1671 switched on, to 4, for #1667 to store the answer under.
+  `Loader.fingerprint/0`'s revision to 2, the pattern check to 3, the layout check, with the
+  features #1671 switched on, to 4, and the download selector templates, with the download block
+  #1672 switched on, to 5, for #1667 to store the answer under.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.{BoundedRegex, DotnetDate, Template, Variables}
@@ -160,8 +166,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   # it runs. One that reads `.Result` is `:result_template`, since its value differs per row. Any
   # other is rendered with every search variable blank, then with every one set, and each
   # rendering that is not blank is checked as a selector; a template that does not render under
-  # both is `:template`. Only the rows selector and field selectors render at search time, so a
-  # template anywhere else reaches the gate as it stands, which refuses it as `:template`.
+  # both is `:template`. A download selector renders the same way under the grab's variables.
+  # Only those selectors render, so a template anywhere else reaches the gate as it stands, which
+  # refuses it as `:template`.
   defp expand({:template, selector}, definition) do
     if String.contains?(selector, ".Result") do
       [{:outcome, :result_template}]
@@ -170,12 +177,22 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     end
   end
 
+  defp expand({:download_template, selector}, definition) do
+    renderings(selector, [
+      Variables.download(definition, selector, nil),
+      Variables.download(definition, selector, "x")
+    ])
+  end
+
   defp expand(selector, _definition), do: [selector]
 
-  defp renderings(selector, definition) do
+  defp renderings(selector, %{} = definition),
+    do: renderings(selector, [Variables.blank(definition), Variables.filled(definition)])
+
+  defp renderings(selector, variable_sets) do
     now = DateTime.utc_now()
 
-    [Variables.blank(definition), Variables.filled(definition)]
+    variable_sets
     |> Enum.map(&Template.render(selector, &1, now))
     |> Enum.reduce_while([], fn
       {:ok, rendered}, acc ->
@@ -232,8 +249,10 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
   @doc false
   # The selectors `check/2` runs, in its order, a rows or field selector that holds `{{` as
-  # `{:template, selector}`; public for its test.
-  @spec selectors(map()) :: [String.t() | {:template, String.t()}]
+  # `{:template, selector}` and a download selector that holds one as
+  # `{:download_template, selector}`; public for its test.
+  @spec selectors(map()) ::
+          [String.t() | {:template, String.t()} | {:download_template, String.t()}]
   def selectors(definition) do
     search = if html_search?(definition.search), do: search_selectors(definition.search), else: []
 
@@ -271,8 +290,13 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
   defp download_selectors(nil), do: []
 
+  # A `selectors` entry renders as a template with the grab's variables first (#1672).
   defp download_selectors(download) do
-    Enum.map(download.selectors, & &1.selector) ++
+    Enum.map(download.selectors, fn %{selector: selector} ->
+      if is_binary(selector) and String.contains?(selector, "{{"),
+        do: {:download_template, selector},
+        else: selector
+    end) ++
       [
         download.before && download.before.pathselector && download.before.pathselector.selector,
         download.infohash && download.infohash.hash && download.infohash.hash.selector,

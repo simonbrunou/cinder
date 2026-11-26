@@ -153,10 +153,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     after `Cinder.Download.GrabFailure.check/1` passed, so the link holds the old key and an
     answer to it would be recorded against the new one.
   - `{:error, :not_supported}`, with no request, when the `:indexer_adapters` map names no
-    adapter for the indexer's type, or its adapter has no `fetch_download/3`, as the Cardigann
-    adapter has none until #1672.
-  - Otherwise the adapter's `fetch_download/3` answer: Newznab and Torznab fetch through
-    `Cinder.Acquisition.Indexer.Newznab.Grab`, outside the spacing lease and the backoff gate.
+    adapter for the indexer's type, or its adapter has no `fetch_download/3`.
+  - Otherwise the adapter's `fetch_download/3` answer, outside the spacing lease and the backoff
+    gate: Newznab and Torznab fetch through `Cinder.Acquisition.Indexer.Newznab.Grab`, Cardigann
+    through `Cinder.Acquisition.Indexer.Cardigann.Grab` (#1672).
   """
   @impl true
   def fetch_download(url, _source_origin, opts) do

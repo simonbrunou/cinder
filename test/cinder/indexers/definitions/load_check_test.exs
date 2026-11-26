@@ -387,9 +387,37 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
                LoadCheck.check(bytes(nyaa_like()))
     end
 
-    test "a Torrent9-shaped copy reads not supported for its download block only" do
-      assert {:ok, %{unsupported: [:download]}} =
+    # #1672 runs the download block at grab time.
+    test "a Torrent9-shaped copy with its download block loads" do
+      assert {:ok, %{unsupported: [], download: %{selectors: [_, _]}}} =
                LoadCheck.check(bytes(torrent9_like()))
+    end
+
+    test "a download selector template renders under the grab's variables, a query key included" do
+      selector = ~S|a[data-id="{{ .DownloadUri.Query.id }}"][href^="{{ .DownloadUri.Scheme }}"]|
+
+      copy =
+        put_in(@base, ["download"], %{"selectors" => [%{"selector" => selector}]})
+
+      assert {:ok, %{unsupported: []}} = LoadCheck.check(yaml(copy))
+
+      # A search variable is not a grab variable, and a rendering lexbor refuses is refused.
+      keywords = put_in(copy, ["download", "selectors"], [%{"selector" => "{{ .Keywords }}"}])
+      assert {:ok, %{unsupported: [{:selector, :template}]}} = LoadCheck.check(yaml(keywords))
+
+      refused =
+        put_in(copy, ["download", "selectors"], [
+          %{"selector" => "{{ if .DownloadUri.Query.id }}td:has(){{ else }}td{{ end }}"}
+        ])
+
+      assert {:ok, %{unsupported: [{:selector, :structure}]}} = LoadCheck.check(yaml(refused))
+    end
+
+    test "a download selector template that reads .Result reads as a template" do
+      copy =
+        put_in(@base, ["download"], %{"selectors" => [%{"selector" => "{{ .Result.title }}"}]})
+
+      assert {:ok, %{unsupported: [{:selector, :template}]}} = LoadCheck.check(yaml(copy))
     end
 
     test "the Torrent9-shaped copy without its download block loads" do
