@@ -219,9 +219,11 @@ defmodule Cinder.Health do
   followed by one row per enabled configured indexer, `%{id: "indexer-<id>", label: name,
   adapter: nil, help: nil, status: status, indexer_state: state, checked_at: at}`: `label` is
   the indexer's own name, not a msgid, `state` is its `IndexerState` state and `at` the instant
-  every state was judged at. `status` is `:ok` for a usable indexer,
-  `{:error, {:native_indexer, state, at}}` for one the admin must act on (undecryptable, not
-  supported, credentials rejected), else `{:warning, {:native_indexer, state, at}}`. The rows
+  every state was judged at. `status` is `:ok` for `{:usable, _}`,
+  `{:error, {:native_indexer, state, at}}` for a state the admin must act on
+  (`IndexerState.needs_admin?/1`: undecryptable, not supported, a definition that no longer
+  loads, credentials rejected), else `{:warning, {:native_indexer, state, at}}`, the usable
+  states that carry a definition code included. The rows
   come from the indexer probe's one state read; when that probe times out, only the indexer row
   shows, with its timeout.
   """
@@ -355,8 +357,8 @@ defmodule Cinder.Health do
 
   # A per-indexer row: its label is the indexer's name, never a msgid, and `indexer_state` and
   # `checked_at` hold the state its detail line reads and the instant it was judged at, green
-  # rows included. Red when the admin must act, yellow while it waits itself out, green when
-  # usable.
+  # rows included. Red when `IndexerState.needs_admin?/1` holds, green for `{:usable, _}`, and
+  # yellow for every other state, the usable states that carry a definition code included.
   defp native_row(%{id: id, name: name, state: state}, now) do
     row("indexer-#{id}", name, nil, nil)
     |> Map.merge(%{status: native_status(state, now), indexer_state: state, checked_at: now})
@@ -364,17 +366,11 @@ defmodule Cinder.Health do
 
   defp native_status({:usable, _at}, _now), do: :ok
 
-  defp native_status(state, now)
-       when state == :undecryptable or
-              (is_tuple(state) and
-                 elem(state, 0) in [
-                   :not_supported,
-                   :credentials_rejected,
-                   :definition_no_longer_loads
-                 ]),
-       do: {:error, {:native_indexer, state, now}}
-
-  defp native_status(state, now), do: {:warning, {:native_indexer, state, now}}
+  defp native_status(state, now) do
+    if IndexerState.needs_admin?(state),
+      do: {:error, {:native_indexer, state, now}},
+      else: {:warning, {:native_indexer, state, now}}
+  end
 
   defp dashboard_status(%Target{dashboard: policy} = target) do
     case run_target(target) do

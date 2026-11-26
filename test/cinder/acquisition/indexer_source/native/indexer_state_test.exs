@@ -40,6 +40,29 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStateTest do
     row
   end
 
+  describe "needs_admin?/1" do
+    # Rules 2 to 5 need the admin; `Cinder.Health` shows them red.
+    test "is true for each state of rules 2 to 5 and false for every other state" do
+      for {state, expected} <- [
+            {:disabled, false},
+            {:undecryptable, true},
+            {{:not_supported, :flaresolverr}, true},
+            {{:definition_no_longer_loads, :not_utf8}, true},
+            {{:credentials_rejected, {:code, 101}}, true},
+            {{:limit_backoff, @now}, false},
+            {{:failure_backoff, @now, :timeout, 1}, false},
+            {{:retry_due, @now, :timeout, 1}, false},
+            {{:usable, @now}, false},
+            {{:definition_update_held, :hosts, @now}, false},
+            {{:removed_upstream, @now}, false},
+            {{:replaced_by, "successor.yml", @now}, false},
+            {:never_checked, false}
+          ],
+          IndexerState.needs_admin?(state) != expected,
+          do: flunk("#{inspect(state)} is not #{expected}")
+    end
+  end
+
   describe "list/1" do
     test "lists every configured indexer, disabled and undecryptable included, as plain maps" do
       usenet = indexer!(:newznab, "nzb.example", %{priority: 1})

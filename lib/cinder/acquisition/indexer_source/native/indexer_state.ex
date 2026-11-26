@@ -37,8 +37,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
   10. `:never_checked`: no success since its last `config_version` rise, no failure in a row,
      and no limit.
 
-  Rules 2 to 5 need the admin, and rules 6 to 8 wait themselves out, so red wins over a wait
-  and over a definition code that is not red.
+  Rules 2 to 5 need the admin (`needs_admin?/1`), and rules 6 to 8 wait themselves out, so red
+  wins over a wait and over a definition code that is not red.
   `last_failure` is a reason of `Cinder.Acquisition.IndexerSource.Report` with its code, such as
   `{:http_status, 410}`, `:timeout` or `:limit`.
 
@@ -109,6 +109,20 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
   """
   @spec usable?(entry()) :: boolean()
   def usable?(%{state: state}), do: usable_state?(state)
+
+  @doc """
+  Whether `state` needs the admin: rules 2 to 5 of the moduledoc. On `Cinder.Health`'s row for
+  an enabled indexer these states show red, `{:usable, _}` green, and every other state yellow,
+  the usable states that carry a definition code included.
+  """
+  @spec needs_admin?(state()) :: boolean()
+  def needs_admin?(:undecryptable), do: true
+
+  def needs_admin?({tag, _detail})
+      when tag in [:not_supported, :definition_no_longer_loads, :credentials_rejected],
+      do: true
+
+  def needs_admin?(_state), do: false
 
   defp usable_state?({:usable, _at}), do: true
   defp usable_state?({:definition_update_held, _reason, _at}), do: true
