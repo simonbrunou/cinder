@@ -603,6 +603,12 @@ defmodule CinderWeb.SeriesDetailLive do
         {:error, :conflicting_standard_numbering} ->
           {:error, gettext("This release's episode numbering is ambiguous. Nothing was grabbed.")}
 
+        {:error, :indexer_changed} ->
+          {:error, gettext("This release's indexer changed after the search. Search again.")}
+
+        {:error, :indexer_auth_failed} ->
+          {:error, gettext("The indexer rejected Cinder's credentials. Update them in Settings.")}
+
         {:error, _} ->
           {:error, gettext("Couldn't grab that release.")}
       end

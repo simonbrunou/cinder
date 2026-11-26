@@ -147,6 +147,31 @@ defmodule CinderWeb.LiveHelpersTest do
       Gettext.put_locale(CinderWeb.Gettext, "en")
     end
 
+    # #1656: the two indexer failures `Cinder.Download.GrabFailure` drops a grab on, and the two
+    # codes #1658 holds a book target under, which join no producer list here.
+    test "the indexer failure codes read as their sentences, in English and French" do
+      sentences = [
+        {"indexer_changed",
+         "The indexer this release came from was changed or deleted after the search. Search again.",
+         "L'indexeur d'où vient cette version a été modifié ou supprimé après la recherche. Relancez une recherche."},
+        {"indexer_auth_failed",
+         "The indexer rejected Cinder's credentials for this download. Update them in Settings, then search again.",
+         "L'indexeur a refusé les identifiants de Cinder pour ce téléchargement. Mettez-les à jour dans les Paramètres, puis relancez une recherche."},
+        {"grab_retries_exhausted",
+         "The indexer kept failing to send this download. Search again.",
+         "Après plusieurs tentatives, l'indexeur n'a pas réussi à envoyer ce téléchargement. Relancez une recherche."},
+        {"bad_download_file", "The indexer sent a file that is neither an NZB nor a torrent.",
+         "L'indexeur a envoyé un fichier qui n'est ni un NZB ni un torrent."}
+      ]
+
+      for {code, english, _french} <- sentences, do: assert(book_hold_reason(code) == english)
+
+      Gettext.put_locale(CinderWeb.Gettext, "fr")
+      for {code, _english, french} <- sentences, do: assert(book_hold_reason(code) == french)
+    after
+      Gettext.put_locale(CinderWeb.Gettext, "en")
+    end
+
     test "a stored code and detail reads as the code's sentence followed by the detail" do
       assert book_hold_reason("download_error: Paused on duplicate") ==
                "The download client reported that the download failed. Details: Paused on duplicate"

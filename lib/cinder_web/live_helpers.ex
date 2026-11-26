@@ -231,8 +231,10 @@ defmodule CinderWeb.LiveHelpers do
   the blocked file inside one sentence, with no detail after it. The
   known codes are the producers' lists (`Cinder.Download.Watch.failure_codes/0`,
   `Cinder.Download.BookPoller.permanent_import_errors/0` and `retried_import_errors/0`,
-  `Cinder.Download.permanent_submission_errors/0`) and the watch's `stalled` and
-  `blocked_content`, in the form `hold_target/5` stores: an atom's name, or the inspected
+  `Cinder.Download.permanent_submission_errors/0`), the watch's `stalled` and
+  `blocked_content`, the indexer failures `indexer_changed` and `indexer_auth_failed`
+  (`Cinder.Download.GrabFailure`), and `grab_retries_exhausted` and `bad_download_file`, in the
+  form `hold_target/5` stores: an atom's name, or the inspected
   `{:unexpected_destination_type, type}` refusal. Anything else (a row from before #733 reading
   `download_failed`, a bare client message, another inspected term) is shown as stored, and `nil`
   reads as an empty string.
@@ -373,6 +375,26 @@ defmodule CinderWeb.LiveHelpers do
     do: gettext("Cinder can no longer read the download link it saved for this release.")
 
   defp hold_sentence("add_rejected"), do: gettext("The download client refused this release.")
+
+  # `Cinder.Download.GrabFailure`'s two indexer failures, then the codes #1658 holds a book under
+  # when its indexer keeps failing to send the file or sends one of the wrong kind.
+  defp hold_sentence("indexer_changed"),
+    do:
+      gettext(
+        "The indexer this release came from was changed or deleted after the search. Search again."
+      )
+
+  defp hold_sentence("indexer_auth_failed"),
+    do:
+      gettext(
+        "The indexer rejected Cinder's credentials for this download. Update them in Settings, then search again."
+      )
+
+  defp hold_sentence("grab_retries_exhausted"),
+    do: gettext("The indexer kept failing to send this download. Search again.")
+
+  defp hold_sentence("bad_download_file"),
+    do: gettext("The indexer sent a file that is neither an NZB nor a torrent.")
 
   # `Cinder.Download.BookPoller.retried_import_errors/0`
   defp hold_sentence("format_mismatch"),

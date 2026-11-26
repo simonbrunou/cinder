@@ -677,6 +677,61 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :upgrading
   end
 
+  # #1656: a native result from configured indexer 424242, which does not exist, is dropped as
+  # `:indexer_changed` before the client's add/2; a client whose fetch the indexer refused answers
+  # `:indexer_auth_failed`.
+  for {reason, source, flash} <- [
+        {:indexer_changed, "native",
+         "This release's indexer changed after the search. Search again."},
+        {:indexer_auth_failed, "prowlarr",
+         "The indexer rejected Cinder's credentials. Update them in Settings."}
+      ] do
+    @source source
+    @flash flash
+
+    test "a manual grab that fails with #{reason} shows its own flash line", %{conn: conn} do
+      movie =
+        movie_fixture(%{
+          title: "Metropolis",
+          status: :available,
+          imdb_id: "tt1",
+          file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+        })
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb ->
+        {:ok,
+         [
+           %{
+             title: "Better 1080p",
+             size: 5_000_000_000,
+             protocol: :torrent,
+             download_url: "u",
+             indexer_source: @source,
+             indexer_id: 424_242,
+             credentials_version: 1
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:error, :indexer_auth_failed}
+      end)
+
+      stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+
+      lv |> element("button", "Find a better match") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#ms-movie-#{movie.id}", "Better 1080p")
+      lv |> element("#ms-movie-#{movie.id} button", "Grab") |> render_click()
+      lv |> element("button", "Replace file") |> render_click()
+
+      assert has_element?(lv, "#flash-error", @flash)
+      refute has_element?(lv, "#flash-error", "Couldn't grab that release.")
+    end
+  end
+
   # The anime movie panel renders the release judge's rows. The anime policy judges audio from
   # release evidence, so no row carries a language badge.
   test "an anime movie's panel lists its releases as rows", %{conn: conn} do

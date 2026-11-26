@@ -8160,3 +8160,35 @@ msgstr "limite atteinte, nouvelle recherche le %{date} à %{time}"
 #, elixir-autogen, elixir-format
 msgid "waiting until %{date}, %{time}"
 msgstr "en attente jusqu'au %{date} à %{time}"
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer kept failing to send this download. Search again."
+msgstr "Après plusieurs tentatives, l'indexeur n'a pas réussi à envoyer ce téléchargement. Relancez une recherche."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer rejected Cinder's credentials for this download. Update them in Settings, then search again."
+msgstr "L'indexeur a refusé les identifiants de Cinder pour ce téléchargement. Mettez-les à jour dans les Paramètres, puis relancez une recherche."
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer rejected Cinder's credentials. Update them in Settings."
+msgstr "L'indexeur a refusé les identifiants de Cinder. Mettez-les à jour dans les Paramètres."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer sent a file that is neither an NZB nor a torrent."
+msgstr "L'indexeur a envoyé un fichier qui n'est ni un NZB ni un torrent."
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer this release came from was changed or deleted after the search. Search again."
+msgstr "L'indexeur d'où vient cette version a été modifié ou supprimé après la recherche. Relancez une recherche."
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "This release's indexer changed after the search. Search again."
+msgstr "L'indexeur de cette version a changé après la recherche. Relancez une recherche."

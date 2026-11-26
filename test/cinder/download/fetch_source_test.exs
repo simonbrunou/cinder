@@ -10,8 +10,10 @@ defmodule Cinder.Download.FetchSourceTest do
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.Acquisition.Release
+  alias Cinder.ConfigCase
   alias Cinder.Download
   alias Cinder.Download.{ClientMock, Intent}
+  alias Cinder.Indexers
 
   setup :set_mox_global
   setup :verify_on_exit!
@@ -63,7 +65,7 @@ defmodule Cinder.Download.FetchSourceTest do
     @link "https://indexer.example/dl/1.torrent"
     @origin "https://indexer.example"
 
-    defp reserve(movie, source) do
+    defp reserve(movie, source, indexer_id \\ 7, credentials_version \\ nil) do
       Download.reserve_intent(%{
         kind: :movie,
         target_id: movie.id,
@@ -74,8 +76,9 @@ defmodule Cinder.Download.FetchSourceTest do
           download_url: @link,
           download_url_origin: @origin,
           protocol: :torrent,
-          indexer_id: 7,
-          indexer_source: source
+          indexer_id: indexer_id,
+          indexer_source: source,
+          credentials_version: credentials_version
         }
       })
     end
@@ -115,10 +118,21 @@ defmodule Cinder.Download.FetchSourceTest do
       assert Repo.reload!(movie).download_id == "remote-1"
     end
 
+    # A native intent fetches only through a configured indexer at its credentials version
+    # (#1656), and with Native selected its failed fetch is not a source switch in flight.
     test "gets a fetch: function that reaches Native's fetch_download/3 for a native intent" do
       test_pid = self()
       movie = movie_fixture(%{status: :searching})
-      assert {:ok, intent} = reserve(movie, "native")
+      ConfigCase.put_env(:indexer_source, Native)
+
+      {:ok, row} =
+        Indexers.create(
+          nil,
+          %{name: "Native", type: :newznab, base_url: "https://n.example", api_path: "/api"},
+          %{"api_key" => "nzb-key-0123456789"}
+        )
+
+      assert {:ok, intent} = reserve(movie, "native", row.id, row.credentials_version)
       assert intent.release["indexer_source"] == "native"
 
       stub(ClientMock, :find_by_operation_key, fn _key -> :not_found end)

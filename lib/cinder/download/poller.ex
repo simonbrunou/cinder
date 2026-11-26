@@ -100,12 +100,14 @@ defmodule Cinder.Download.Poller do
       #   :intent_backoff       the movie's download intent is waiting out a retry delay
       #   :download_intent_busy another intent for the movie appeared after start/1 looked
       #   :intent_completed     the intent start/1 picked up was gone when it acted on it
+      #   :indexer_changed      the grab's indexer changed after the search; dropped (#1656)
       {:error, reason}
       when reason in [
              :stale_status,
              :intent_backoff,
              :download_intent_busy,
-             :intent_completed
+             :intent_completed,
+             :indexer_changed
            ] ->
         :ok
 

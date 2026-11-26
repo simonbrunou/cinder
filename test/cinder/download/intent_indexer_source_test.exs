@@ -17,6 +17,7 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
   alias Cinder.Catalog.BlockedRelease
   alias Cinder.Download
   alias Cinder.Download.{ClientMock, Intent}
+  alias Cinder.Indexers
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -87,8 +88,8 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
            {nil, nil, nil}, true},
           {"a native copy of another credentials version is busy", {"native", 4, 1},
            {"native", 4, 2}, false},
-          {"a native copy of the same credentials version adopts", {"native", 4, 2},
-           {"native", 4, 2}, true},
+          {"a native copy of the same credentials version adopts", {"native", :row, :row},
+           {"native", :row, :row}, true},
           {"a Prowlarr copy of another credentials version adopts", {"prowlarr", 4, 1},
            {"prowlarr", 4, 2}, true}
         ] do
@@ -98,8 +99,9 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
       @outcome if adopts, do: :adopts, else: :busy
 
       test name, %{movie: movie} do
-        {:ok, _intent} = reserve(:movie, movie.id, [], release(@stored))
-        assert_grab(movie, release(@offered), @outcome)
+        row = configured_indexer!()
+        {:ok, _intent} = reserve(:movie, movie.id, [], release(@stored, row))
+        assert_grab(movie, release(@offered, row), @outcome)
       end
     end
   end
@@ -136,26 +138,25 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
            {nil, 1, nil}, {"prowlarr", 1}},
           {"with the Prowlarr source writes a row with that source and its id",
            {"prowlarr", 1, nil}, {"prowlarr", 1}},
-          {"with a native source writes a row with that source and its id", {"native", 1, nil},
-           {"native", 1}},
+          {"with a native source writes a row with that source and its id",
+           {"native", :row, :row}, {"native", :row}},
           {"with no id writes a row with no source and no id", {nil, nil, nil}, {nil, nil}},
           {"with a source and no id writes a row with no source and no id",
-           {"prowlarr", nil, nil}, {nil, nil}},
-          {"with a native source and no id writes a row with no source and no id",
-           {"native", nil, nil}, {nil, nil}}
+           {"prowlarr", nil, nil}, {nil, nil}}
         ] do
       @stored stored
       @row row
 
       test name, %{series: series, episode: episode} do
-        {:ok, intent} = reserve(:episode, episode.id, [episode.id], release(@stored))
+        row = configured_indexer!()
+        {:ok, intent} = reserve(:episode, episode.id, [episode.id], release(@stored, row))
         expect(ClientMock, :find_by_operation_key, fn _key -> :not_found end)
         expect(ClientMock, :add, fn _release, _opts -> {:error, :bad_torrent} end)
 
         assert {:error, :bad_torrent} = Download.reconcile_intent(intent)
 
         {source, id} = @row
-        assert blocked(series.id) == [{@title, "bad_torrent", source, id}]
+        assert blocked(series.id) == [{@title, "bad_torrent", source, resolve(id, row.id)}]
       end
     end
 
@@ -180,6 +181,26 @@ defmodule Cinder.Download.IntentIndexerSourceTest do
       assert %Intent{status: :reserved, attempt_count: 1} = Repo.get(Intent, intent.id)
     end
   end
+
+  # A native intent fetches only through a configured indexer at its credentials version, and one
+  # with no id never reaches the client's add/2 (#1656, `Cinder.Download.IndexerChangeTest`). A
+  # row's `:row` id or version reads as this configured indexer's.
+  defp configured_indexer! do
+    {:ok, row} =
+      Indexers.create(
+        nil,
+        %{name: "Native", type: :newznab, base_url: "https://n.example", api_path: "/api"},
+        %{"api_key" => "nzb-key-0123456789"}
+      )
+
+    row
+  end
+
+  defp release({source, id, version}, row),
+    do: release({source, resolve(id, row.id), resolve(version, row.credentials_version)})
+
+  defp resolve(:row, value), do: value
+  defp resolve(given, _value), do: given
 
   defp release({source, id, credentials_version}) do
     %Release{

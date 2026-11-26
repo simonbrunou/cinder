@@ -7803,3 +7803,35 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "waiting until %{date}, %{time}"
 msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer kept failing to send this download. Search again."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer rejected Cinder's credentials for this download. Update them in Settings, then search again."
+msgstr ""
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer rejected Cinder's credentials. Update them in Settings."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer sent a file that is neither an NZB nor a torrent."
+msgstr ""
+
+#: lib/cinder_web/live_helpers.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer this release came from was changed or deleted after the search. Search again."
+msgstr ""
+
+#: lib/cinder_web/live/movie_detail_live.ex
+#: lib/cinder_web/live/series_detail_live.ex
+#, elixir-autogen, elixir-format
+msgid "This release's indexer changed after the search. Search again."
+msgstr ""

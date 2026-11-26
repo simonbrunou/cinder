@@ -1892,6 +1892,55 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert grab.download_id == "hash-new"
   end
 
+  # #1656: a native result from configured indexer 424242, which does not exist, is dropped as
+  # `:indexer_changed` before the client's add/2; a client whose fetch the indexer refused answers
+  # `:indexer_auth_failed`.
+  for {reason, source, flash} <- [
+        {:indexer_changed, "native",
+         "This release's indexer changed after the search. Search again."},
+        {:indexer_auth_failed, "prowlarr",
+         "The indexer rejected Cinder's credentials. Update them in Settings."}
+      ] do
+    @source source
+    @flash flash
+
+    test "a manual TV grab that fails with #{reason} shows its own flash line", %{conn: conn} do
+      series = series_with_wanted_episode(search_attempts: 0)
+      season = first_season(series.id)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+        {:ok,
+         [
+           %{
+             title: "Test Show S01E01 1080p WEB-DL GRP",
+             size: 2_000_000_000,
+             download_url: "u",
+             indexer_source: @source,
+             indexer_id: 424_242,
+             credentials_version: 1
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:error, :indexer_auth_failed}
+      end)
+
+      stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+      {:ok, lv, _html} = live_series(conn, series)
+
+      lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#ms-season-#{season.id}", "Test Show S01E01")
+      lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+
+      assert has_element?(lv, "#flash-error", @flash)
+      refute has_element?(lv, "#flash-error", "Couldn't grab that release.")
+      assert Repo.all(Cinder.Catalog.Grab) == []
+    end
+  end
+
   # #836: a standard season row's verdict is the sweep's cover taking that release alone. A pack is
   # banded by the still-wanted episodes it covers, then by the season's episode count. A 20-episode
   # season with 10 aired, 8 of them imported, under a 0.5 to 2 GB band: the cover takes a lone pack

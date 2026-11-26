@@ -26,6 +26,7 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
   alias Cinder.Catalog.{BlockedRelease, Grab}
   alias Cinder.Download
   alias Cinder.Download.{Intent, TvPoller}
+  alias Cinder.Indexers
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -83,36 +84,53 @@ defmodule Cinder.Download.RefusedReleaseIndexerTest do
       assert grabbed() == ["hash-shared"]
     end
 
-    # #1645: Prowlarr's indexer 7 and a native indexer 7 are two sites, so the search keeps one
-    # copy of a link for each, and a copy with no id folds only into a copy from its own source.
-    for {name, native_id} <- [{"the same id", 7}, {"no id", nil}] do
-      @native_id native_id
+    # #1645: Prowlarr's indexer and a native indexer with the same id are two sites, so the search
+    # keeps one copy of a link for each, and a copy with no id folds only into a copy from its own
+    # source. The native copy is the one picked. A native copy from a configured indexer at its
+    # current credentials version is grabbed; one with no id is dropped as `:indexer_changed`
+    # before the client's add/2 (#1656), so the client's lookup, which comes first, reads the
+    # intent.
+    for {name, same_id?} <- [{"the same id", true}, {"no id", false}] do
+      @same_id? same_id?
 
-      test "#{profile}: one link from a blocked Prowlarr indexer and a native one with #{name} is grabbed" do
+      test "#{profile}: one link from a blocked Prowlarr indexer and a native one with #{name} is picked" do
+        {:ok, row} =
+          Indexers.create(
+            nil,
+            %{name: "Native", type: :newznab, base_url: "https://n.example", api_path: "/api"},
+            %{"api_key" => "nzb-key-0123456789"}
+          )
+
+        native_id = if @same_id?, do: row.id
         %{series: series} = wanted_episodes([1], @profile)
-        :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", 7})
+        :ok = Catalog.block_series_release(series.id, @title, :bad_torrent, {"prowlarr", row.id})
 
         stub_results([
-          Map.put(result(@title, "shared", 7, 20), :indexer_source, "prowlarr"),
-          Map.put(result(@title, "shared", @native_id, 10), :indexer_source, "native")
+          Map.put(result(@title, "shared", row.id, 20), :indexer_source, "prowlarr"),
+          result(@title, "shared", native_id, 10)
+          |> Map.merge(%{indexer_source: "native", credentials_version: row.credentials_version})
         ])
 
         stub_client(%{})
         test_pid = self()
 
-        # The intent is gone once the grab records, so the client reads it while it adds.
-        stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
-          send(test_pid, {:add, release.download_url})
+        stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key ->
           send(test_pid, {:intents, Repo.all(Intent)})
-          {:ok, "hash-#{release.download_url}"}
+          :not_found
         end)
 
         poll_times(1)
 
-        assert added() == ["shared"]
         assert_received {:intents, [%Intent{release: stored}]}
-        assert {stored["indexer_source"], stored["indexer_id"]} == {"native", @native_id}
-        assert grabbed() == ["hash-shared"]
+        assert {stored["indexer_source"], stored["indexer_id"]} == {"native", native_id}
+
+        if @same_id? do
+          assert added() == ["shared"]
+          assert grabbed() == ["hash-shared"]
+        else
+          assert added() == []
+          assert grabbed() == []
+        end
       end
     end
   end

@@ -176,6 +176,25 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute render(lv) =~ "download_error"
     end
 
+    # #1656: two codes #1658 holds a book target under, which no code stores yet.
+    for {reason, sentence} <- [
+          grab_retries_exhausted: "The indexer kept failing to send this download. Search again.",
+          bad_download_file: "The indexer sent a file that is neither an NZB nor a torrent."
+        ] do
+      @reason reason
+      @sentence sentence
+
+      test "a target held on #{reason} shows its sentence", %{conn: conn} do
+        {target, _work} = ebook_target()
+        {:ok, held} = Books.hold_target(target, @reason)
+
+        {:ok, lv, _html} = live(conn, ~p"/books/#{held.work_id}")
+
+        assert has_element?(lv, "#book-target-hold-reason-ebook", @sentence)
+        refute has_element?(lv, "#book-target-hold-reason-ebook", Atom.to_string(@reason))
+      end
+    end
+
     test "a target held once the retry budget ran out shows the import error's sentence", %{
       conn: conn
     } do
@@ -380,6 +399,54 @@ defmodule CinderWeb.BookDetailLiveTest do
       refute html =~ "bad_torrent"
       assert has_element?(lv, "#book-target-state-ebook", "Needs attention")
       refute Books.Grabs.for_target(target.id)
+    end
+
+    # #1656: a native result from configured indexer 424242, which does not exist, is dropped as
+    # `indexer_changed` before the client's add/2; a client whose fetch the indexer refused
+    # answers `indexer_auth_failed`. Neither holds the release's title as blocked.
+    for {code, source, sentence} <- [
+          {"indexer_changed", "native",
+           "The indexer this release came from was changed or deleted after the search. Search again."},
+          {"indexer_auth_failed", "prowlarr",
+           "The indexer rejected Cinder&#39;s credentials for this download. Update them in Settings, then search again."}
+        ] do
+      @code code
+      @source source
+      @sentence sentence
+
+      test "a grab that fails with #{code} holds the target and the flash shows its sentence",
+           %{conn: conn} do
+        {target, _work} = ebook_target(title: "The Dispossessed")
+
+        stub_indexer([
+          indexer_result("Ursula K. Le Guin - The Dispossessed (EPUB)", %{
+            indexer_source: @source,
+            indexer_id: 424_242,
+            credentials_version: 1
+          })
+        ])
+
+        stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+        stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+          {:error, :indexer_auth_failed}
+        end)
+
+        {:ok, lv, _html} = live(conn, ~p"/books/#{target.work_id}")
+
+        lv |> element("button[phx-value-target_id='#{target.id}']") |> render_click()
+        render_async(lv)
+
+        panel = "#ms-book-#{target.id}"
+        lv |> element("#{panel} button[phx-value-index='0']", "Grab") |> render_click()
+
+        # The panel forwards the grab to the parent as a message; rendering waits for it.
+        render(lv)
+        assert %{status: :held, hold_reason: @code} = Books.get_target(target.id)
+        assert lv |> element("#flash-error") |> render() =~ @sentence
+        assert lv |> element("#book-target-hold-reason-ebook") |> render() =~ @sentence
+        assert Books.blocked_release_titles(target.id) == []
+      end
     end
 
     test "a client hiccup (non-permanent error) leaves the target monitored with generic copy",

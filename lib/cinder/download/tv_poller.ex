@@ -848,11 +848,20 @@ defmodule Cinder.Download.TvPoller do
   # failure returns `[]`, so those episodes back off normally. That includes a release the client
   # refused for good, which `Download` has already tried to block for the series (#1492): the bump
   # writes the `updated_at` the search backoff reads, and the block is best-effort, so the search
-  # budget still bounds re-picking the release in a sweep that grabs and holds nothing.
+  # budget still bounds re-picking the release in a sweep that grabs and holds nothing. A grab
+  # dropped because its indexer changed after the search returns the ids too, as a disk skip does:
+  # nothing about the release failed, so this sweep spends no search attempt on them (#1656).
   defp grab_release(release, episode_ids) do
     if Download.grab_space_available?(release.size) do
       case Download.grab_episodes(release, episode_ids) do
         {:ok, _grab} ->
+          episode_ids
+
+        {:error, :indexer_changed} ->
+          Logger.info(
+            "tv grab dropped (#{HTTPPolicy.sanitize_log(release.title)}): its indexer changed"
+          )
+
           episode_ids
 
         failure ->

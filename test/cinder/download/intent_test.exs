@@ -665,6 +665,9 @@ defmodule Cinder.Download.IntentTest do
     movie = movie_fixture(%{status: :searching})
     link = "http://prowlarr:9696/1/download?apikey=k&link=abc"
     ConfigCase.put_config(Prowlarr, base_url: "http://user:pw@prowlarr:9696")
+    # The selected source, so the failed fetch below is retried rather than dropped as a source
+    # switch in flight (`Cinder.Download.GrabFailure.guard_fetch/2`, #1656).
+    ConfigCase.put_env(:indexer_source, Prowlarr)
 
     ConfigCase.put_config(Transmission,
       url_resolver: fn host ->

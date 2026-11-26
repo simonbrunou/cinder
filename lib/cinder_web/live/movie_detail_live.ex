@@ -253,6 +253,12 @@ defmodule CinderWeb.MovieDetailLive do
   defp grab_flash({:error, :not_grabbable}),
     do: {:error, gettext("That movie can't be grabbed right now.")}
 
+  defp grab_flash({:error, :indexer_changed}),
+    do: {:error, gettext("This release's indexer changed after the search. Search again.")}
+
+  defp grab_flash({:error, :indexer_auth_failed}),
+    do: {:error, gettext("The indexer rejected Cinder's credentials. Update them in Settings.")}
+
   defp grab_flash({:error, _reason}), do: {:error, gettext("Couldn't grab that release.")}
 
   @impl true

@@ -26,18 +26,10 @@ defmodule Cinder.Download do
 
   alias Cinder.Books.{BookGrab, BookTarget}
   alias Cinder.Catalog.{Grab, MediaProfile, Movie, MovieLifecycle}
-  alias Cinder.Download.{GrabReserve, Intent, IntentEpisode}
+  alias Cinder.Download.{GrabFailure, GrabReserve, Intent, IntentEpisode, PollerProgress}
 
   @retry_base_seconds 5
   @retry_max_seconds 300
-  @permanent_submission_errors [
-    :unsupported_download_url,
-    :bad_torrent,
-    :invalid_intent_release,
-    :add_rejected
-  ]
-  @refused_release_errors @permanent_submission_errors -- [:invalid_intent_release]
-
   # The indexer source that fetches a link, by the source name an intent records.
   @fetch_sources %{"prowlarr" => IndexerSource.Prowlarr, "native" => IndexerSource.Native}
 
@@ -55,7 +47,7 @@ defmodule Cinder.Download do
   `CinderWeb.LiveHelpers.book_hold_reason/1` words each one.
   """
   @spec permanent_submission_errors() :: [atom()]
-  def permanent_submission_errors, do: @permanent_submission_errors
+  def permanent_submission_errors, do: GrabFailure.permanent()
 
   @doc "Reserves a durable downloader operation before any external side effect."
   def reserve_intent(%{release: %Release{download_url: url} = release} = attrs)
@@ -483,7 +475,14 @@ defmodule Cinder.Download do
     # itself, such as when this pass stopped short on a raise or the intent's retry came due after
     # it ran, `start/1` does not return an `:invalid_intent_release` for it either: the intent is
     # dropped and the call goes on as for a movie with no intent (#1564).
-    Enum.each(intents, &reconcile_intent/1)
+    # Each intent whose reconcile returns stamps the tick's progress, so a run of slow grabs in
+    # this one poller unit does not read as a stuck poller on `/healthz` (#1656). One grab slower
+    # than the stuck limit still does, and a raise ends the unit before its stamp.
+    Enum.each(intents, fn intent ->
+      reconcile_intent(intent)
+      PollerProgress.beat()
+    end)
+
     :ok
   end
 
@@ -788,7 +787,10 @@ defmodule Cinder.Download do
 
   # The client fetches the link only through `fetch:`, which reaches the source the intent recorded
   # (#1650). An intent whose source maps to no module makes no fetch and no add: its reason goes to
-  # `schedule_retry/2`, as a client error outside `@permanent_submission_errors` does.
+  # `schedule_retry/2`, as a client error `GrabFailure.drops?/1` keeps does. A native intent whose
+  # indexer changed since the search makes no fetch either, and is dropped (`GrabFailure.check/1`,
+  # #1656). This runs only once the client's lookup answered `:not_found`, so a job the client
+  # already holds is adopted first.
   defp add_decrypted_release(intent, client, download_url) do
     release = %Release{
       title: intent.release["title"],
@@ -798,16 +800,16 @@ defmodule Cinder.Download do
     }
 
     with {:ok, module, provenance} <- fetch_source(intent),
-         fetch = fetch_function(module, provenance),
+         :ok <- GrabFailure.check(provenance),
+         fetch = GrabFailure.guard_fetch(fetch_function(module, provenance), module),
          {:ok, remote_id} <-
            client.add(release, operation_key: intent.operation_key, fetch: fetch) do
       store_remote_id(intent, remote_id)
     else
-      {:error, reason} when reason in @permanent_submission_errors ->
-        abandon_reserved(intent, reason)
-
       {:error, reason} ->
-        schedule_retry(intent, reason)
+        if GrabFailure.drops?(reason),
+          do: abandon_reserved(intent, reason),
+          else: schedule_retry(intent, reason)
     end
   end
 
@@ -960,6 +962,15 @@ defmodule Cinder.Download do
   # `:invalid_intent_release` of a movie intent an earlier grab stored: it goes on as for a movie
   # with no intent (#1564).
   #
+  # The two indexer failures `GrabFailure.drops?/1` adds, `:indexer_changed` and
+  # `:indexer_auth_failed`, drop the reservation here too (#1656). Neither blocks a TV release nor
+  # a held book target's release title. The movie search pass takes no strike for an
+  # `:indexer_changed` its grab call returns, and the TV sweep spends no search attempt on it in
+  # that sweep.
+  # An `:indexer_auth_failed` that a grab call returns counts there as any failed grab does: one
+  # strike, never a park on first sight. `start/1` goes on as for a movie with no intent after a
+  # stored intent's `:indexer_changed`, as after its `:invalid_intent_release`.
+  #
   # For a book that report is not enough, and the difference is the missing search sweep.
   # `reconcile_pending_intents/1` discards the report, and a movie or episode it leaves in its
   # pre-grab state is re-derived by its poller's next search pass; a book
@@ -972,7 +983,8 @@ defmodule Cinder.Download do
          reason
        ) do
     Logger.warning("book target #{target_id} submission rejected: #{inspect(reason)}")
-    hold_book_target(target_id, reason, release["title"], replace?(intent))
+    title = if GrabFailure.blocks_book_release?(reason), do: release["title"]
+    hold_book_target(target_id, reason, title, replace?(intent))
     delete_intent(intent)
     {:error, reason}
   end
@@ -988,7 +1000,7 @@ defmodule Cinder.Download do
   # matches the title from every indexer.
   defp abandon_reserved(%Intent{kind: kind} = intent, reason)
        when kind in [:episode, :season_pack] do
-    if reason in @refused_release_errors and not operator_initiated?(intent) do
+    if GrabFailure.refused_release?(reason) and not operator_initiated?(intent) do
       series_id = fn -> intent_series_id(intent) end
       Catalog.block_series_release(series_id, release_title(intent), reason, block_scope(intent))
     end
@@ -1281,8 +1293,11 @@ defmodule Cinder.Download do
 
   A movie with a stored download intent hands it to `reconcile_intent/1` instead of searching, and
   returns its result. When that intent's saved download link cannot be read back
-  (`:invalid_intent_release`), the intent is dropped and the call goes on as for a movie with no
-  intent, once: an `:invalid_intent_release` from the grab that search makes is returned (#1564).
+  (`:invalid_intent_release`), or its grab is dropped as `:indexer_changed` (#1656: its native
+  indexer changed after the search, or its recorded source is no longer the selected one and its
+  fetch failed with an error outside `permanent_submission_errors/0`,
+  `Cinder.Download.GrabFailure`), the intent is dropped and the call goes on as for a movie with
+  no intent, once: either reason from the grab that search makes is returned (#1564).
   """
   def start(%Movie{} = movie) do
     case Repo.get_by(Intent, kind: :movie, target_id: movie.id) do
@@ -1293,8 +1308,11 @@ defmodule Cinder.Download do
 
   defp start_from_intent(movie, intent) do
     case reconcile_intent(intent) do
-      {:error, :invalid_intent_release} -> do_start(movie)
-      result -> result
+      {:error, reason} when reason in [:invalid_intent_release, :indexer_changed] ->
+        do_start(movie)
+
+      result ->
+        result
     end
   end
 
