@@ -8776,11 +8776,6 @@ msgstr "Les recherches passent par Prowlarr. Les indexeurs ci-dessous peuvent qu
 msgid "Add your indexers, or connect Prowlarr."
 msgstr "Ajoutez vos indexeurs, ou connectez Prowlarr."
 
-#: lib/cinder_web/components/settings_components.ex
-#, elixir-autogen, elixir-format
-msgid "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
-msgstr "Cinder interroge vos indexeurs lui-même (Intégré), ou passe par Prowlarr si vous l’utilisez déjà. Pour Intégré, ajoutez chaque indexeur ci-dessous ; Cinder teste chaque indexeur activé quand vous l’ajoutez. Pour Prowlarr, ajoutez-y vos indexeurs, puis copiez son URL et sa clé API depuis Paramètres > Général."
-
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen, elixir-format
 msgid "No usable indexer uses the same protocol as a working download client."
@@ -10234,3 +10229,8 @@ msgstr "Définir l'URL de FlareSolverr"
 #, elixir-autogen, elixir-format
 msgid "Use FlareSolverr"
 msgstr "Utiliser FlareSolverr"
+
+#: lib/cinder_web/components/settings_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, choose it above, add your indexers there, then copy its URL and API key from Settings > General."
+msgstr "Cinder interroge vos indexeurs lui-même (Intégré), ou passe par Prowlarr si vous l’utilisez déjà. Pour Intégré, ajoutez chaque indexeur ci-dessous ; Cinder teste chaque indexeur activé quand vous l’ajoutez. Pour Prowlarr, choisissez-le ci-dessus, ajoutez-y vos indexeurs, puis copiez son URL et sa clé API depuis Paramètres > Général."

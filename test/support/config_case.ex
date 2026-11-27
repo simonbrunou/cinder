@@ -1,8 +1,8 @@
 defmodule Cinder.ConfigCase do
   @moduledoc """
   Helper for tests that temporarily override configuration and restore it on exit: a `:cinder`
-  application-env key, and the media-server choice (the stored type row, `PLEX_URL`, the
-  overlay's bootstrap impl).
+  application-env key, the media-server choice (the stored type row, `PLEX_URL`, the overlay's
+  bootstrap impl), and the `PROWLARR_URL` and `PROWLARR_API_KEY` variables.
 
   Test functions within a module run sequentially (ExUnit only parallelizes across
   async modules), so an override scoped to the test that owns the config key can't
@@ -114,14 +114,28 @@ defmodule Cinder.ConfigCase do
   process-global and picks Plex while no media server type is stored, so only an `async: false`
   module sets it.
   """
-  def put_plex_url(url) do
-    prior = System.get_env("PLEX_URL")
-    ExUnit.Callbacks.on_exit(fn -> set_plex_url(prior) end)
-    set_plex_url(url)
+  def put_plex_url(url), do: put_os_env_restored("PLEX_URL", url)
+
+  @doc """
+  Sets `PROWLARR_URL` and `PROWLARR_API_KEY` to `url` and `api_key`, unsetting each one given
+  `nil`, and restores their prior values on exit. With no listed source stored, a non-blank value
+  makes Prowlarr the source the "Indexer source" select shows (`Cinder.Settings.indexer_source/0`);
+  with neither variable set and not blank, that is Built-in. The variables are process-global, so
+  only an `async: false` module sets them.
+  """
+  def put_prowlarr_env(url, api_key) do
+    put_os_env_restored("PROWLARR_URL", url)
+    put_os_env_restored("PROWLARR_API_KEY", api_key)
   end
 
-  defp set_plex_url(nil), do: System.delete_env("PLEX_URL")
-  defp set_plex_url(url), do: System.put_env("PLEX_URL", url)
+  defp put_os_env_restored(name, value) do
+    prior = System.get_env(name)
+    ExUnit.Callbacks.on_exit(fn -> set_os_env(name, prior) end)
+    set_os_env(name, value)
+  end
+
+  defp set_os_env(name, nil), do: System.delete_env(name)
+  defp set_os_env(name, value), do: System.put_env(name, value)
 
   @doc """
   Makes `module` the media-server impl the env overlay captured at boot (`Overlay.base/1`), the

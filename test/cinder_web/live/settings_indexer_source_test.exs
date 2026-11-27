@@ -55,6 +55,7 @@ defmodule CinderWeb.SettingsIndexerSourceTest do
   describe "the select" do
     test "is the first control of the Indexers group, labelled, with Prowlarr and Built-in",
          %{conn: conn} do
+      ConfigCase.put_prowlarr_env(nil, nil)
       {:ok, lv, _html} = live(conn, ~p"/settings")
 
       assert has_element?(
@@ -71,7 +72,16 @@ defmodule CinderWeb.SettingsIndexerSourceTest do
       assert has_element?(lv, ~s(label[for="indexer_source"]), "Indexer source")
       assert has_element?(lv, ~s(#indexer_source option[value="prowlarr"]), "Prowlarr")
       assert has_element?(lv, ~s(#indexer_source option[value="native"]), "Built-in")
+      # #1689: with no stored source and no Prowlarr env var, a fresh install shows Built-in.
+      assert has_element?(lv, ~s(#indexer_source option[value="native"][selected]))
+    end
+
+    test "shows a stored Prowlarr", %{conn: conn} do
+      :ok = Settings.save(%{"indexer_source" => "prowlarr"})
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+
       assert has_element?(lv, ~s(#indexer_source option[value="prowlarr"][selected]))
+      refute has_element?(lv, ~s(#indexer_source option[value="native"][selected]))
     end
 
     test "shows the stored source", %{conn: conn} do
@@ -131,6 +141,8 @@ defmodule CinderWeb.SettingsIndexerSourceTest do
     end
 
     test "is refused with no stored source while the bootstrap is Prowlarr", %{conn: conn} do
+      # Since #1689 a Prowlarr variable makes the bootstrap Prowlarr; with none it is Built-in.
+      ConfigCase.put_prowlarr_env("http://prowlarr:9696", nil)
       failing_indexer!()
       {:ok, lv, _html} = live(conn, ~p"/settings")
 

@@ -120,8 +120,19 @@ defmodule CinderWeb.SetupLive do
     {:noreply, socket}
   end
 
-  def handle_info({IndexersComponent, :indexers_changed}, socket),
-    do: {:noreply, assign_gate(socket, socket.assigns.health)}
+  # On Built-in the Indexers check (`Native.health/0`) reads the saved indexers' states and sends
+  # no request, so a check the page shows is read again on the same changes as the row. Prowlarr's
+  # check reads no saved indexer and stays as its last Test or save left it.
+  def handle_info({IndexersComponent, :indexers_changed}, socket) do
+    health = socket.assigns.health
+
+    health =
+      if Map.has_key?(health, "indexer") and IndexerSource.configured() == Native,
+        do: Map.put(health, "indexer", Health.check("indexer")),
+        else: health
+
+    {:noreply, assign_gate(socket, health)}
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 

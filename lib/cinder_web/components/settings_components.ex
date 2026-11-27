@@ -707,7 +707,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:indexer),
     do:
       gettext(
-        "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
+        "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, choose it above, add your indexers there, then copy its URL and API key from Settings > General."
       )
 
   defp setup_section_description(:migration),

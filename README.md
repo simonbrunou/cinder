@@ -115,7 +115,7 @@ Secrets are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 | Group | Settings |
 |---|---|
 | TMDB | API read token (v4 bearer) |
-| Indexer | Indexer source (Prowlarr or Built-in); Prowlarr URL + API key; Built-in's Newznab and Torznab indexers |
+| Indexer | Indexer source: Built-in, which a new install preselects, or Prowlarr, which stays an option (a non-blank `PROWLARR_URL` or `PROWLARR_API_KEY` preselects it instead); Prowlarr URL + API key; Built-in's Newznab and Torznab indexers |
 | Download | At most one torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet) — either protocol can be set to Disabled — credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
 | Library paths | Required standard roots (`movies_library_path`, `tv_library_path`, `books_library_path`, `audiobooks_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root. The two book roots have no env bootstrap (see below) — type them into the wizard or `/settings` directly |

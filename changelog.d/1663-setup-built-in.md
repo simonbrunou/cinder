@@ -6,9 +6,9 @@
   "Save & validate" stores the chosen source with the other fields and refuses no switch. The
   Indexers group's help, on `/setup` and `/settings`, now reads "Cinder searches your indexers
   itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer
-  below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers
-  there, then copy its URL and API key from Settings > General." The Prowlarr settings guide
-  link stays.
+  below; Cinder tests each enabled indexer when you add it. For Prowlarr, choose it above, add
+  your indexers there, then copy its URL and API key from Settings > General." (#1689 added
+  "choose it above".) The Prowlarr settings guide link stays.
 - **With Built-in saved, Finish needs an enabled indexer that works or waits out a rate limit,
   and once a download client passed its check, one of a protocol such a client uses
   (#1663).** The setup checklist's Indexers row reads the saved indexers, with no request. It is
@@ -19,7 +19,8 @@
   and reads "No usable indexer uses the same protocol as a working download client." in red
   without one. The row and Finish follow each saved indexer add, edit, enable switch and Delete,
   each finished Test and the end of an indexer's limit or failure wait, with no click on
-  "Save & validate". Finish checks the saved indexers again before it completes setup. With
+  "Save & validate". Once a Test or a save has shown the badge beside "Test Indexers", it follows
+  the same changes (#1689). Finish checks the saved indexers again before it completes setup. With
   Prowlarr saved, the row stays Prowlarr's live check, with no protocol check.
 
 ### Changed

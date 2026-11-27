@@ -1246,6 +1246,18 @@ def stored_indexer_source():
     )
 
 
+def put_indexer_source(value):
+    """Stores `value` ("prowlarr" or "native") as the indexer source, or deletes the row for
+    `None`."""
+    write = (
+        'Cinder.Settings.delete("indexer_source")'
+        if value is None
+        else f'Cinder.Settings.put("indexer_source", "{value}")'
+    )
+    if rpc(f':ok = {write}; IO.puts("RPCRESULT:ok")') != "ok":
+        raise CaseFailure(f"could not store indexer source {value!r}")
+
+
 def case_15_refused_source_switch_reopens_its_group(page):
     """The "Indexer source" select in /settings (#1662). With one enabled indexer that was never
     checked, the gate fails, so a save that switches to Built-in is refused: the refusal shows
@@ -1254,10 +1266,17 @@ def case_15_refused_source_switch_reopens_its_group(page):
     `focus-invalid` push, which opens each closed `<details>` around the field
     (assets/js/focus_invalid.js), and the retry's patch, which sets the group's `open` again
     because each save clears the flash first. Run on 2026-11-26 with both taken out, the group
-    stayed closed; with either one alone, it opened. Nothing is stored either time."""
+    stayed closed; with either one alone, it opened. Nothing is stored either time.
+
+    Since #1689 a fresh instance with no stored source and no Prowlarr variable shows Built-in,
+    where choosing Built-in is no switch. The case stores Prowlarr first, as an upgraded install
+    does, and puts the stored source back when it ends."""
+    original = stored_indexer_source()
     indexer = seed_indexer("CI Source Gate", 40)
     context = page.context.browser.new_context(viewport={"width": 1440, "height": 900})
+    passed = False
     try:
+        put_indexer_source("prowlarr")
         gate = rpc(
             "IO.puts(\"RPCRESULT:#{Cinder.Acquisition.IndexerSource.Native.IndexerState"
             '.passes_gate?()}")'
@@ -1295,9 +1314,19 @@ def case_15_refused_source_switch_reopens_its_group(page):
                 "case 15 (store): a refused switch changed the stored source "
                 f"{before!r} to {after!r}"
             )
+        passed = True
     finally:
-        context.close()
-        delete_indexer(indexer)
+        try:
+            context.close()
+            delete_indexer(indexer)
+        finally:
+            # A failed restore fails a case that passed, but never replaces a failure of its own,
+            # which `main()` prints as the case's reason.
+            try:
+                put_indexer_source(None if original == "nil" else original.strip('"'))
+            except CaseFailure:
+                if passed:
+                    raise
 
 
 def set_setup_complete(value):

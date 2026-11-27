@@ -596,7 +596,7 @@ defmodule Cinder.Settings.Registry do
   # their form; of the two pages, only `/settings` refuses a switch to Built-in.
   # `Cinder.Indexers.switch_source/1` writes it alone, and the upgrade migration writes it too.
   # Each option's `os_env` lists the variables whose value, set and not blank, makes it the
-  # bootstrap choice; `default` is the fresh-install choice.
+  # bootstrap choice; `default` is the fresh-install choice, Built-in since #1689.
   # `Cinder.Settings.Shape.running_indexer_source/3` picks the module. Each option's `label` is an
   # English msgid: the select's option text (#1623 point 8) and the parenthesis of the dashboard's
   # indexer row (`Cinder.Health`).
@@ -618,7 +618,7 @@ defmodule Cinder.Settings.Registry do
                            os_env: []
                          }
                        ],
-                       default: "prowlarr"
+                       default: "native"
                      }},
                     target: {:writer, :indexer_source},
                     group: :indexer,

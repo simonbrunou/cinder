@@ -16,7 +16,7 @@ defmodule CinderWeb.SetupLiveTest do
   setup :set_mox_global
   setup :reset_cinder_env
 
-  @indexer_help "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, add your indexers there, then copy its URL and API key from Settings > General."
+  @indexer_help "Cinder searches your indexers itself (Built-in), or through Prowlarr if you already run it. For Built-in, add each indexer below; Cinder tests each enabled indexer when you add it. For Prowlarr, choose it above, add your indexers there, then copy its URL and API key from Settings > General."
   @coverage "No usable indexer uses the same protocol as a working download client."
 
   # Stubs every service green. Submitting the setup form saves a choice for the media server,
@@ -668,6 +668,26 @@ defmodule CinderWeb.SetupLiveTest do
              )
     end
 
+    # #1689: with no stored source and no Prowlarr env var, a fresh install preselects Built-in,
+    # and a Save & validate that leaves the select alone stores it.
+    test "preselects Built-in on a fresh install, and an untouched select saves it",
+         %{conn: conn} do
+      ConfigCase.put_prowlarr_env(nil, nil)
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      stub_all_services_ok()
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+
+      assert has_element?(lv, ~s(#indexer_source option[value="native"][selected]), "Built-in")
+      refute has_element?(lv, ~s(#indexer_source option[value="prowlarr"][selected]))
+
+      lv
+      |> form("#setup-form", Map.delete(@valid_params_with_books, "indexer_source"))
+      |> render_submit()
+
+      assert Cinder.Repo.get_by!(Cinder.Settings.Setting, key: "indexer_source").value ==
+               "native"
+    end
+
     test "Save & validate stores Built-in with no working indexer, and refuses nothing",
          %{conn: conn} do
       conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
@@ -722,6 +742,27 @@ defmodule CinderWeb.SetupLiveTest do
 
       render_hook(lv, "finish", %{})
       refute Settings.setup_complete?()
+    end
+
+    # The save's check left "No indexer added" on the Indexers Test badge. Once an added indexer
+    # passes, the row turns green, and the badge must not keep the old check.
+    test "an indexer change reads the shown Indexers check again, dropping its old reason",
+         %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+      validate(lv, "native")
+      assert has_element?(lv, "#test-reason-indexer.text-error", "No indexer added")
+
+      add_indexer(lv, "Usenet One")
+      assert [%{id: id}] = Indexers.list()
+      assert_receive {:test_started, task_pid, ^id}
+      answer(task_pid, :test_success)
+
+      eventually(fn ->
+        has_element?(lv, "#setup-check-indexer .hero-check-circle.text-success")
+      end)
+
+      refute has_element?(lv, "#test-reason-indexer")
+      assert has_element?(lv, "#test-target-indexer ~ .badge-success", "OK")
     end
 
     test "a saved switch to Built-in makes Delete warn about the only working indexer",

@@ -72,11 +72,15 @@ defmodule Cinder.IndexersSourceSwitchTest do
       end
     end
 
-    # The source the form showed: the stored row, else the bootstrap (`Prowlarr` in the test env,
-    # since no `PROWLARR_*` variable picks another option and the default is `"prowlarr"`).
+    # The source the form showed: the stored row, else the bootstrap. A set `PROWLARR_URL` makes
+    # the bootstrap Prowlarr; with no `PROWLARR_*` variable it is the Built-in default (#1689).
     test "with no current source given, compares with the stored row, else the bootstrap" do
       failing_indexer!()
 
+      ConfigCase.put_prowlarr_env(nil, nil)
+      assert Indexers.check_source_switch("native") == :ok
+
+      ConfigCase.put_prowlarr_env("http://prowlarr:9696", nil)
       assert Indexers.check_source_switch("native") == {:error, :no_working_indexer}
 
       :ok = Settings.save(%{"indexer_source" => "native"})
@@ -89,6 +93,7 @@ defmodule Cinder.IndexersSourceSwitchTest do
 
   describe "switch_source/1" do
     test "with no indexer passing the gate, returns the refusal code and stores nothing" do
+      ConfigCase.put_prowlarr_env("http://prowlarr:9696", nil)
       failing_indexer!()
 
       assert Indexers.switch_source("native") == {:error, :no_working_indexer}
@@ -116,6 +121,7 @@ defmodule Cinder.IndexersSourceSwitchTest do
     end
 
     test "a refused switch broadcasts no settings write" do
+      ConfigCase.put_prowlarr_env("http://prowlarr:9696", nil)
       failing_indexer!()
       :ok = Settings.subscribe()
 

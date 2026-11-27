@@ -10,21 +10,9 @@ defmodule Cinder.Settings.IndexerSourceTest do
   alias Cinder.Settings
   alias Cinder.Settings.{Definition, Registry, Setting, Shape}
 
-  @env_vars ["PROWLARR_URL", "PROWLARR_API_KEY"]
-
   setup do
     ConfigCase.restore_env_on_exit(Settings.env_keys())
-    prior = Map.new(@env_vars, &{&1, System.get_env(&1)})
-
-    on_exit(fn ->
-      Enum.each(prior, fn
-        {name, nil} -> System.delete_env(name)
-        {name, value} -> System.put_env(name, value)
-      end)
-    end)
-
-    Enum.each(@env_vars, &System.delete_env/1)
-    :ok
+    ConfigCase.put_prowlarr_env(nil, nil)
   end
 
   defp spec do
@@ -37,21 +25,27 @@ defmodule Cinder.Settings.IndexerSourceTest do
   describe "Shape.running_indexer_source/3" do
     # One row per rule, each set up so the rule below it would answer otherwise. The rows that
     # leave the captured mock in place also set PROWLARR_URL: a captured mock ranked below the env
-    # vars answers Prowlarr there.
+    # vars answers Prowlarr there. The listed captured module is Prowlarr, as config.exs captures
+    # in prod, so on a row with no listed option stored a Native answer comes from the
+    # fresh-install default alone (#1689).
     for {name, stored, captured, vars, expected} <- [
           {"stored native", "native", IndexerMock, [{"PROWLARR_URL", "http://p"}], Native},
+          {"stored native beats a set PROWLARR_API_KEY", "native", Prowlarr,
+           [{"PROWLARR_API_KEY", "k"}], Native},
           {"stored prowlarr", "prowlarr", IndexerMock, [], Prowlarr},
+          {"stored prowlarr with no env var", "prowlarr", Prowlarr, [], Prowlarr},
           {"a stored value that is no option reads as none stored", "builtin", IndexerMock,
            [{"PROWLARR_URL", "http://p"}], IndexerMock},
           {"no row and the captured IndexerMock", nil, IndexerMock,
            [{"PROWLARR_URL", "http://p"}, {"PROWLARR_API_KEY", "k"}], IndexerMock},
-          {"no row, a listed captured module and PROWLARR_URL set", nil, Native,
+          {"no row, a listed captured module and PROWLARR_URL set", nil, Prowlarr,
            [{"PROWLARR_URL", "http://p"}], Prowlarr},
-          {"no row, a listed captured module and PROWLARR_API_KEY set", nil, Native,
+          {"no row, a listed captured module and PROWLARR_API_KEY set", nil, Prowlarr,
            [{"PROWLARR_API_KEY", "k"}], Prowlarr},
-          {"no row, a listed captured module and both blank", nil, Native,
-           [{"PROWLARR_URL", " "}, {"PROWLARR_API_KEY", ""}], Prowlarr},
-          {"nothing set", nil, [], [], Prowlarr}
+          {"no row, a listed captured module and both blank", nil, Prowlarr,
+           [{"PROWLARR_URL", " "}, {"PROWLARR_API_KEY", ""}], Native},
+          {"no row, a listed captured module and no env var", nil, Prowlarr, [], Native},
+          {"nothing set", nil, [], [], Native}
         ] do
       @stored stored
       @captured captured
@@ -63,29 +57,6 @@ defmodule Cinder.Settings.IndexerSourceTest do
 
         assert Shape.running_indexer_source(spec(), @stored, @captured) == @expected
       end
-    end
-
-    # Today rules 3 and 4 both name Prowlarr. A default that names Native tells them apart.
-    test "an option's set env var outranks the fresh-install default" do
-      spec = %{spec() | default: "native"}
-
-      put_os_env([{"PROWLARR_API_KEY", "k"}])
-      assert Shape.running_indexer_source(spec, nil, Prowlarr) == Prowlarr
-
-      System.delete_env("PROWLARR_API_KEY")
-      assert Shape.running_indexer_source(spec, nil, Prowlarr) == Native
-
-      put_os_env([{"PROWLARR_URL", "http://p"}])
-      assert Shape.running_indexer_source(spec, nil, Prowlarr) == Prowlarr
-
-      System.delete_env("PROWLARR_URL")
-      put_os_env([{"PROWLARR_URL", " "}, {"PROWLARR_API_KEY", ""}])
-      assert Shape.running_indexer_source(spec, nil, Prowlarr) == Native
-    end
-
-    test "with nothing stored or set, the default option names the module" do
-      assert Shape.running_indexer_source(%{spec() | default: "native"}, nil, []) == Native
-      assert Shape.running_indexer_source(%{spec() | default: "prowlarr"}, nil, nil) == Prowlarr
     end
   end
 
@@ -106,7 +77,7 @@ defmodule Cinder.Settings.IndexerSourceTest do
                {"native", "Built-in", Native}
              ]
 
-      assert spec().default == "prowlarr"
+      assert spec().default == "native"
     end
 
     test "a save_form/1 whose params carry a listed indexer_source stores it" do
@@ -129,7 +100,7 @@ defmodule Cinder.Settings.IndexerSourceTest do
       refute Repo.get_by(Setting, key: "indexer_source")
     end
 
-    test "a save_form/1 without indexer_source, as /setup sends, leaves the stored source" do
+    test "a save_form/1 without indexer_source leaves the stored source" do
       :ok = Settings.put("indexer_source", "native")
 
       assert :ok = Settings.save_form(%{"prowlarr_url" => "http://p"})
@@ -141,9 +112,13 @@ defmodule Cinder.Settings.IndexerSourceTest do
 
   describe "the shown source" do
     test "the form shows a stored option, else the bootstrap choice, never the captured mock" do
+      assert Settings.form_state().values["indexer_source"] == "native"
+      assert Settings.indexer_source() == "native"
+      assert Application.fetch_env!(:cinder, :indexer_source) == IndexerMock
+
+      put_os_env([{"PROWLARR_URL", "http://p"}])
       assert Settings.form_state().values["indexer_source"] == "prowlarr"
       assert Settings.indexer_source() == "prowlarr"
-      assert Application.fetch_env!(:cinder, :indexer_source) == IndexerMock
 
       :ok = Settings.put("indexer_source", "native")
       assert Settings.form_state().values["indexer_source"] == "native"
@@ -162,27 +137,52 @@ defmodule Cinder.Settings.IndexerSourceTest do
       end
     end
 
-    # Today the bootstrap always names Prowlarr (its env vars or the default), so a spec whose
-    # default is Native tells the bootstrap steps apart, as in `running_indexer_source/3` above.
-    test "Shape.shown_indexer_source/2: a stored option, else a set env var, else the default" do
-      native_default = %{spec() | default: "native"}
-
-      assert Shape.shown_indexer_source(native_default, "prowlarr") == "prowlarr"
-      assert Shape.shown_indexer_source(native_default, nil) == "native"
-      assert Shape.shown_indexer_source(native_default, "builtin") == "native"
+    test "Shape.shown_indexer_source/2: a stored option, else a non-blank env var, else Built-in" do
+      assert Shape.shown_indexer_source(spec(), "prowlarr") == "prowlarr"
+      assert Shape.shown_indexer_source(spec(), nil) == "native"
+      assert Shape.shown_indexer_source(spec(), "builtin") == "native"
 
       put_os_env([{"PROWLARR_API_KEY", "k"}])
-      assert Shape.shown_indexer_source(native_default, nil) == "prowlarr"
-      assert Shape.shown_indexer_source(native_default, "native") == "native"
+      assert Shape.shown_indexer_source(spec(), nil) == "prowlarr"
+      assert Shape.shown_indexer_source(spec(), "native") == "native"
 
       System.delete_env("PROWLARR_API_KEY")
       put_os_env([{"PROWLARR_URL", " "}])
-      assert Shape.shown_indexer_source(native_default, nil) == "native"
-      assert Shape.shown_indexer_source(spec(), nil) == "prowlarr"
+      assert Shape.shown_indexer_source(spec(), nil) == "native"
     end
   end
 
   describe "the overlay" do
+    # The boot capture is config.exs's Prowlarr, a listed option, as in prod: the overlay then
+    # reads the stored row, the env vars and the fresh-install default (#1689).
+    test "with prod's capture, it runs the stored source, else a non-blank env var, else Built-in" do
+      ConfigCase.update_boot_capture(:indexer_source, fn _mock -> Prowlarr end)
+
+      running = fn ->
+        :ok = Settings.load_into_env()
+        Application.fetch_env!(:cinder, :indexer_source)
+      end
+
+      assert running.() == Native
+
+      put_os_env([{"PROWLARR_URL", "http://p"}])
+      assert running.() == Prowlarr
+
+      System.delete_env("PROWLARR_URL")
+      put_os_env([{"PROWLARR_API_KEY", "k"}])
+      assert running.() == Prowlarr
+
+      put_os_env([{"PROWLARR_URL", " "}, {"PROWLARR_API_KEY", ""}])
+      assert running.() == Native
+
+      :ok = Settings.put("indexer_source", "prowlarr")
+      assert running.() == Prowlarr
+
+      put_os_env([{"PROWLARR_URL", "http://p"}])
+      :ok = Settings.put("indexer_source", "native")
+      assert running.() == Native
+    end
+
     test "a stored choice picks its module, and deleting it brings back the boot capture" do
       :ok = Settings.put("indexer_source", "native")
       assert Application.fetch_env!(:cinder, :indexer_source) == Native

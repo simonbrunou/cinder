@@ -2,7 +2,9 @@
 - **`/settings` can switch the indexer source to Built-in once an enabled indexer works or waits out
   a rate limit, and back to Prowlarr at any time (#1662).** An "Indexer source" select now starts
   the Indexers group, and "Save settings" saves it with the rest of the form. On load it shows the
-  stored source, else Prowlarr. A save that switches to Built-in is refused while no enabled indexer
+  stored source when that is Prowlarr or Built-in, else Prowlarr when `PROWLARR_URL` or
+  `PROWLARR_API_KEY` is set and not blank, else Built-in (#1689). A save that switches to Built-in
+  is refused while no enabled indexer
   is usable or in a running limit backoff: nothing in the form is saved, the select is focused, and
   the page says "Built-in needs at least one enabled indexer that works or is waiting out a rate
   limit. Add, enable or test one below first." under the select and in the error banner. A save that
