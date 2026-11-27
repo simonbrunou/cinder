@@ -558,7 +558,12 @@ memory-safety advisory names lexbor or lazy_html.
 
 Two rules keep the accepted risk from growing:
 
-- No secret goes into the worker's environment, arguments or input. The moduledoc's "The worker"
-  lists what its environment holds, and `test/cinder/indexers/parser_worker_bounds_test.exs`
-  asserts it.
+- No secret goes into the worker's environment or arguments, and none goes into its input unless the
+  site's page already holds it. The moduledoc's "The worker" lists what its environment holds, and
+  `test/cinder/indexers/parser_worker_bounds_test.exs` asserts it. Before each worker run of a
+  Cardigann search or grab, `Cinder.Acquisition.Indexer.Cardigann.Fetch.worker_secret?/3` is true
+  for a page and plan that hold a secret value, in any case and in any form the secret check
+  encodes, that the page as the site answered does not hold in one of those forms as the setting
+  writes it. The search page or the grab then fails as a definition error. A new
+  `Cinder.Indexers.ParserWorker.run/3` call takes this check first.
 - A worker is never reused or shared between indexers, as the moduledoc says.
