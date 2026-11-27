@@ -235,6 +235,66 @@ defmodule Cinder.Indexers.ParityTest do
     end
   end
 
+  @office_title "The.Office.S01.1080p.WEB-DL-GRP"
+
+  defp office_row(side, attrs, indexer \\ @alpha),
+    do: row(@office_title, side, indexer, Keyword.put(attrs, :category_ids, [5040]))
+
+  # A season search of The Office: one search_tv/3 call with a TVDB id on each side, Native's
+  # report asked of both indexers, and Prowlarr's history of the two queries that call sends each.
+  defp office_season(p_rows, n_rows) do
+    series = struct(%Series{tvdb_id: 123, title: "The Office"}, [])
+
+    context = %{
+      series: series,
+      season_number: 1,
+      episode_count: 2,
+      episodes: [
+        %{id: 1, episode_number: 1, state: :wanted},
+        %{id: 2, episode_number: 2, state: :wanted}
+      ],
+      native_seasons: MapSet.new([1]),
+      mappings: []
+    }
+
+    args = [123, "The Office", 1]
+
+    try = %{
+      prowlarr: side([call(:search_tv, args, {:ok, p_rows})], []),
+      native:
+        side(
+          [
+            call(
+              :search_tv,
+              args,
+              {:ok, n_rows, native_report([{@alpha, :asked}, {@bravo, :asked}])}
+            )
+          ],
+          []
+        )
+    }
+
+    s = search("Office S1", :season, %{context: context, wanted_numbers: [1, 2]}, [try])
+
+    indexers = [
+      %{id: @alpha, name: "Alpha", kinds: [:season], link_check: :passed},
+      %{id: @bravo, name: "Bravo", kinds: [:season], link_check: :passed}
+    ]
+
+    # A search_tv call with a TVDB id sends each indexer two queries.
+    history =
+      for {pid, n} <- [{11, 1}, {11, 2}, {12, 3}, {12, 4}],
+          do: %{
+            id: n,
+            indexer_id: pid,
+            date: DateTime.add(@t0, 2),
+            successful: true,
+            query_results: 1
+          }
+
+    {s, indexers, history}
+  end
+
   describe "rows" do
     test "two identical rows on one side and one on the other is a row difference" do
       try =
@@ -263,69 +323,15 @@ defmodule Cinder.Indexers.ParityTest do
       )
     end
 
-    test "Native's two copies of one link from its id and text queries count as Prowlarr's one merged row" do
-      series = struct(%Series{tvdb_id: 123, title: "The Office"}, [])
-
-      context = %{
-        series: series,
-        season_number: 1,
-        episode_count: 2,
-        episodes: [
-          %{id: 1, episode_number: 1, state: :wanted},
-          %{id: 2, episode_number: 2, state: :wanted}
-        ],
-        native_seasons: MapSet.new([1]),
-        mappings: []
-      }
-
-      title = "The.Office.S01.1080p.WEB-DL-GRP"
-      args = [123, "The Office", 1]
-
-      p_rows = [
-        row(title, :prowlarr, @alpha,
-          query_origins: [:id_scoped, :free_text],
-          category_ids: [5040]
-        )
-      ]
+    test "Native's two copies of one link from its id and text queries match Prowlarr's one row merged from both" do
+      p_rows = [office_row(:prowlarr, query_origins: [:id_scoped, :free_text])]
 
       n_rows = [
-        row(title, :native, @alpha, query_origins: [:id_scoped], category_ids: [5040]),
-        row(title, :native, @alpha, query_origins: [:free_text], category_ids: [5040])
+        office_row(:native, query_origins: [:id_scoped]),
+        office_row(:native, query_origins: [:free_text])
       ]
 
-      try = %{
-        prowlarr: side([call(:search_tv, args, {:ok, p_rows})], []),
-        native:
-          side(
-            [
-              call(
-                :search_tv,
-                args,
-                {:ok, n_rows, native_report([{@alpha, :asked}, {@bravo, :asked}])}
-              )
-            ],
-            []
-          )
-      }
-
-      s = search("Office S1", :season, %{context: context, wanted_numbers: [1, 2]}, [try])
-
-      indexers = [
-        %{id: @alpha, name: "Alpha", kinds: [:season], link_check: :passed},
-        %{id: @bravo, name: "Bravo", kinds: [:season], link_check: :passed}
-      ]
-
-      # A search_tv call with a TVDB id sends each indexer two queries.
-      history =
-        for {pid, n} <- [{11, 1}, {11, 2}, {12, 3}, {12, 4}],
-            do: %{
-              id: n,
-              indexer_id: pid,
-              date: DateTime.add(@t0, 2),
-              successful: true,
-              query_results: 1
-            }
-
+      {s, indexers, history} = office_season(p_rows, n_rows)
       result = Parity.compare(run([s], indexers: indexers, history: history))
       refute_line(result.report, "difference:")
       assert_line(result.report, "Alpha (#1) season: covered")
@@ -337,6 +343,55 @@ defmodule Cinder.Indexers.ParityTest do
       short = Enum.reject(history, &(&1.id in [2, 4]))
       result = Parity.compare(run([s], indexers: indexers, history: short))
       assert {:cell_uncovered, @alpha, :season, :prowlarr_not_asked} in result.reasons
+    end
+
+    # #1914: on prod, Prowlarr's search_tv/3 merged none of the Usenet releases both its queries
+    # found: each copy came back with a link of its own. Bravo's merged row of the same title and
+    # size counts for Bravo only.
+    test "Native's two copies of one link match Prowlarr's two copies that each carry a link of their own" do
+      p_rows = [
+        office_row(:prowlarr,
+          query_origins: [:id_scoped],
+          download_url: "https://prowlarr.example/1/id"
+        ),
+        office_row(:prowlarr,
+          query_origins: [:free_text],
+          download_url: "https://prowlarr.example/1/text"
+        ),
+        office_row(:prowlarr, [query_origins: [:id_scoped, :free_text]], @bravo)
+      ]
+
+      n_rows = [
+        office_row(:native, query_origins: [:id_scoped]),
+        office_row(:native, query_origins: [:free_text]),
+        office_row(:native, [query_origins: [:id_scoped]], @bravo),
+        office_row(:native, [query_origins: [:free_text]], @bravo)
+      ]
+
+      {s, indexers, history} = office_season(p_rows, n_rows)
+      result = Parity.compare(run([s], indexers: indexers, history: history))
+      refute_line(result.report, "difference:")
+      assert_line(result.report, "Alpha (#1) season: covered")
+      assert_line(result.report, "Bravo (#2) season: covered")
+      refute {:no_evidence, @alpha} in result.reasons
+      refute {:no_evidence, @bravo} in result.reasons
+    end
+
+    test "Native's copies of one link from both queries differ from Prowlarr's one row from one query" do
+      p_rows = [office_row(:prowlarr, query_origins: [:id_scoped])]
+
+      n_rows = [
+        office_row(:native, query_origins: [:id_scoped]),
+        office_row(:native, query_origins: [:free_text])
+      ]
+
+      {s, indexers, history} = office_season(p_rows, n_rows)
+      result = Parity.compare(run([s], indexers: indexers, history: history))
+
+      assert_line(
+        result.report,
+        ~s|difference: rows of Alpha (#1) in call 1 (search_tv): Prowlarr only none; Native only 1 x "The.Office.S01.1080p.WEB-DL-GRP" (4000000000)|
+      )
     end
 
     test "the timing cut drops a row published after the pair's first query on both sides; a row with no publication time stays" do

@@ -240,4 +240,106 @@ defmodule Cinder.Indexers.Parity.RowsTest do
       assert "P1001" in prowlarr(pair)
     end
   end
+
+  # The rows of one indexer in one search_tv/3 call, tagged as each source tags them: Native one
+  # origin per row, Prowlarr one per row, or both on a row its adapter merged by link.
+  describe "count_keys/1 and native_count_keys/2" do
+    test "counts Native's copies of one link once where Prowlarr's rows hold a merged row of that title and size" do
+      p = [row("S", 11, query_origins: [:id_scoped, :free_text])]
+      n = [row("S", 1, query_origins: [:id_scoped]), row("S", 1, query_origins: [:free_text])]
+
+      assert Rows.count_keys(p) == %{{"S", 1} => 1}
+      assert Rows.native_count_keys(n, p) == %{{"S", 1} => 1}
+    end
+
+    test "counts each Native copy where Prowlarr's copies each carry a link of their own (#1914)" do
+      p = [
+        row("S", 11, download_url: "p/id", query_origins: [:id_scoped]),
+        row("S", 11, download_url: "p/text", query_origins: [:free_text])
+      ]
+
+      n = [row("S", 1, query_origins: [:id_scoped]), row("S", 1, query_origins: [:free_text])]
+
+      assert Rows.count_keys(p) == %{{"S", 1} => 2}
+      assert Rows.native_count_keys(n, p) == %{{"S", 1} => 2}
+
+      # Prowlarr's link in one query only: Native's two copies count twice, a difference.
+      assert Rows.native_count_keys(n, [hd(p)]) == %{{"S", 1} => 2}
+    end
+
+    test "a merged Prowlarr row of another title or size leaves Native's copies counted apart" do
+      n = [row("S", 1, query_origins: [:id_scoped]), row("S", 1, query_origins: [:free_text])]
+
+      for merged <- [row("T", 11), row("S", 11, size: 2)] do
+        p = [Map.put(merged, :query_origins, [:id_scoped, :free_text])]
+        assert Rows.native_count_keys(n, p) == %{{"S", 1} => 2}
+      end
+    end
+
+    test "Native's copies of two links count apart beside a merged Prowlarr row of their title and size" do
+      p = [row("S", 11, query_origins: [:id_scoped, :free_text])]
+
+      n = [
+        row("S", 1, download_url: "u/1/a", query_origins: [:id_scoped]),
+        row("S", 1, download_url: "u/1/b", query_origins: [:free_text])
+      ]
+
+      assert Rows.native_count_keys(n, p) == %{{"S", 1} => 2}
+    end
+
+    # Two releases of one title and size on one indexer: one Prowlarr merged, one it split.
+    test "each merged Prowlarr row makes the copies of one Native link count once, never two" do
+      both = fn link ->
+        for o <- [:id_scoped, :free_text], do: row("S", 1, download_url: link, query_origins: [o])
+      end
+
+      n = both.("u/1/a") ++ both.("u/1/d")
+      merged = row("S", 11, download_url: "p/a", query_origins: [:id_scoped, :free_text])
+      by_id = row("S", 11, download_url: "p/b-id", query_origins: [:id_scoped])
+      by_text = row("S", 11, download_url: "p/b-text", query_origins: [:free_text])
+
+      # Prowlarr found the split release by both queries: 3 rows on each side.
+      p = [merged, by_id, by_text]
+      assert Rows.count_keys(p) == %{{"S", 1} => 3}
+      assert Rows.native_count_keys(n, p) == %{{"S", 1} => 3}
+
+      # Prowlarr found it by the id query only: 2 against Native's 3, a difference.
+      assert Rows.native_count_keys(n, [merged, by_id]) == %{{"S", 1} => 3}
+      assert Rows.count_keys([merged, by_id]) == %{{"S", 1} => 2}
+
+      # Copies with no link never count once, even with a merged row left over for them.
+      unlinked =
+        for o <- [:id_scoped, :free_text], do: row("S", 1, download_url: nil, query_origins: [o])
+
+      three = for l <- ~w(p/a p/d p/x), do: %{merged | download_url: l}
+      assert Rows.native_count_keys(unlinked ++ n, three) == %{{"S", 1} => 4}
+    end
+
+    test "a Native link found by one query, before a link found by both, leaves the merged row to the second" do
+      x = row("S", 1, download_url: "u/1/x", query_origins: [:id_scoped])
+
+      a =
+        for o <- [:id_scoped, :free_text],
+            do: row("S", 1, download_url: "u/1/a", query_origins: [o])
+
+      p = [
+        row("S", 11, download_url: "p/x", query_origins: [:id_scoped]),
+        row("S", 11, download_url: "p/a", query_origins: [:id_scoped, :free_text])
+      ]
+
+      assert Rows.count_keys(p) == %{{"S", 1} => 2}
+      assert Rows.native_count_keys([x | a], p) == %{{"S", 1} => 2}
+    end
+
+    # `Release.per_indexer_rows/3` gives each indexer's row of one link the origins of every copy,
+    # so a row Prowlarr merged from two indexers' copies holds an origin its own indexer never
+    # answered. Counting a row once per origin would count it twice here.
+    test "a link two Prowlarr indexers share counts once for the indexer that returned it in one query" do
+      p_bravo = [row("S", 12, download_url: "magnet:s", query_origins: [:id_scoped, :free_text])]
+      n_bravo = [row("S", 2, download_url: "magnet:s", query_origins: [:free_text])]
+
+      assert Rows.count_keys(p_bravo) == %{{"S", 1} => 1}
+      assert Rows.native_count_keys(n_bravo, p_bravo) == %{{"S", 1} => 1}
+    end
+  end
 end

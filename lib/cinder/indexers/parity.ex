@@ -68,7 +68,7 @@ defmodule Cinder.Indexers.Parity do
   - **Stops** (point 7). A budget or 429 stop in any try of a search makes that indexer
     inconclusive in that search and every later one.
   - **Rows** (point 11). Per aligned seam call and covered indexer, the multisets of
-    `{title, size}` match (`Rows.count_keys/2`).
+    `{title, size}` match (`Rows.count_keys/1` and `Rows.native_count_keys/2`).
   - **Picks** (point 11). Each covered indexer's rows judged alone, and all rows judged
     together, give the same key on both sides (`Picks`). A pooled difference in a search where an
     indexer was not covered, or where Prowlarr returned rows of an indexer the map does not name,
@@ -512,8 +512,10 @@ defmodule Cinder.Indexers.Parity do
           rows_n = Rows.rows(n.outcome),
           rows_p != nil and rows_n != nil,
           cid <- covered,
-          count_p = Rows.count_keys(Rows.only_cid(rows_p, :prowlarr, cid, ctx.map), :prowlarr),
-          count_n = Rows.count_keys(Rows.only_cid(rows_n, :native, cid, ctx.map), :native),
+          cid_rows_p = Rows.only_cid(rows_p, :prowlarr, cid, ctx.map),
+          count_p = Rows.count_keys(cid_rows_p),
+          count_n =
+            Rows.native_count_keys(Rows.only_cid(rows_n, :native, cid, ctx.map), cid_rows_p),
           count_p != count_n,
           do:
             {:rows, i, p.callback, cid, multiset_minus(count_p, count_n),

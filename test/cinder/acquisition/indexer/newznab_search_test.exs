@@ -610,6 +610,37 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
       assert outcomes(report) == %{indexer.id => :asked}
     end
 
+    # #1914: on prod, NZBgeek reported a result's TVDB id only on a request with `extended=1`, and
+    # with no reported id the title guard refused its yearless names, so Native's season pick read
+    # `no_match` where Prowlarr's did not. This stub answers the attribute only under `extended=1`.
+    test "search_tv/3 rows carry the tvdbid attribute an indexer answers only under extended=1" do
+      indexer!(:newznab, "a.example")
+
+      route(%{
+        "a.example" => fn _conn, query ->
+          attrs = if query["extended"] == "1", do: [tvdbid: 81_189], else: []
+
+          case query do
+            %{"t" => "tvsearch", "tvdbid" => "81189"} ->
+              rss([item("Show.AKA.S01E01", {:nzb, "https://a.example/id"}, attrs)])
+
+            %{"t" => "tvsearch", "q" => "Show"} ->
+              rss([item("Show.S01E02", {:nzb, "https://a.example/text"}, attrs)])
+
+            _caps ->
+              :default
+          end
+        end
+      })
+
+      assert {:ok, rows, _report} = Native.search_tv(81_189, "Show", 1)
+
+      assert Enum.map(rows, &{&1.title, &1.query_origins, Map.get(&1, :tvdb_id)}) == [
+               {"Show.AKA.S01E01", [:id_scoped], 81_189},
+               {"Show.S01E02", [:free_text], 81_189}
+             ]
+    end
+
     test "the same link from two indexers gives two rows, each with its indexer" do
       a = indexer!(:torznab, "a.example")
       b = indexer!(:torznab, "b.example")

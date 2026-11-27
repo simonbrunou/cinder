@@ -130,7 +130,7 @@ defmodule Cinder.Indexers.Parity.Rows do
       Enum.frequencies_by(rows(n.outcome) || [], &{cid(:native, &1, map), single_origin(&1)})
 
     prowlarr_rows = rows(p.outcome) || []
-    merged? = Enum.any?(prowlarr_rows, &(single_origin(&1) == :merged))
+    merged? = Enum.any?(prowlarr_rows, &merged?/1)
 
     counts = Enum.frequencies_by(prowlarr_rows, &{Map.get(&1, :indexer_id), single_origin(&1)})
 
@@ -263,16 +263,58 @@ defmodule Cinder.Indexers.Parity.Rows do
 
   @doc """
   The rows of one call of one indexer as the count compares them: one `{title, size}` per row,
-  with a missing size read as 0. On Native's side the copies of one link, which its
-  `search_tv/3` returns once per query, count once, as Prowlarr's adapter merges them.
+  with a missing size read as 0: Prowlarr's side. `native_count_keys/2` counts Native's.
   """
-  @spec count_keys([map()], :prowlarr | :native) :: %{{term(), integer()} => pos_integer()}
-  def count_keys(rows, :native) do
+  @spec count_keys([map()]) :: %{{term(), integer()} => pos_integer()}
+  def count_keys(rows), do: Enum.frequencies_by(rows, &count_key/1)
+
+  @doc """
+  Native's rows of one call of one indexer as the count compares them, beside `prowlarr_rows`,
+  Prowlarr's rows of the same call and indexer: one `{title, size}` per row, as `count_keys/1`
+  counts Prowlarr's, except that each row of `prowlarr_rows` with both query origins makes the
+  copies of one Native link of its title and size count once. Native's links of a key with more
+  than one copy take those merged rows in the order of their first copy. Each remaining copy
+  counts: the one copy of a link, a copy without a link, and each copy of a link left after the
+  merged rows run out.
+
+  Native's `search_tv/3` returns a link once per query that found it. Prowlarr's adapter merges
+  the copies of one link into one row with both origins, and returns copies whose links differ
+  as rows of their own. On prod (#1914) it merged none of the Usenet releases both its queries
+  found: each copy carried a link of its own. A merged row stands for each indexer that returned
+  a copy of its link (`Release.per_indexer_rows/3`), so its origins can include one its own
+  indexer never answered; it counts once, never once per origin.
+  """
+  @spec native_count_keys([map()], [map()]) :: %{{term(), integer()} => pos_integer()}
+  def native_count_keys(rows, prowlarr_rows) do
+    merged = prowlarr_rows |> Enum.filter(&merged?/1) |> Enum.frequencies_by(&count_key/1)
+
     rows
-    |> Enum.uniq_by(&{Map.get(&1, :indexer_id), Map.get(&1, :download_url) || make_ref()})
-    |> count_keys(:prowlarr)
+    |> Enum.group_by(&count_key/1)
+    |> Map.new(fn {key, copies} ->
+      {key, length(copies) - collapsed(copies, Map.get(merged, key, 0))}
+    end)
   end
 
-  def count_keys(rows, :prowlarr),
-    do: Enum.frequencies_by(rows, &{Map.get(&1, :title), Map.get(&1, :size) || 0})
+  # The copies that `merged` merged rows take away from one key's Native rows: each takes the next
+  # link with more than one copy, in the order of their first copy, and all its copies but one.
+  defp collapsed(copies, merged) do
+    links =
+      for copy <- copies,
+          is_binary(Map.get(copy, :download_url)),
+          do: {Map.get(copy, :indexer_id), copy.download_url}
+
+    counts = Enum.frequencies(links)
+
+    links
+    |> Enum.uniq()
+    |> Enum.map(&Map.fetch!(counts, &1))
+    |> Enum.filter(&(&1 > 1))
+    |> Enum.take(merged)
+    |> Enum.map(&(&1 - 1))
+    |> Enum.sum()
+  end
+
+  defp count_key(row), do: {Map.get(row, :title), Map.get(row, :size) || 0}
+
+  defp merged?(row), do: single_origin(row) == :merged
 end
