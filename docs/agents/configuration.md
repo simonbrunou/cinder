@@ -93,6 +93,13 @@ site:
   WebAuthn fields travel under a `passkey` key, which `config :phoenix, :filter_parameters`
   filters from request and LiveView event logs, and `Cinder.Accounts.Passkeys` runs its queries
   that carry them with `log: false`.
+- Each new write of a ciphertext, to a new column or an existing one, runs with `log: false`,
+  since Ecto's `:debug` query log prints the query's parameters. It gets a test like
+  `test/cinder/indexers_log_test.exs` and
+  `test/cinder/acquisition/indexer_source/native/indexer_cookies_log_test.exs`: the test lowers
+  the global Logger level to `:debug`, captures the writes, checks that the capture holds a logged
+  statement on the table, such as the insert or a read, and refutes the ciphertext. On #1680 the
+  cookie table's two writes logged their ciphertext until the approval-gate review caught it.
 - A refused Plex, Jellyfin or OIDC sign-in or link, and a refused passkey sign-in POST
   (`CinderWeb.PasskeyAuthController.create/2`), log through
   `CinderWeb.SignInRefusal`, whose `render/1` prints only the closed set of shapes its moduledoc
