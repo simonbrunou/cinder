@@ -648,9 +648,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
       })
     end
 
-    test "a lone indexer with a query error answers no indexer answered (#1651's rule)" do
-      # #1651's Native answers `{:error, {:no_indexer_answered, report}}` when no indexer was
-      # asked, so this indexer's id-scoped rows are dropped. #1738 tracks keeping them.
+    test "a lone indexer with a query error keeps the rows of its other query (#1738)" do
       indexer = indexer!(:newznab, "a.example")
 
       route(%{
@@ -663,7 +661,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
         end
       })
 
-      assert {:error, {:no_indexer_answered, report}} = Native.search_tv(81_189, "Show", 1)
+      assert {:ok, [%{title: "Show.S01E01"}], report} = Native.search_tv(81_189, "Show", 1)
       assert outcomes(report) == %{indexer.id => {:failed, {:indexer_error, 201}}}
     end
   end

@@ -28,8 +28,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
 
   Each request a search process sends (a caps fetch, a search request) waits for the indexer's
   slot of `Cinder.Acquisition.IndexerSource.Native.Lease`
-  (`Cinder.Acquisition.Indexer.leased/4`): one request at a time to each configured indexer, 2 s from the end of one to the start of the
-  next. A seam call made inside `Cinder.Acquisition.IndexerSource.interactive/1`, a manual
+  (`Cinder.Acquisition.Indexer.leased/4`): one request at a time to each configured indexer,
+  2 s from the end of one to the start of the next. A seam call made inside
+  `Cinder.Acquisition.IndexerSource.interactive/1`, a manual
   search, queues its requests ahead of every background one; Native reads that mark in the
   calling process before it starts the search processes. A request still waiting at the deadline
   is never sent and changes no state, and an indexer whose requests never left the queue reads
@@ -40,9 +41,12 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
 
   A seam call has 90 s from the moment it enters Native. Each adapter request gets the smaller of
   its own timeout and the time left (`Cinder.Acquisition.Indexer.request/3`), so a search cut by
-  the deadline can still answer with its rows and `{:skipped, :deadline}`. One second past the
-  deadline Native kills every search process still running, reports each such indexer
-  `{:skipped, :deadline}`, and returns the rows it has. A request task a killed search process
+  the deadline still answers. The shipped adapters report an indexer whose query answered before
+  the cut as `:asked` with its rows, or as failed when one of its queries failed. One cut
+  before any query answered or failed has no rows and reads `{:skipped, :deadline}`. "What a search
+  callback returns" says which rows reach the caller. One second past the deadline Native kills
+  every search process still running, reports each such indexer `{:skipped, :deadline}`, and answers
+  from the other indexers' answers by the same rules. A request task a killed search process
   started ends with it (`Cinder.HTTPPolicy.bounded_request/3`).
 
   The calling process gets a `Cinder.Download.PollerProgress.beat/0` each time one indexer's
@@ -62,9 +66,17 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   - `{:ok, [], report}` when no indexer could be asked.
   - `{:error, {:indexers_backing_off, retry_at}}` when none was asked or failed and some were
     skipped. `retry_at` is the earliest of each skipped indexer's backoff end and, when the
-    deadline cut one, 60 s after the search ends.
-  - `{:error, {:no_indexer_answered, report}}` when none was asked and one or more failed.
-  - `{:ok, rows, report}` otherwise, a failed indexer's rows included.
+    deadline cut one, 60 s after the search ends. Any row a skipped indexer returned is dropped:
+    a report of skips alone never reads incomplete (`Report.incomplete?/1`), so returning those
+    rows would let a partial answer read as a complete search. The shipped adapters never pair
+    rows with a skip: their `outcome/3` reports an indexer that answered before a deadline cut
+    or a backoff skip as `:asked`, and one with a failed query as failed. So this drops rows
+    only from an adapter that breaks that rule.
+  - `{:error, {:no_indexer_answered, report}}` when none was asked, one or more failed, and no
+    row was kept ("Rows and order").
+  - `{:ok, rows, report}` otherwise: one or more were asked, or none was asked, one or more
+    failed and a row was kept (#1738). The rows are every indexer's kept rows, a failed or
+    skipped indexer's included.
 
   `fetch_download/3` fetches a grab's link through the adapter of the configured indexer the
   grab recorded, read at grab time (#1659; its doc says when it answers with no request).
@@ -455,7 +467,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
         {:ok, rows(indexers, answers), report}
 
       Enum.any?(outcomes, &match?({:failed, _reason}, &1)) ->
-        {:error, {:no_indexer_answered, report}}
+        case rows(indexers, answers) do
+          [] -> {:error, {:no_indexer_answered, report}}
+          rows -> {:ok, rows, report}
+        end
 
       true ->
         {:error, {:indexers_backing_off, retry_at(outcomes)}}

@@ -217,6 +217,50 @@ defmodule Cinder.Acquisition.IndexerSource.NativeEndToEndTest do
     end
   end
 
+  # --- one indexer whose text query fails after its id query answered (#1738) ---
+
+  # One Newznab indexer whose `tvdbid` query answers `title` and whose `q` query gets HTTP 503.
+  defp id_answers_text_fails(title) do
+    indexer = indexer!(:newznab, "nzb.example")
+
+    route(%{
+      "nzb.example" => fn _conn, query ->
+        cond do
+          query["t"] == "caps" -> :default
+          Map.has_key?(query, "tvdbid") -> rss([nzb(title, 2_000_000_000)])
+          Map.has_key?(query, "q") -> {503, "down"}
+          true -> flunk("unexpected request #{inspect(query)}")
+        end
+      end
+    })
+
+    indexer
+  end
+
+  describe "a season search through one indexer whose text query fails" do
+    test "picks the release its id query answered and reads the search as incomplete" do
+      indexer = id_answers_text_fails("The.Office.S01E25.1080p.WEB-DL-GRP")
+
+      assert {:ok, judged} = Acquisition.judge_season(season_context(), [25], @opts)
+      assert {:ok, [{release, [25]}]} = ReleaseJudge.pick(judged)
+
+      assert {release.title, release.indexer_id} ==
+               {"The.Office.S01E25.1080p.WEB-DL-GRP", indexer.id}
+
+      assert outcomes(judged.report) == %{indexer.id => {:failed, {:http_status, 503}}}
+      assert Report.incomplete?(judged.report)
+    end
+
+    test "with no release for a wanted episode: an incomplete search, not a miss" do
+      id_answers_text_fails("The.Office.S01E03.1080p.WEB-DL-GRP")
+
+      assert {:ok, judged} = Acquisition.judge_season(season_context(), [25], @opts)
+      assert [%{release: %{title: "The.Office.S01E03.1080p.WEB-DL-GRP"}}] = judged.rows
+      assert ReleaseJudge.pick(judged) == :no_match
+      assert ReleaseJudge.sweep_pick(judged) == {:error, :incomplete_search}
+    end
+  end
+
   # --- a standard movie on an indexer that takes no IMDb id (#1632) ---
 
   @dune %{imdb_id: "tt1160419", title: "Dune", year: 2021, aliases: [], localized_titles: []}

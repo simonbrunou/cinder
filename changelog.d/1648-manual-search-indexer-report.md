@@ -7,10 +7,10 @@
   out)" or "Two (waiting until 14:35)". Times show in the household time zone, with the date
   first when the day is not today there. The Prowlarr source reports no indexer, so under it
   this line never shows. The anime movie and anime season panels now also show "Some indexers
-  could not be reached; results may be incomplete." when a query of the search failed while
-  another answered, unless the failed query had no enabled indexer or skipped every indexer
-  that could take it. A failed search no longer shows "Couldn't reach the indexer. Try again."
-  for every error: it says that no indexer answered, that no indexer is enabled, until when
-  every indexer is waiting when the search skipped them all, that the search failed (an anime
-  preference that cannot resolve, or a search that crashed), or, for any other error such as
-  one from Prowlarr, "Couldn't reach Prowlarr. Try again."
+  could not be reached; results may be incomplete." when a query of the search failed with no
+  result kept while another answered, unless the failed query had no enabled indexer or skipped
+  every indexer that could take it. A failed search no longer shows "Couldn't reach the indexer.
+  Try again." for every error: it says that no indexer answered, that no indexer is enabled,
+  until when every indexer is waiting when the search skipped them all, that the search failed
+  (an anime preference that cannot resolve, or a search that crashed), or, for any other error
+  such as one from Prowlarr, "Couldn't reach Prowlarr. Try again."

@@ -360,13 +360,70 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
       assert outcomes(report) == %{a.id => {:failed, :dns}, b.id => {:skipped, :deadline}}
     end
 
-    test "with a failed indexer that has rows and none asked: no indexer answered", %{a: a, b: b} do
+    test "with a failed indexer that has rows and none asked: the rows and an incomplete report",
+         %{a: a, b: b} do
       answer_by_id(IndexerAdapterMock, %{
         a.id => {[row("partial", :id_scoped)], {:failed, :bad_response}},
         b.id => {[], {:skipped, :deadline}}
       })
 
-      assert {:error, {:no_indexer_answered, _report}} = Native.search("tt0000001")
+      assert {:ok, [%{title: "partial"}], report} = Native.search("tt0000001")
+
+      assert outcomes(report) == %{
+               a.id => {:failed, :bad_response},
+               b.id => {:skipped, :deadline}
+             }
+
+      assert Report.incomplete?(report)
+    end
+
+    test "with one failed with no rows and one cut by the deadline with rows: the cut one's rows",
+         %{a: a, b: b} do
+      answer_by_id(IndexerAdapterMock, %{
+        a.id => {[], {:failed, :dns}},
+        b.id => {[row("cut", :id_scoped)], {:skipped, :deadline}}
+      })
+
+      assert {:ok, [%{title: "cut", indexer_id: b_id}], report} = Native.search("tt0000001")
+      assert b_id == b.id
+      assert outcomes(report) == %{a.id => {:failed, :dns}, b.id => {:skipped, :deadline}}
+      assert Report.incomplete?(report)
+    end
+
+    test "with a failed indexer whose only row has no valid query origin: no indexer answered",
+         %{a: a, b: b} do
+      answer_by_id(IndexerAdapterMock, %{
+        a.id =>
+          {[row("both", :id_scoped, %{query_origins: [:id_scoped, :free_text]})],
+           {:failed, :timeout}},
+        b.id => {[], {:skipped, :deadline}}
+      })
+
+      assert {:error, {:no_indexer_answered, report}} = Native.search("tt0000001")
+      assert outcomes(report) == %{a.id => {:failed, :timeout}, b.id => {:skipped, :deadline}}
+    end
+
+    test "with every indexer failed with rows: the rows in the usual order, every indexer listed",
+         %{a: a, b: b} do
+      solver = indexer!(%{flaresolverr: true, priority: 3})
+
+      answer_by_id(IndexerAdapterMock, %{
+        a.id => {[row("a-text", :free_text), row("a-id", :id_scoped)], {:failed, :timeout}},
+        b.id => {[row("b-text", :free_text), row("b-id", :id_scoped)], {:failed, :dns}}
+      })
+
+      assert {:ok, rows, report} = Native.search("tt0000001")
+
+      assert Enum.map(rows, &{&1.title, &1.indexer_id}) ==
+               [{"a-id", a.id}, {"b-id", b.id}, {"a-text", a.id}, {"b-text", b.id}]
+
+      assert outcomes(report) == %{
+               a.id => {:failed, :timeout},
+               b.id => {:failed, :dns},
+               solver.id => {:not_asked, {:not_supported, :flaresolverr}}
+             }
+
+      assert Report.incomplete?(report)
     end
 
     test "with every indexer cut by the deadline: backing off until 60 s after the search",
@@ -454,6 +511,30 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
       assert log =~ "native search of indexer #{a.id} ended on error"
       refute log =~ "leaked-key"
       refute inspect(result) =~ "leaked-key"
+    end
+  end
+
+  describe "what a search with one enabled indexer returns" do
+    test "when it failed after returning rows: the rows, read as an answered, incomplete call" do
+      adapters(%{newznab: IndexerAdapterMock})
+      only = indexer!()
+
+      stub(IndexerAdapterMock, :search, fn _indexer, _query, _context ->
+        {[row("before-timeout", :id_scoped)], {:failed, :timeout}}
+      end)
+
+      assert {:ok, [%{title: "before-timeout", indexer_id: id}], report} =
+               result = Native.search("tt1")
+
+      assert id == only.id
+      assert outcomes(report) == %{only.id => {:failed, :timeout}}
+      assert Report.incomplete?(report)
+
+      # A search of several seam calls keeps its rows beside a call that got no answer.
+      assert {:ok, [[%{title: "before-timeout"}]], combined} =
+               Report.combine([Report.from_result(result), {:error, :timeout}])
+
+      assert Report.incomplete?(combined)
     end
   end
 

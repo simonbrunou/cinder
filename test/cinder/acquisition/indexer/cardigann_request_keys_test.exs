@@ -456,8 +456,8 @@ defmodule Cinder.Acquisition.Indexer.CardigannRequestKeysTest do
         end
       })
 
-      # Native drops the rows of /a since no indexer was asked (#1738).
-      assert {[], outcomes} =
+      # /a's rows come back beside the failure of /b (#1738).
+      assert {[%{title: "[Group] Frieren - 01 [1080p]"}], outcomes} =
                search_answer(Native.search_tv_query("frieren", categories: [5070]))
 
       assert outcomes == %{indexer.id => {:failed, {:http_status, 302}}}

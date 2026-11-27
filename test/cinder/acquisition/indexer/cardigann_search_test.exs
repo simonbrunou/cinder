@@ -75,8 +75,7 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
     put_in(definition, ["search", "paths"], paths)
   end
 
-  # A second Nyaa-shaped definition on its own site, to answer beside the one under test: Native
-  # drops every row when no indexer was asked (#1738).
+  # A second Nyaa-shaped definition on its own site, to answer beside the one under test.
   defp other_nyaa,
     do: nyaa_like(&%{&1 | "id" => "cindertestother", "links" => ["https://other.test/"]})
 
