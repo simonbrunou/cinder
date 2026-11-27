@@ -33,7 +33,9 @@ defmodule CinderWeb.ManualSearchComponent do
   shows what `CinderWeb.SearchReportComponents` reads from the search's report: one line naming
   each failed or skipped indexer and why, and "Some indexers could not be reached; results may be
   incomplete." when the report counts a failed seam call. A failed search keeps its reason in the
-  `error` assign and shows that module's text for it.
+  `error` assign and shows that module's text for it. The loading line, the error, those two lines
+  and "No releases found." sit in the panel's live region (`search_status/1`, id `<id>-status`),
+  which the panel renders in every state; the rows sit outside it.
 
   A standard season row whose release covers no still-wanted episode (`covers_wanted: false`)
   says "covers no wanted episode" in neutral text, beside any rejection reason. The note changes neither the
@@ -46,6 +48,7 @@ defmodule CinderWeb.ManualSearchComponent do
       indexer_name: 1,
       unanswered_indexers: 1,
       search_error: 1,
+      search_status: 1,
       show_incomplete_line?: 2
     ]
 
@@ -268,23 +271,25 @@ defmodule CinderWeb.ManualSearchComponent do
   def render(assigns) do
     ~H"""
     <div id={@id} class="card bg-base-200 mt-2 p-3">
-      <div :if={@state == :loading} class="flex items-center gap-2 text-sm">
-        <span class="loading loading-spinner loading-sm" />{gettext("Searching releases…")}
-      </div>
-      <.search_error :if={@state == :error} id={@id} error={@error} />
-      <div :if={@state == :loaded}>
-        <p
-          :if={show_incomplete_line?(@report, true)}
-          id={"#{@id}-incomplete"}
-          class="mb-2 text-xs text-warning"
-        >
-          {gettext("Some indexers could not be reached; results may be incomplete.")}
+      <.search_status id={@id}>
+        <div :if={@state == :loading} class="flex items-center gap-2 text-sm">
+          <span class="loading loading-spinner loading-sm" />{gettext("Searching releases…")}
+        </div>
+        <.search_error :if={@state == :error} id={@id} error={@error} />
+        <div :if={@state == :loaded}>
+          <p
+            :if={show_incomplete_line?(@report, true)}
+            id={"#{@id}-incomplete"}
+            class="mb-2 text-xs text-warning"
+          >
+            {gettext("Some indexers could not be reached; results may be incomplete.")}
+          </p>
+          <.unanswered_indexers id={"#{@id}-unanswered"} report={@report} />
+        </div>
+        <p :if={@state == :loaded and @results == []} class="text-sm">
+          {gettext("No releases found.")}
         </p>
-        <.unanswered_indexers id={"#{@id}-unanswered"} report={@report} />
-      </div>
-      <p :if={@state == :loaded and @results == []} class="text-sm">
-        {gettext("No releases found.")}
-      </p>
+      </.search_status>
 
       <ul :if={@state == :loaded and @results != []} class="space-y-1">
         <li

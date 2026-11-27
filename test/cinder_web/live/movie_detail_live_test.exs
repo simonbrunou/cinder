@@ -926,6 +926,43 @@ defmodule CinderWeb.MovieDetailLiveTest do
                "Not every indexer answered: One (credentials rejected)."
              )
     end
+
+    test "the panel's live region holds the loading line, then the error the search ends on (#1722)",
+         %{conn: conn} do
+      movie =
+        movie_fixture(%{
+          title: "Metropolis",
+          status: :available,
+          imdb_id: "tt1",
+          file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+        })
+
+      report = Report.put(Report.new(), {"native", 2}, "One", {:failed, :rejected_credentials})
+      test_pid = self()
+
+      # The search waits for `:answer`, so the test reads the panel while it is still loading.
+      stub(Cinder.Acquisition.IndexerMock, :search_movie, fn "tt1", _query, _opts ->
+        send(test_pid, {:searching, self()})
+
+        receive do
+          :answer -> {:error, {:no_indexer_answered, report}}
+        end
+      end)
+
+      {:ok, lv, _html} = live_movie(conn, movie)
+      lv |> element("button", "Find a better match") |> render_click()
+      assert_receive {:searching, search}, 5_000
+
+      status = "#ms-movie-#{movie.id}-status"
+      assert has_element?(lv, "#{status}[role=status][aria-live=polite]", "Searching releases…")
+
+      send(search, :answer)
+      render_async(lv)
+
+      assert has_element?(lv, "#{status} #ms-movie-#{movie.id}-error", "No indexer answered.")
+      assert has_element?(lv, "#{status} #ms-movie-#{movie.id}-unanswered", "One")
+      refute has_element?(lv, status, "Searching releases…")
+    end
   end
 
   test "Cancel upgrade reverts an :upgrading movie to :available", %{conn: conn} do

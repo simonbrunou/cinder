@@ -9,6 +9,8 @@ defmodule CinderWeb.SearchReportComponents do
   - `search_error/1` and `search_error_text/2`: one text per search error.
   - `show_incomplete_line?/2`: whether the panel shows "Some indexers could not be reached;
     results may be incomplete.".
+  - `search_status/1`: the panel's live region, which holds the loading line, these lines and
+    "No releases found.", and never a result row.
 
   Every time these texts show is in the household's time zone, as hours and minutes, with the
   date first when the day is not the household's today
@@ -17,6 +19,7 @@ defmodule CinderWeb.SearchReportComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
+  import CinderWeb.CoreComponents, only: [icon: 1]
   import CinderWeb.LiveHelpers, only: [household_time_parts: 2]
 
   alias Cinder.Acquisition.IndexerSource.Report
@@ -171,9 +174,10 @@ defmodule CinderWeb.SearchReportComponents do
   def show_incomplete_line?(_report, complete?), do: not complete?
 
   @doc """
-  A failed search's text (`search_error_text/2`, with the id `<id>-error`) and, for a
-  `{:no_indexer_answered, report}` error, that report's `unanswered_indexers/1` line (with the id
-  `<id>-unanswered`).
+  A failed search's text (`search_error_text/2`, with the id `<id>-error`, after a
+  `hero-exclamation-circle` icon that `CinderWeb.CoreComponents.icon/1` marks `aria-hidden`) and,
+  for a `{:no_indexer_answered, report}` error, that report's `unanswered_indexers/1` line (with
+  the id `<id>-unanswered`).
   """
   attr :id, :string, required: true, doc: "the panel's id"
   attr :error, :any, required: true, doc: "the search's error reason, as the panel stores it"
@@ -181,8 +185,31 @@ defmodule CinderWeb.SearchReportComponents do
   def search_error(assigns) do
     ~H"""
     <div>
-      <p id={"#{@id}-error"} class="text-sm text-error">{search_error_text(@error)}</p>
+      <p id={"#{@id}-error"} class="flex items-center gap-1 text-sm text-error">
+        <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+        {search_error_text(@error)}
+      </p>
       <.unanswered_indexers id={"#{@id}-unanswered"} report={error_report(@error)} />
+    </div>
+    """
+  end
+
+  @doc """
+  A panel's live region: a `div` with the id `<id>-status`, `role="status"` and
+  `aria-live="polite"`, around `inner_block`. Each panel renders it in every state, the loading
+  one included, so the region is already on the page when the search ends and a screen reader
+  announces the lines it then holds. A panel puts in it the lines about the search (the loading
+  line, `search_error/1`, the incomplete and unanswered lines, "No releases found."), never a
+  result row or a Grab button, so a loaded list is not read out row by row. A search that ends
+  with rows and none of those lines leaves the region empty, and nothing is announced.
+  """
+  attr :id, :string, required: true, doc: "the panel's id"
+  slot :inner_block, required: true
+
+  def search_status(assigns) do
+    ~H"""
+    <div id={"#{@id}-status"} role="status" aria-live="polite">
+      {render_slot(@inner_block)}
     </div>
     """
   end

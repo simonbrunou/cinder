@@ -648,4 +648,99 @@ defmodule CinderWeb.BookManualSearchComponentTest do
       assert updated.assigns.error == nil
     end
   end
+
+  describe "the live region around the search's lines (#1722)" do
+    defp render_state(assigns) do
+      render_component(
+        BookManualSearchComponent,
+        Map.merge(
+          %{
+            id: "ms",
+            target: %BookTarget{id: 1, media_kind: :ebook, status: :monitored},
+            work: %{title: "Title", authors: ["Author"]}
+          },
+          assigns
+        )
+      )
+    end
+
+    defp query(html, selector), do: html |> LazyHTML.from_fragment() |> LazyHTML.query(selector)
+
+    defp attribute(html, selector, name),
+      do: html |> query(selector) |> LazyHTML.attribute(name)
+
+    # The child nodes of the elements `selector` matches, in order, each as trimmed HTML, with
+    # blank text nodes and comments left out.
+    defp child_nodes(html, selector) do
+      html
+      |> query(selector)
+      |> LazyHTML.child_nodes()
+      |> Enum.map(&(&1 |> LazyHTML.to_html() |> String.trim()))
+      |> Enum.reject(&(&1 == "" or String.starts_with?(&1, "<!--")))
+    end
+
+    test "a loading panel already holds the region, with the loading line in it" do
+      html = render_state(%{state: :loading})
+
+      assert Enum.count(query(html, "#ms-status")) == 1
+      assert attribute(html, "#ms-status", "role") == ["status"]
+      assert attribute(html, "#ms-status", "aria-live") == ["polite"]
+      assert texts(html, "#ms-status") == ["Searching releases…"]
+    end
+
+    test "the error line sits in the region, after an icon screen readers skip" do
+      html = render_state(%{state: :error, error: :no_indexers})
+
+      assert Enum.count(query(html, "#ms-status #ms-error")) == 1
+      assert texts(html, "#ms-error") == ["No indexer is enabled. Add one in Settings."]
+
+      assert attribute(html, "#ms-error .hero-exclamation-circle", "aria-hidden") == ["true"]
+      assert [icon, text] = child_nodes(html, "#ms-error")
+      assert icon =~ "hero-exclamation-circle"
+      assert text == "No indexer is enabled. Add one in Settings."
+    end
+
+    test "a no-answer error puts its unanswered line in the region too" do
+      reason = {:no_indexer_answered, report([{1, "One", {:failed, :rejected_credentials}}])}
+      html = render_state(%{state: :error, error: reason})
+
+      assert Enum.count(query(html, "#ms-status #ms-error")) == 1
+      assert Enum.count(query(html, "#ms-status #ms-unanswered")) == 1
+    end
+
+    test "a loaded panel's incomplete and unanswered lines sit in the region" do
+      html =
+        render_panel(%{
+          accepted: [{release("Author - Title (EPUB)"), evidence()}],
+          rejected: [],
+          complete?: false,
+          report: report([{1, "One", {:failed, :timeout}}])
+        })
+
+      assert Enum.count(query(html, "#ms-status #ms-incomplete")) == 1
+      assert Enum.count(query(html, "#ms-status #ms-unanswered")) == 1
+    end
+
+    test "a loaded panel with no results says so in the region" do
+      html = render_panel(%{accepted: [], rejected: [], complete?: true})
+
+      assert texts(html, "#ms-status") == ["No releases found."]
+    end
+
+    test "the accepted and rejected rows and their Grab buttons sit outside the region" do
+      html =
+        render_panel(%{
+          accepted: [{release("Author - Title (EPUB)"), evidence()}],
+          rejected: [{release("Author - Title (PDF)"), :format_rejected}],
+          complete?: true
+        })
+
+      assert Enum.count(query(html, "#ms-status")) == 1
+      assert Enum.count(query(html, "#ms li")) == 2
+      assert Enum.count(query(html, "#ms li button")) == 1
+      assert Enum.empty?(query(html, "#ms-status li"))
+      assert Enum.empty?(query(html, "#ms-status button"))
+      assert texts(html, "#ms-status") == [""]
+    end
+  end
 end
