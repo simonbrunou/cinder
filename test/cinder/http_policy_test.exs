@@ -5,7 +5,7 @@ defmodule Cinder.HTTPPolicyTest do
 
   alias Cinder.Download.PollerProgress
   alias Cinder.HTTPPolicy
-  alias Cinder.Test.{RequestDeadlines, SilentServer}
+  alias Cinder.Test.{BoundedRequestWait, RequestDeadlines, SilentServer}
 
   @request_task_event [:cinder, :http, :request_task]
   # How long both cancel tests hold their request task, above the elapsed bound of
@@ -805,7 +805,10 @@ defmodule Cinder.HTTPPolicyTest do
       Req.Test.stub(Cinder.HTTPPolicyCallersStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
 
       # The task can't grant access to the stub (it doesn't own it), as a `Cinder.Health` probe
-      # in a sweep task can't.
+      # in a sweep task can't. Past the 10 s bound, the wait's failure says where the task stood,
+      # and where its request task stood or that the task had not started one yet (#1717).
+      watch = BoundedRequestWait.watch()
+
       task =
         Task.async(fn ->
           HTTPPolicy.bounded_request(
@@ -817,7 +820,8 @@ defmodule Cinder.HTTPPolicyTest do
           )
         end)
 
-      assert {:ok, %{status: 200, body: %{"ok" => true}}} = Task.await(task, 10_000)
+      assert {:ok, %{status: 200, body: %{"ok" => true}}} =
+               BoundedRequestWait.await(watch, task, 10_000)
     end
 
     test "decodes structured +json media types" do
