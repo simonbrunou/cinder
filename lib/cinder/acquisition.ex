@@ -622,9 +622,11 @@ defmodule Cinder.Acquisition do
 
   defp standard_release_values(_release, _known_values), do: []
 
-  # One copy of each release, in first-seen order: the bridged seasons' queries can each return it.
-  # The copy kept carries every copy's query origins, as `IndexerSource.Prowlarr.search_tv/3`
-  # merges its own two queries, because the title guard reads them.
+  # One copy of each release, in first-seen order: the bridged seasons' queries can each return it,
+  # and one `IndexerSource.search_tv/3` call can return a link once per query origin.
+  # `IndexerSource.Native` gives each row one origin; `IndexerSource.Prowlarr` merges its own two
+  # queries' copies only for a TVDB id, when both queries answer `{:ok, _}`. The copy kept carries
+  # every copy's query origins (`merge_query_origins/2`), because the title guard reads them.
   #
   # One copy is kept per link and indexer, an indexer being a source and an id: a refused
   # submission blocks its title per indexer (#1515, #1645), so one link from two indexers stays
@@ -666,12 +668,27 @@ defmodule Cinder.Acquisition do
     %{kept | query_origins: origins}
   end
 
-  # `IndexerSource.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query. Query
-  # origin is not identity proof: a provider can ignore the id, and dedup can give one wrong result
-  # both origins (#315). An explicit matching result TVDB id is proof and preserves AKA titles.
-  # Without one, a known-year series requires both its title and matching year evidence; that
-  # deliberately rejects ambiguous yearless packs rather than unattendedly importing a same-named
-  # reboot.
+  # A series with no TVDB id (the `tvdb_id: nil` clause): `IndexerSource.search_tv/3` sent no
+  # TVDB-scoped query, so every candidate needs the series title (`filter_by_title/2`), whatever
+  # its query origins. A known-year series keeps a title match with no year in its name, and drops
+  # one whose every year is more than one off the series year (`filter_by_title/2` or
+  # `reject_year_conflicts/2`).
+  #
+  # With a TVDB id (the other clause), a candidate carries the origins of the queries that
+  # returned it (the `IndexerSource.search_tv/3` callback's `:query_origins`). Query origin is not
+  # identity proof: a provider can ignore the id, and dedup can give one wrong result both origins
+  # (#315). A TVDB id the indexer reports on the result is proof, which `tv_title_match?/2` reads
+  # first: the series' own id passes the result, AKA titles included, and another id drops it.
+  # With no reported id (`tv_title_evidence?/2`):
+  #
+  # - from a result with a list of query origins, whatever the list holds, a known-year series
+  #   needs its title and a year within one of the series year. That deliberately rejects
+  #   ambiguous yearless packs rather than unattendedly importing a same-named reboot;
+  # - a series with no year needs its title only from a result whose origins are free text alone;
+  # - a result with nil query origins passes with no title or year, for either series.
+  #
+  # What passes still faces `reject_year_conflicts/2`: for a known-year series, a name whose every
+  # year is more than one off the series year is dropped.
   defp filter_title(candidates, %{tvdb_id: nil} = series),
     do: candidates |> filter_by_title(series) |> reject_year_conflicts(series)
 
@@ -719,17 +736,24 @@ defmodule Cinder.Acquisition do
   # the configured Prowlarr implementation always tags its TV results above.
   defp tv_title_evidence?(_release, _series), do: true
 
-  # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
-  # unions in a free-text title query (so scraper indexers contribute — see
-  # IndexerSource.Prowlarr), which can surface a same-named different show: "Charmed (2018)"
-  # packs for the year-1998 series. An explicit year token is the one discriminator
-  # scene names reliably carry, so a candidate is dropped only when every year in its
-  # title is more than a year off the series year (±1 absorbs premiere-date wobble
-  # between TMDB and scene naming). A year-shaped token that spells the series' OWN title
-  # (a series literally named "1923") is stripped before this scan — it is the title, not
-  # year evidence — so `release_years/2` excludes it on both sides of the check.
-  # `tv_title_match?/2` applies the stricter identity rule for unverified known-year results;
-  # this final pass also catches conflicts on explicitly identified AKA results.
+  # A free-text query can surface a same-named different show: "Charmed (2018)" packs for the
+  # year-1998 series. `IndexerSource.Prowlarr.search_tv/3` runs one beside the TVDB-scoped query
+  # so scraper indexers contribute, and alone for a series with no TVDB id (a parity run's search
+  # restricted to no Prowlarr indexer sends neither); `IndexerSource.Native.search_tv/3` plans one
+  # for each indexer it asks whose caps take a text search. A provider can also answer the
+  # TVDB-scoped query with another show. An explicit year token is the one discriminator scene
+  # names reliably carry, so for a series with a known year a candidate is dropped only when every
+  # year in its title is more than a year off the series year (±1 absorbs premiere-date wobble
+  # between TMDB and scene naming). A name with no year passes. A year-shaped token that spells the
+  # series' OWN title (a series literally named "1923") is stripped before this scan — it is the
+  # title, not year evidence — so `release_years/2` excludes it on both sides of the check.
+  #
+  # Both `filter_title/2` clauses end with this pass. In the TVDB-id clause, `tv_title_match?/2`
+  # already asks a year within one of a known-year series from a result with no reported TVDB id
+  # and a list of query origins, so this pass adds the check for a result whose reported TVDB id
+  # matches, such as an AKA-titled one, and for one with nil query origins. In the `tvdb_id: nil`
+  # clause it drops a conflicting year `filter_by_title/2` lets through, such as one after the
+  # episode code.
   defp reject_year_conflicts(candidates, %{year: year} = series) when is_integer(year),
     do: Enum.reject(candidates, &year_conflict?(&1.title, series))
 

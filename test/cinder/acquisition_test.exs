@@ -2096,6 +2096,73 @@ defmodule Cinder.AcquisitionTest do
       assert [] = Acquisition.title_guard(releases, {:series, target, 1, [1]})
     end
 
+    test "a series with no TVDB id drops another title under each query origin" do
+      # No year, so a guard that read the origins here, as the TVDB-id clause does for a yearless
+      # series, would keep the id-scoped and the nil-origin Parks rows.
+      target = series(tvdb_id: nil, title: "Forever")
+
+      releases =
+        for name <- ~w(Forever Parks.and.Recreation),
+            origins <- [nil, [:id_scoped], [:free_text]] do
+          Release.new(raw_tv("#{name}.S01E01.1080p.WEB-DL-GRP", query_origins: origins))
+        end
+
+      assert releases
+             |> Acquisition.title_guard({:series, target, 1, [1]})
+             |> Enum.map(&{&1.title, &1.query_origins}) == [
+               {"Forever.S01E01.1080p.WEB-DL-GRP", nil},
+               {"Forever.S01E01.1080p.WEB-DL-GRP", [:id_scoped]},
+               {"Forever.S01E01.1080p.WEB-DL-GRP", [:free_text]}
+             ]
+    end
+
+    test "a known-year series with no TVDB id keeps a free-text title match with no year" do
+      target = series(tvdb_id: nil, title: "Forever", year: 2014)
+
+      releases =
+        [raw_tv("Forever.S01E01.1080p.WEB-DL-GRP", query_origins: [:free_text])]
+        |> Enum.map(&Release.new/1)
+
+      assert [%Release{title: "Forever.S01E01.1080p.WEB-DL-GRP"}] =
+               Acquisition.title_guard(releases, {:series, target, 1, [1]})
+    end
+
+    test "a series with no TVDB id drops a year more than one off after the episode code" do
+      target = series(tvdb_id: nil, title: "Forever", year: 2014)
+
+      releases =
+        for year <- [2015, 2025] do
+          Release.new(
+            raw_tv("Forever.S01E01.#{year}.1080p.WEB-DL-GRP", query_origins: [:free_text])
+          )
+        end
+
+      assert [%Release{title: "Forever.S01E01.2015.1080p.WEB-DL-GRP"}] =
+               Acquisition.title_guard(releases, {:series, target, 1, [1]})
+    end
+
+    test "with a TVDB id, a conflicting year drops a reported-id match and a nil-origin result" do
+      # Neither row reaches the year rule of `tv_title_evidence?/2`: one carries the series' own
+      # reported TVDB id, the other no query origins. Each row has a control a year off.
+      target = series(tvdb_id: 281_535, title: "Forever", year: 2014)
+
+      releases =
+        for {name, attrs} <- [
+              {"La.Eternidad", tvdb_id: 281_535, query_origins: [:id_scoped]},
+              {"Forever", query_origins: nil}
+            ],
+            year <- [2015, 2025] do
+          Release.new(raw_tv("#{name}.#{year}.S01E01.1080p.WEB-DL-GRP", attrs))
+        end
+
+      assert releases
+             |> Acquisition.title_guard({:series, target, 1, [1]})
+             |> Enum.map(& &1.title) == [
+               "La.Eternidad.2015.S01E01.1080p.WEB-DL-GRP",
+               "Forever.2015.S01E01.1080p.WEB-DL-GRP"
+             ]
+    end
+
     test "an IMDb-scoped movie keeps any name spelling a known title and drops another film" do
       context =
         movie_context(
