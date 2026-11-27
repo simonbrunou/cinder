@@ -146,33 +146,50 @@
   compressed member ended 1 to 10 bytes past a multiple of 8,192. Two fix rounds each tested one
   length, and the re-check that swept the lengths stopped the branch under the two-round rule of
   `.agents/skills/fan-out-issue-threads/brief-template.md`.
-- A commit that adds or replaces a scan over a fetched body, a regex or a walk of binary matches,
-  gets a cap probe before any review. Each probe body fills the body's size cap with one shape:
-  each token the scan stops on, with the bytes its pattern needs around it (`\ttype=password`, not
-  `type=password`) and in each case form it folds (`<INPUT >`), repeated alone; each closed token
-  alternating with each other token's hit (`<input>\ttype=password`); or a run a pattern repeats
-  (blank space after `type=`). Send each body with the answer fields that route it to the scan, such
-  as a trusted 200 with `content-type: text/html` for `DownloadCheck.check/2`. Print each body's
-  answer, time and peak memory. Sample the memory from a second process every few milliseconds
-  while the scan runs and keep the largest: `Process.info(pid, :memory)` plus the sizes that
-  `Process.info(pid, :binary)` lists, each binary id counted once, since the first leaves out each
-  binary over 64 bytes, such as a copy of the body. Run the probe on the branch's module and on
-  the code it replaces at the merge base. Save that copy with `git show <merge base>:<path>`
-  and rename its module, so both load side by side: a `Code.compile_file/1` of a file that
-  defines the branch's module replaces the branch's code. When the merge base has no such code,
-  or its copy raises on a body, compare that body with a body of the same size that holds no
-  token, on the branch's module. A body that raises is a finding. Against the merge base's copy,
-  so is a body that takes over 3 times its time or peaks at over 3 times its peak; against the
-  body with no token, so is one that takes over 20 times its time or peaks at over 4 times the
-  body's size. Fix or file each finding before review. The slow and large costs of #1658 below
-  took 37 to 600 times the time of 20 MiB with no token, or 13 to 20 times the body's size,
-  and the #1775 cost took 14 to 19 times the time of the version review had kept; the shapes
-  review kept took at most about 12 times the no-token time and twice the body's size. A suite
-  test cannot hold a time bound as tight as the comparison's on a loaded runner ([ci.md](ci.md)
-  "Wall-clock tests"), so the timing stays a script. On #1658 (PR #1776) four re-checks in a
-  row each found a new cost in the last fix: `SystemLimitError` on a 5 MB inline script, 20 s
-  on 20 MiB of closed `<INPUT >` tags, 364 MiB for a list of every hit, then 1.7 to 1.8 s on
-  `<input>` alternating with a hit, against 0.04 s with no token (#1775).
+- A commit that adds or replaces a scan over a fetched body, a regex or a walk of binary matches, or
+  a parse of the body and any walk that builds text from its tree, filters included, gets a cap
+  probe before any review. Each probe body fills the body's size cap with one shape: each token the
+  scan stops on, with the bytes its pattern needs around it (`\ttype=password`, not `type=password`)
+  and in each case form it folds (`<INPUT >`), repeated alone; each closed token alternating with
+  each other token's hit (`<input>\ttype=password`); or a run a pattern repeats (blank space after
+  `type=`). Send each body with the answer fields that route it to the scan, such as a trusted 200
+  with `content-type: text/html` for `DownloadCheck.check/2`. Run the probe through each caller that
+  hands the scan a body (`rg` the scan's function for them), and print each caller's heap cap beside
+  its results. A caller runs under a heap cap only inside a process that sets one, so follow each
+  caller up to the process it runs in: `rg -n 'Process\.flag\(:max_heap_size' lib` lists those
+  processes, and a process started from one of them gets no cap. On #1678 (PR #1881) the probe ran
+  `JsonRows.values/5` and `XmlRows.values/4`, its XML shapes also in a search process, and never ran
+  the `jsonjoinarray` filter, which a grab ran with no heap cap: the re-check found that filter
+  peaking at 320 MB on a 2 MB value. Print each body's answer, time and peak memory. Sample the
+  memory from a second process every few milliseconds while the scan runs and keep the largest:
+  `Process.info(pid, :memory)` plus the sizes that `Process.info(pid, :binary)` lists, each binary
+  id counted once, since the first leaves out each binary over 64 bytes, such as a copy of the body.
+  Run the probe on the branch's module and on the code it replaces at the merge base. Save that copy
+  with `git show <merge base>:<path>` and rename its module, so both load side by side: a
+  `Code.compile_file/1` of a file that defines the branch's module replaces the branch's code. When
+  the merge base has no such code, or its copy raises on a body, compare that body with a body of
+  the same size that holds no token, on the branch's module. A body that raises is a finding.
+  Against the merge base's copy, so is a body that takes over 3 times its time or peaks at over 3
+  times its peak; against the body with no token, so is one that takes over 20 times its time or
+  peaks at over 4 times the body's size. Fix or file each finding before review. The slow and large
+  costs of #1658 below took 37 to 600 times the time of 20 MiB with no token, or 13 to 20 times the
+  body's size, and the #1775 cost took 14 to 19 times the time of the version review had kept; the
+  shapes review kept took at most about 12 times the no-token time and twice the body's size. A
+  suite test cannot hold a time bound as tight as the comparison's on a loaded runner
+  ([ci.md](ci.md) "Wall-clock tests"), so the timing stays a script. On #1658 (PR #1776) four
+  re-checks in a row each found a new cost in the last fix: `SystemLimitError` on a 5 MB inline
+  script, 20 s on 20 MiB of closed `<INPUT >` tags, 364 MiB for a list of every hit, then 1.7 to
+  1.8 s on `<input>` alternating with a hit, against 0.04 s with no token (#1775).
+- A suite test that holds a memory bound under `max_heap_size` sets `include_shared_binaries: true`
+  in the flag's map when the costly build it bounds lives under the cap without the option. Without
+  it the cap counts the heap alone and leaves out an off-heap binary, as the comment above
+  `@max_heap_words` in `Cinder.Acquisition.IndexerSource.Native` says, and the repo's caps leave it
+  out. On OTP 29 one 8,000,000-byte binary lives under a 1,000,000-word cap without the option and
+  is killed with it. The cap sits between what the fixed code needs and what the costly build needs,
+  each found by a run, and a mutation check that restores the costly build proves it. `JsonTextTest`
+  "refuses a text past the budget without building it" (#1881) sets no option: it builds a million
+  list cells in the capped process, and without the option counting them lived at 8,000,000 words
+  while building their text died at 16,000,000. Its cap is 12,000,000.
 - A Cardigann engine rule that copies Prowlarr's .NET behaviour, such as a regex, a date format or
   the replacement syntax, takes its expected values from a `dotnet fsi` run. The test names the rows
   that came from it, the .NET call with its options and the SDK version, as the header comment of
