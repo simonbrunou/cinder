@@ -16,6 +16,7 @@
 alias Cinder.Accounts.User
 alias Cinder.Catalog
 alias Cinder.Catalog.{Episode, GrabFile, Season, Series}
+alias Cinder.GuardedWrite
 alias Cinder.Repo
 
 email = "admin@example.com"
@@ -29,7 +30,9 @@ cond do
     IO.puts("priv/repo/seeds.exs: the database already has users, skipped")
 
   true ->
-    Repo.transaction(fn ->
+    # `Catalog.create_grab/5` opens a `Cinder.GuardedWrite.transaction/2` frame, which raises
+    # inside a raw `Repo.transaction`, so the seed's one transaction is that frame (#1638).
+    GuardedWrite.transaction(fn ->
       %User{}
       |> User.registration_changeset(%{email: email, password: password}, validate_unique: false)
       |> Ecto.Changeset.change(
