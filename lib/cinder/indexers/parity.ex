@@ -17,10 +17,12 @@ defmodule Cinder.Indexers.Parity do
   - `indexers`: one `%{id, name, kinds, link_check}` per configured indexer the run checks.
     `kinds` lists the corpus kinds (`Cinder.Indexers.Parity.Picks.kinds/0`) its caps can take,
     `:movie_imdb` only when its movie search lists `imdbid`; a kind outside that list gets no
-    cell and keeps the verdict from pass. `link_check` is `:passed`,
-    `{:failed, tag}`, `:not_run`, or `{:not_run, reason}` with the reason
-    `Cinder.Indexers.ParityRun.LinkCheck` or the run gives (#1954). An optional `tvdb_search` says whether its TV search caps
-    list `tvdbid`: `true`, `false`, or `nil` when the run could not read them.
+    cell and keeps the verdict from pass. `link_check` is `:passed`, `{:failed, tag}`, either
+    of those as `{:unpicked, check}` when `Cinder.Indexers.ParityRun.LinkCheck` fetched a row
+    the caller did not pick (#1971), `:not_run`, or `{:not_run, reason}` with the reason
+    `LinkCheck` or the run gives (#1954). `{:unpicked, :passed}` counts as a pass. An optional
+    `tvdb_search` says whether its TV search caps list `tvdbid`: `true`, `false`, or `nil` when
+    the run could not read them.
   - `prowlarr_map`: `%{prowlarr_id => configured_id}` (`configured_indexers.prowlarr_indexer_id`).
   - `history` and `statuses`: `ProwlarrReads.history/3` and `status/1` answers for the window;
     `statuses` may hold several reads (before and after the run).
@@ -738,7 +740,7 @@ defmodule Cinder.Indexers.Parity do
       for({cid, e} <- Enum.sort(evidence), not e.rows, do: {:no_evidence, cid}),
       for(
         {cid, e} <- Enum.sort(evidence),
-        e.link_check != :passed,
+        e.link_check not in [:passed, {:unpicked, :passed}],
         do: {:link_check, cid, e.link_check}
       )
     ])
@@ -746,6 +748,8 @@ defmodule Cinder.Indexers.Parity do
 
   defp link_tag(:passed), do: :passed
   defp link_tag({:failed, tag}), do: {:failed, Picks.tag(tag)}
+  defp link_tag({:unpicked, :passed}), do: {:unpicked, :passed}
+  defp link_tag({:unpicked, {:failed, tag}}), do: {:unpicked, {:failed, Picks.tag(tag)}}
   defp link_tag(:not_run), do: :not_run
 
   defp link_tag({:not_run, {:picks, picks}}) when is_list(picks),

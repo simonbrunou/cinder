@@ -1939,6 +1939,33 @@ defmodule Cinder.Indexers.ParityTest do
       end
     end
 
+    # #1971: a link check of the indexer's first row with a link, when its caller picked none,
+    # counts as #1624 point 14's top acceptable row: a pass passes, and both print the tag.
+    test "a link check of an unpicked row counts and prints the unpicked tag" do
+      for {check, verdict, text} <- [
+            {{:unpicked, :passed}, :pass, "passed (unpicked row)"},
+            {{:unpicked, {:failed, :bad_download_file}}, :inconclusive,
+             "failed bad_download_file (unpicked row)"}
+          ] do
+        indexers = [
+          %{id: @alpha, name: "Alpha", kinds: [:movie_title], link_check: check},
+          %{id: @bravo, name: "Bravo", kinds: [:movie_title], link_check: :passed}
+        ]
+
+        result = Parity.compare(run([movie_search("Dune", [matching_try()])], indexers: indexers))
+        assert result.verdict == verdict, result.report
+        lines = lines(result.report)
+        assert "  Alpha (#1): matching rows found, link check #{text}" in lines, result.report
+
+        if verdict == :pass do
+          assert result.reasons == []
+        else
+          assert result.reasons == [{:link_check, @alpha, check}]
+          assert "  Alpha (#1) link check: #{text}" in lines, result.report
+        end
+      end
+    end
+
     test "a link check reason that holds input text prints none of it" do
       dirty = "https://x.example/?apikey=#{@key}"
 
@@ -1946,7 +1973,9 @@ defmodule Cinder.Indexers.ParityTest do
             {{:not_run, dirty}, "not_run (other)"},
             {{:not_run, {:stopped, dirty}}, "not_run (stopped other)"},
             {{:not_run, {:picks, [{0, dirty}, dirty, {dirty, :no_match}]}},
-             "not_run (pick over its own first-try rows: #0 other, other, other no_match)"}
+             "not_run (pick over its own first-try rows: #0 other, other, other no_match)"},
+            {{:unpicked, {:failed, dirty}}, "failed other (unpicked row)"},
+            {{:unpicked, dirty}, "other"}
           ] do
         indexers = [
           %{id: @alpha, name: "Alpha", kinds: [:movie_title], link_check: check},

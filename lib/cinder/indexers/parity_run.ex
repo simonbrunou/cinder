@@ -185,7 +185,7 @@ defmodule Cinder.Indexers.ParityRun do
         print: print
       }
 
-      searches = Corpus.draw(seed, counts)
+      searches = Corpus.draw(seed, counts, DateTime.utc_now())
       print_header(ctx, seed, counts, searches)
       planned = for kind <- Corpus.kinds(), Map.get(counts, kind, 0) > 0, do: kind
       compare_and_print(Map.put(ctx, :planned, planned), seed, searches)

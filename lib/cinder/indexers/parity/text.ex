@@ -20,7 +20,8 @@ defmodule Cinder.Indexers.Parity.Text do
   words and closed tags: no Native row of the indexer in any search's first try, the pick over
   its own first-try rows in each search that held one, by the search's index (`#0 no_match`),
   the stop and its reason, or the deadline. A bare `:not_run`, which the run no longer gives,
-  prints `not_run` alone.
+  prints `not_run` alone. A link check of a row the caller did not pick (#1971) prints its class,
+  then `(unpicked row)`.
 
   From the input it prints the seed, search labels, indexer names, titles, sizes, counts, ids,
   times (the window, a wait's end) and closed tags only, beside its own fixed text such as the
@@ -154,6 +155,8 @@ defmodule Cinder.Indexers.Parity.Text do
 
   # #1954: a link check that did not run names the reason it carries.
   defp link_check({:not_run, reason}), do: "not_run (#{not_run(reason)})"
+  # #1971: a check of a row the caller did not pick.
+  defp link_check({:unpicked, check}), do: "#{tag(check)} (unpicked row)"
   defp link_check(check), do: tag(check)
 
   defp not_run(:no_rows), do: "no Native row in any first try"

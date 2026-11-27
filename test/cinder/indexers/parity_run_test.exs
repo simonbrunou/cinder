@@ -467,9 +467,11 @@ defmodule Cinder.Indexers.ParityRunTest do
     assert search_count("nzb.example") == 2
   end
 
-  # The first search's Native call answers no row, the second's one the caller's title guard
-  # drops: the reason lists the second search alone, by its index in the run.
-  test "an indexer whose own rows the caller picks nothing from reads not_run with each search's pick",
+  # #1971, Torrent9's case on #1944's probe: the first search's Native call answers no row, the
+  # second's one the caller's title guard drops. Both sides return that row, so the indexer has
+  # evidence, and the link check fetches it, unpicked, so the run passes. (Before #1971 the check
+  # read `not_run (pick over its own first-try rows: #1 no_match)`.)
+  test "an indexer whose own rows the caller picks nothing from passes on its first row with a link",
        %{history: history, statuses: statuses} do
     indexer = :newznab |> indexer!("nzb.example") |> link!(7)
     inception()
@@ -486,7 +488,10 @@ defmodule Cinder.Indexers.ParityRunTest do
     report = run!(counts: %{movie_imdb: 2}, indexers: [indexer.id])
 
     assert_received {:result, :ok}
-    assert_link_line(report, indexer, "not_run (pick over its own first-try rows: #1 no_match)")
+    lines = String.split(report, "\n")
+    assert "Verdict: pass" in lines, report
+    name = "newznab nzb.example (##{indexer.id})"
+    assert "  #{name}: matching rows found, link check passed (unpicked row)" in lines, report
     refute report =~ "Unrelated"
   end
 
@@ -693,7 +698,9 @@ defmodule Cinder.Indexers.ParityRunTest do
     for n <- 1..6,
         do: movie_fixture(%{imdb_id: "tt000000#{n}", title: "Movie #{n}", year: 2000 + n})
 
-    labels = fn seed -> Enum.map(Corpus.draw(seed, %{movie_title: 3}), & &1.label) end
+    labels = fn seed ->
+      Enum.map(Corpus.draw(seed, %{movie_title: 3}, DateTime.utc_now()), & &1.label)
+    end
 
     assert labels.(5) == labels.(5)
     assert length(labels.(5)) == 3
@@ -742,7 +749,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     for n <- 1..4,
         do: movie_fixture(%{imdb_id: "tt100000#{n}", title: "Movie #{n}", year: 2000 + n})
 
-    drawn = Corpus.draw(3, %{movie_title: 2, movie_imdb: 1})
+    drawn = Corpus.draw(3, %{movie_title: 2, movie_imdb: 1}, DateTime.utc_now())
 
     assert Enum.frequencies_by(drawn, & &1.kind) == %{movie_title: 2, movie_imdb: 1}
     assert Corpus.planned_counts(200) == Map.new(Corpus.kinds(), &{&1, 1})
@@ -755,9 +762,68 @@ defmodule Cinder.Indexers.ParityRunTest do
     movie_fixture(%{title: "Wanted", year: 2002})
 
     for seed <- 1..10 do
-      assert [%{label: label}] = Corpus.draw(seed, %{movie_title: 1})
+      assert [%{label: label}] = Corpus.draw(seed, %{movie_title: 1}, DateTime.utc_now())
       assert label =~ "movie ##{imported.id} Imported"
     end
+  end
+
+  # #1971: Torrent9 answers a season of a series that airs now (#1944's probe). The bound is the
+  # household date of the run's `now`, 30 days back included; an episode dated after it has not
+  # aired. A `now` years ahead of the clock shows that the draw reads every date at the run's
+  # `now`: read at today's date, "Airing Show"'s one episode has not aired.
+  test "a season with an episode aired in the 30 days before the run is drawn before an imported one" do
+    now = ~U[2031-03-15 12:00:00Z]
+    today = Cinder.Settings.household_date(now)
+
+    imported = series_fixture(%{title: "Imported Show", tvdb_id: 1})
+    episode_fixture(season_fixture(imported), %{file_path: "/tv/imported/s01e01.mkv"})
+
+    airing = fn title, tvdb_id, dates ->
+      season = season_fixture(series_fixture(%{title: title, tvdb_id: tvdb_id}))
+
+      for {date, n} <- Enum.with_index(dates, 1),
+          do: episode_fixture(season, %{episode_number: n, air_date: date})
+    end
+
+    airing.("Airing Show", 2, [Date.add(today, -30)])
+    airing.("Airing Today", 5, [today])
+    airing.("Ended Show", 3, [~D[2001-01-01], Date.add(today, -31)])
+    airing.("Coming Show", 4, [~D[2001-01-01], Date.add(today, 1)])
+
+    labels = fn seed -> Enum.map(Corpus.draw(seed, %{season: 5}, now), & &1.label) end
+
+    firsts =
+      for seed <- 1..20 do
+        assert [first, second, third | _] = labels.(seed)
+        assert Enum.sort([first =~ "Airing Show", second =~ "Airing Show"]) == [false, true]
+        assert first =~ "Airing" and second =~ "Airing"
+        assert third =~ "Imported Show"
+        first
+      end
+
+    # The seed shuffles the seasons that air now, as it does the other groups.
+    assert length(Enum.uniq(firsts)) == 2
+  end
+
+  test "a run searches the anime episodes, then the seasons, then the movies" do
+    inception()
+    episode_fixture(season_fixture(series_fixture(%{title: "Some Show"})))
+
+    anime =
+      series_fixture(%{
+        title: "Some Anime",
+        tvdb_id: 9,
+        media_profile: :anime,
+        preferred_language: "original",
+        original_language: "ja"
+      })
+
+    episode_fixture(season_fixture(anime))
+
+    counts = %{anime_episodes: 1, season: 1, movie_title: 1, movie_imdb: 1}
+
+    assert Enum.map(Corpus.draw(1, counts, DateTime.utc_now()), & &1.kind) ==
+             [:anime_episodes, :season, :movie_title, :movie_imdb]
   end
 
   test "an anime series whose policy does not resolve takes no draw" do
@@ -788,7 +854,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     })
 
     for seed <- 1..10 do
-      assert [%{label: label}] = Corpus.draw(seed, %{anime_episodes: 1})
+      assert [%{label: label}] = Corpus.draw(seed, %{anime_episodes: 1}, DateTime.utc_now())
       assert label =~ "Good Anime"
     end
   end
@@ -1285,6 +1351,75 @@ defmodule Cinder.Indexers.ParityRunTest do
 
   # --- the seams ---
 
+  # --- a link check over hand-built first tries ---
+
+  @unrelated "Unrelated.Film.2001.1080p.WEB-DL-GRP"
+
+  # A first try of a movie-by-title search for Inception (2010) whose one Native call answers
+  # `rows`, which the indexer's report reads as asked.
+  defp link_search(indexer, rows) do
+    report = Report.put(Report.new(), {"native", indexer.id}, indexer.name, :asked)
+
+    %{
+      kind: :movie_title,
+      target: %{
+        context: %{
+          imdb_id: nil,
+          title: "Inception",
+          year: 2010,
+          aliases: [],
+          localized_titles: []
+        }
+      },
+      opts: [now: ~U[2026-11-25 10:00:00Z]],
+      tries: [
+        %{
+          native: %{
+            calls: [
+              %{
+                callback: :search_movie_query,
+                args: ["Inception 2010", []],
+                outcome: {:ok, rows, report}
+              }
+            ]
+          }
+        }
+      ]
+    }
+  end
+
+  # A free-text Native torrent row of `indexer` (Torznab's `search_movie_query` asks free text).
+  defp link_row(indexer, url, title) do
+    %{
+      title: title,
+      size: @size,
+      download_url: url,
+      protocol: :torrent,
+      seeders: 50,
+      indexer_id: indexer.id,
+      indexer_name: indexer.name,
+      indexer_source: "native",
+      credentials_version: indexer.credentials_version,
+      published_at: ~U[2026-11-01 10:00:00Z],
+      category_ids: [2040],
+      query_origins: [:free_text]
+    }
+  end
+
+  # Answers each link fetch to `hosts` with `body` and reports `{:fetched, host, path}`; returns
+  # the fetch opts that reach the stub.
+  defp fetched_route(hosts, body \\ Cinder.TorrentFixture.minimal()) do
+    test_pid = self()
+
+    answer = fn conn, _query ->
+      send(test_pid, {:fetched, conn.host, conn.request_path})
+      body
+    end
+
+    route(Map.new(hosts, &{&1, answer}))
+    [plug: {Req.Test, Cinder.NewznabStub}, resolver: fn _host -> {:ok, [@public_address]} end]
+  end
+
   describe "the seams" do
     test "Indexer.request charges the context's budget per send and sends nothing it refuses" do
       route(%{"nzb.example" => fn _conn, _query -> rss() end})
@@ -1526,88 +1661,79 @@ defmodule Cinder.Indexers.ParityRunTest do
       assert Cinder.CardigannFixtures.requests() == [{"t9.test", "/torrent/1", %{}}]
     end
 
-    # #1954: search #0 holds only another indexer's row, so it gives no pick; in search #1 the
-    # caller picks the indexer's own row, which has no link; in search #2 the title guard drops
-    # its own row.
-    test "a link check whose pick has no link reads not_run with no_link, by the search's index" do
-      indexer = indexer!(:newznab, "nzb.example")
-      other = indexer!(:newznab, "other.example")
-
-      row = fn cid, url, title ->
-        %{
-          title: title,
-          size: @size,
-          download_url: url,
-          protocol: :usenet,
-          indexer_id: cid,
-          indexer_name: "nzb",
-          indexer_source: "native",
-          credentials_version: indexer.credentials_version,
-          published_at: ~U[2026-11-01 10:00:00Z],
-          category_ids: [2040],
-          # Newznab's `search_movie_query` asks free text (`requests/2` in `Newznab`).
-          query_origins: [:free_text]
-        }
-      end
-
-      search = fn rows ->
-        report = Report.put(Report.new(), {"native", indexer.id}, indexer.name, :asked)
-
-        %{
-          kind: :movie_title,
-          target: %{
-            context: %{
-              imdb_id: nil,
-              title: "Inception",
-              year: 2010,
-              aliases: [],
-              localized_titles: []
-            }
-          },
-          opts: [now: ~U[2026-11-25 10:00:00Z]],
-          tries: [
-            %{
-              native: %{
-                calls: [
-                  %{
-                    callback: :search_movie_query,
-                    args: ["Inception 2010", []],
-                    outcome: {:ok, rows, report}
-                  }
-                ]
-              }
-            }
-          ]
-        }
-      end
-
-      link = "https://nzb.example/dl/1?apikey=#{key()}"
-      unrelated = "Unrelated.Film.2001.1080p.WEB-DL-GRP"
+    # #1954 and #1971: search #0 holds only another indexer's row, so it gives no pick; in
+    # search #1 the caller picks the indexer's own row, which has no link; in search #2 the title
+    # guard drops its own row, which has no link either. No row of the indexer has a link, so the
+    # check names each pick and fetches nothing.
+    test "a link check with no own row with a link reads not_run with each pick, by the search's index" do
+      indexer = indexer!(:torznab, "t.example")
+      other = indexer!(:torznab, "other.example")
+      fetched = fetched_route(["t.example", "other.example"])
 
       searches = [
-        search.([row.(other.id, link, @title)]),
-        search.([row.(indexer.id, nil, @title)]),
-        search.([row.(indexer.id, link, unrelated)])
+        link_search(indexer, [link_row(other, "https://other.example/dl/0.torrent", @title)]),
+        link_search(indexer, [link_row(indexer, nil, @title)]),
+        link_search(indexer, [link_row(indexer, nil, @unrelated)])
       ]
 
-      budget = Budget.new([indexer.id], 10)
-
-      assert LinkCheck.check(indexer, searches, budget) ==
+      assert LinkCheck.check(indexer, searches, Budget.new([indexer.id], 10), fetched) ==
                {:not_run, {:picks, [{1, :no_link}, {2, :no_match}]}}
 
-      # The control: the same row with its link is fetched and passes.
-      route(%{"nzb.example" => fn _conn, _query -> Cinder.NzbFixture.minimal() end})
+      refute_received {:fetched, _host, _path}
+    end
 
-      assert LinkCheck.check(
-               indexer,
-               [
-                 search.([row.(other.id, link, @title)]),
-                 search.([row.(indexer.id, link, @title)])
-               ],
-               budget,
-               plug: {Req.Test, Cinder.NewznabStub},
-               resolver: fn _host -> {:ok, [@public_address]} end
-             ) == :passed
+    # #1971: the caller picks none of the indexer's rows (#1 no link, #2 and #3 dropped by the
+    # title guard), so the check fetches its first own row with a link in search order, #2's,
+    # with the same fetch and budget, and says the row was unpicked.
+    test "a link check whose caller picks no row with a link fetches the first own row with a link" do
+      indexer = indexer!(:torznab, "t.example")
+      other = indexer!(:torznab, "other.example")
+      fetched = fetched_route(["t.example", "other.example"])
+
+      searches = [
+        link_search(indexer, [link_row(other, "https://other.example/dl/0.torrent", @title)]),
+        link_search(indexer, [link_row(indexer, nil, @title)]),
+        link_search(indexer, [link_row(indexer, "https://t.example/dl/2.torrent", @unrelated)]),
+        link_search(indexer, [link_row(indexer, "https://t.example/dl/3.torrent", @unrelated)])
+      ]
+
+      assert LinkCheck.check(indexer, searches, Budget.new([indexer.id], 10), fetched) ==
+               {:unpicked, :passed}
+
+      assert_received {:fetched, "t.example", "/dl/2.torrent"}
+      refute_received {:fetched, _host, _path}
+
+      # The same pass rule: a body that is no torrent fails, still from the unpicked row.
+      fetched = fetched_route(["t.example"], "not a torrent")
+
+      assert LinkCheck.check(indexer, searches, Budget.new([indexer.id], 10), fetched) ==
+               {:unpicked, {:failed, :bad_download_file}}
+
+      # The same budget: no request left sends nothing.
+      spent = Budget.new([indexer.id], 1)
+      Budget.take(spent, indexer.id)
+
+      assert LinkCheck.check(indexer, searches, spent, fetched) ==
+               {:unpicked, {:failed, :budget}}
+
+      assert_received {:fetched, "t.example", "/dl/2.torrent"}
+      refute_received {:fetched, _host, _path}
+    end
+
+    # #1971: search #0 holds an own row with a link that the caller drops, search #1 the row it
+    # picks. A pick wins over an earlier unpicked row.
+    test "a link check fetches the caller's pick over an earlier unpicked row with a link" do
+      indexer = indexer!(:torznab, "t.example")
+      fetched = fetched_route(["t.example"])
+
+      searches = [
+        link_search(indexer, [link_row(indexer, "https://t.example/dl/0.torrent", @unrelated)]),
+        link_search(indexer, [link_row(indexer, "https://t.example/dl/1.torrent", @title)])
+      ]
+
+      assert LinkCheck.check(indexer, searches, Budget.new([indexer.id], 10), fetched) == :passed
+      assert_received {:fetched, "t.example", "/dl/1.torrent"}
+      refute_received {:fetched, _host, _path}
     end
 
     test "a pick key that gives no row reads as a closed tag" do
