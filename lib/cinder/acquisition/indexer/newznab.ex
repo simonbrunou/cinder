@@ -163,8 +163,21 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   """
   @spec plan(ConfiguredIndexer.t(), Indexer.query(), Indexer.context()) ::
           {:ok, [planned()]} | {:not_asked, :caps} | {:failed, atom() | tuple()}
-  def plan(%ConfiguredIndexer{} = indexer, query, context) do
-    case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context) end) do
+  def plan(%ConfiguredIndexer{} = indexer, query, context),
+    do: plan_from(indexer, query, fn -> fetch_caps(indexer, context) end)
+
+  @doc """
+  `plan/3` over the stored caps row alone: it sends no request and writes nothing, and answers
+  `{:failed, :not_stored}` when no row is usable. A parity run reads it before a side to tell
+  whether the side's search can reach the indexer (`Cinder.Indexers.ParityRun.IndexerSet`).
+  """
+  @spec stored_plan(ConfiguredIndexer.t(), Indexer.query()) ::
+          {:ok, [planned()]} | {:not_asked, :caps} | {:failed, atom() | tuple()}
+  def stored_plan(%ConfiguredIndexer{} = indexer, query),
+    do: plan_from(indexer, query, fn -> {:error, :not_stored} end)
+
+  defp plan_from(indexer, query, fetch) do
+    case IndexerCaps.read(indexer, fetch) do
       {:ok, caps} -> query |> requests(caps) |> planned(indexer)
       {:error, tag} -> {:failed, tag}
     end

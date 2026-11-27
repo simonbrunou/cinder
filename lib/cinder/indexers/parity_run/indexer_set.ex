@@ -40,7 +40,7 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
   alias Cinder.Acquisition.Indexer.{Cardigann, Newznab}
   alias Cinder.Acquisition.Indexer.Cardigann.Query
   alias Cinder.Acquisition.Indexer.Newznab.Caps
-  alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaps, IndexerState}
   alias Cinder.Indexers
   alias Cinder.Indexers.ConfiguredIndexer
@@ -56,6 +56,34 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
     anime_episodes: [{:search_tv, nil, "x", 1}, {:search_tv_query, "x", [categories: [5070]]}],
     ebook: [{:search_ebook, nil, "x", []}, {:search_ebook_query, "x", []}],
     audiobook: [{:search_audiobook, nil, "x", []}, {:search_audiobook_query, "x", []}]
+  }
+
+  # The seam calls a search of each kind may send, as its caller sends them: a movie with an id
+  # sends `{:search_movie, imdb_id, query, opts}` (`Cinder.Acquisition.judge_movie/3`), which
+  # Newznab sends as a text search to an indexer whose caps lack `imdbid`; one by title sends
+  # `{:search_movie_query, query, opts}`; a season sends `{:search_tv, tvdb_id, title, season}`
+  # with the series' TVDB id, or nil; a book search may name an author or none. `reaches?/3` reads
+  # a kind as reaching an indexer when one of them may ask it.
+  @reach_probes %{
+    movie_imdb: [{:search_movie, @imdb, "x", []}],
+    movie_title: [{:search_movie_query, "x", []}],
+    season: [{:search_tv, 1, "x", 1}, {:search_tv, nil, "x", 1}],
+    season_zero: [{:search_tv, 1, "x", 0}, {:search_tv, nil, "x", 0}],
+    anime_episodes: [
+      {:search_tv, 1, "x", 1},
+      {:search_tv, nil, "x", 1},
+      {:search_tv_query, "x", [categories: [5070]]}
+    ],
+    ebook: [
+      {:search_ebook, "x", "x", []},
+      {:search_ebook, nil, "x", []},
+      {:search_ebook_query, "x", []}
+    ],
+    audiobook: [
+      {:search_audiobook, "x", "x", []},
+      {:search_audiobook, nil, "x", []},
+      {:search_audiobook_query, "x", []}
+    ]
   }
 
   @doc """
@@ -158,13 +186,87 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
 
   def caps(%ConfiguredIndexer{}, kinds, _context), do: unread(kinds)
 
+  @doc """
+  Whether `side` of a search of `kind` may send `indexer` a request, read before that side with
+  no request and no write, over the seam calls a caller of that kind may send (`@reach_probes`:
+  an id and none, an author and none). The parity run paces each side by it
+  (`Cinder.Indexers.ParityRun` "Spacing").
+
+  - `:native`: false only when Native's plan of every such call is `{:not_asked, :caps}`, the
+    indexer's caps taking none of it: a Cardigann indexer plans over its running copy, a Newznab
+    or Torznab one over its stored caps row (`Cinder.Acquisition.Indexer.Newznab.stored_plan/2`).
+    A plan whose every query fails to build sends nothing too, but reads true.
+  - `:prowlarr`: false only when every Prowlarr request of those calls
+    (`Cinder.Acquisition.IndexerSource.Prowlarr.requests/2`) names categories and the indexer's
+    caps list none of them (`Caps.covers?/2`, over a Cardigann copy's mapped categories), since
+    Prowlarr leaves out of a search each indexer whose categories hold none of the request's
+    (`ReleaseSearchService.Dispatch` at `b0b5774`). A request with no categories, such as a TV
+    search or a movie by IMDb id, reaches every indexer it names.
+
+  A copy that does not run, no usable caps row, or another type reads true on both sides, since
+  the run cannot tell the search skips the indexer.
+  """
+  @spec reaches?(ConfiguredIndexer.t(), atom(), :native | :prowlarr) :: boolean()
+  def reaches?(%ConfiguredIndexer{} = indexer, kind, :native) do
+    case planner(indexer) do
+      nil ->
+        true
+
+      planner ->
+        Enum.any?(Map.fetch!(@reach_probes, kind), &(planner.(&1) != {:not_asked, :caps}))
+    end
+  end
+
+  def reaches?(%ConfiguredIndexer{} = indexer, kind, :prowlarr) do
+    for probe <- Map.fetch!(@reach_probes, kind),
+        [callback | args] = Tuple.to_list(probe),
+        request <- Prowlarr.requests(callback, args) do
+      request.categories
+    end
+    |> Enum.any?(&(&1 == [] or covers?(indexer, &1)))
+  end
+
+  # The plan Native would make of a seam call for `indexer`, from what is stored; nil when the
+  # run cannot read one.
+  defp planner(%ConfiguredIndexer{type: :cardigann} = indexer) do
+    case Cardigann.copy(indexer) do
+      {:ok, copy} -> &Query.plan(copy.definition, copy.config, &1, Native.now())
+      {:not_supported, _feature} -> nil
+    end
+  end
+
+  # A plan with no usable row answers `{:failed, :not_stored}`, which reads as asking.
+  defp planner(%ConfiguredIndexer{type: type} = indexer) when type in [:newznab, :torznab],
+    do: &Newznab.stored_plan(indexer, &1)
+
+  defp planner(%ConfiguredIndexer{}), do: nil
+
+  defp covers?(%ConfiguredIndexer{type: :cardigann} = indexer, categories) do
+    case Cardigann.copy(indexer) do
+      {:ok, copy} -> Query.site_categories(copy.definition, categories) != []
+      {:not_supported, _feature} -> true
+    end
+  end
+
+  defp covers?(%ConfiguredIndexer{type: type} = indexer, categories)
+       when type in [:newznab, :torznab] do
+    case stored_caps(indexer) do
+      {:ok, caps} -> Caps.covers?(caps, categories)
+      {:error, _reason} -> true
+    end
+  end
+
+  defp covers?(%ConfiguredIndexer{}, _categories), do: true
+
+  defp stored_caps(indexer), do: IndexerCaps.read(indexer, fn -> {:error, :not_stored} end)
+
   @doc "The answer of `caps/3` for an indexer whose caps the run did not read."
   @spec unread([atom()]) :: %{kinds: [atom()], tvdb_search: nil}
   def unread(kinds), do: %{kinds: kinds, tvdb_search: nil}
 
   # The caps row the plans above read or stored; a fetch here would spend the budget again.
   defp newznab_tvdbid?(indexer) do
-    case IndexerCaps.read(indexer, fn -> {:error, :not_stored} end) do
+    case stored_caps(indexer) do
       {:ok, caps} -> Caps.param?(caps, "tv-search", "tvdbid")
       {:error, _reason} -> nil
     end

@@ -27,6 +27,8 @@ defmodule Cinder.Indexers.ParityRun do
     default. At Prowlarr `b0b5774` only two indexer definitions answer a query from a cache,
     AnimeBytes for 3 minutes and Rarbg for 10 (`_queryResultCache.Set` in their `FetchPage`),
     and a cached answer leaves the engine's cell uncovered (`:prowlarr_cached`).
+  - `indexer_spacing_ms:`, how long after a side that sent an indexer a request the next side that
+    may reach it starts: 10,000 ms by default ("Spacing" below).
   - `history_wait_ms:`, how long after the last Prowlarr call the run reads Prowlarr's history:
     5,000 ms by default, the engine's slack for Prowlarr writing an entry after its answer.
   - `fetch_opts:`, extra fetch options for the link check (a test's `plug:` and `resolver:`).
@@ -50,7 +52,8 @@ defmodule Cinder.Indexers.ParityRun do
      that goes first alternating per search from a first side the seed picks. Both sides get the
      same opts: the household policy (`HouseholdPolicy.for_target/2`, or the book panel's opts),
      each one-source block's twin under the other source, and one `now:`. Native asks only the
-     set's indexers; Prowlarr's requests carry one `indexerIds` per mapped indexer.
+     set's indexers; Prowlarr's requests carry one `indexerIds` per mapped indexer. Each side
+     first waits for the spacing of the indexers it may reach ("Spacing" below).
   4. After each search it reads Prowlarr's status again. An indexer whose allowance refused a
      request, whose Native answer was a limit or an HTTP 429, or whose Prowlarr indexer shows a
      backoff set by a failure after the search started, is stopped for the rest of the run, and
@@ -58,7 +61,7 @@ defmodule Cinder.Indexers.ParityRun do
   5. Reads each indexer's kinds and whether its TV search takes a TVDB id
      (`Cinder.Indexers.ParityRun.IndexerSet.caps/3`), runs its link check
      (`Cinder.Indexers.ParityRun.LinkCheck`), then reads Prowlarr's history over the run and
-     compares.
+     compares. Each indexer first waits for its spacing, the deadline at most.
   6. Runs each search the engine lists in `retry` once more, through both sides, once
      `retry_spacing_s` has passed since its first try ended, reads the history again and
      compares the two tries. A stop in a retry makes the indexer inconclusive from that search
@@ -72,6 +75,59 @@ defmodule Cinder.Indexers.ParityRun do
   It rescues every raise, exit and throw and prints one line, `Parity run failed: <tag>`, with
   the exception's module name after a raise (`raised KeyError`), never a message or a term that
   can hold a link or a key. It answers `:ok` once the report is printed, else `{:error, tag}`.
+
+  ## Spacing
+
+  Native spaces its own requests to each indexer (`Native.Lease`), but nothing spaced Prowlarr's
+  side of a search from Native's, or one search from the next. In #1687's run 3 Torrent9
+  answered a limit after Prowlarr's side alone had sent it 5 queries in 20 s, and the run
+  stopped it (#1969). So the run spaces each configured indexer between sides:
+
+  - Before a side, the run reads which indexers of the try's set it may reach
+    (`IndexerSet.reaches?/3`, from the stored caps row or the running Cardigann copy, with no
+    request). Native's side reaches each one unless Native's plan of every seam call of the kind
+    answers that the indexer's caps take none of it (`{:not_asked, :caps}`). A plan whose every
+    query fails to build also sends nothing, but counts as reached: that side waits a spacing it
+    did not need, and sends nothing early.
+    Prowlarr's side reaches the mapped ones, except where every request of the kind names
+    categories that the indexer's caps do not list: Prowlarr leaves such an indexer out of the
+    search (`ReleaseSearchService.Dispatch` at `b0b5774`). A TV search and a movie by IMDb id
+    name no categories, so they reach every mapped indexer. An indexer with no usable caps row,
+    or a copy that does not run, counts as reached. The second side reads its reach after the
+    first side ran, so a caps row the first side's fetch stored counts.
+  - A side starts once `indexer_spacing_ms` has passed, for each indexer it may reach, since the
+    end of the last side or step 5 read that sent that indexer a request. An indexer it cannot
+    reach does not hold it back, as a movie-only indexer does not hold back a book search.
+  - After the side, each indexer it sent a request starts its spacing. On Native's side that is
+    each indexer whose spent requests rose. On Prowlarr's it is each reached one whose spent
+    requests rose, since a Prowlarr request charges every mapped indexer it names
+    (`Recorder`).
+  - Within one side, requests go out as the source sends them: Native's at its lease's spacing,
+    Prowlarr's with none from Cinder, as an anime search's alias queries or a season's two TV
+    queries. Spacing each of those would make an anime search wait once per alias query.
+  - Each indexer waits once for its spacing before its step 5 reads, the deadline at most, and
+    its spacing starts again when those reads sent it a request. Between its two reads there is
+    no wait: a caps fetch and the link check's fetch can go out back to back.
+  - The spacing is per configured indexer: two indexers on one host, and Cinder's live pollers,
+    are not spaced from each other.
+
+  The default, 10 s, is a guess. #1969's data does not tell a burst limit from a count over a
+  longer window, holds no request time of Native's, and so gives no gap known to be safe. It is
+  five times the 2 s Native's lease keeps by default between two requests to one indexer.
+
+  ### Spacing and the deadline
+
+  The one `deadline_s` bounds the run's indexer requests: the first tries, step 5's reads and
+  the retries. The history reads and the compares run past it. A try starts only when its first
+  side's wait ends before the deadline; otherwise it has no try, which the engine
+  reads inconclusive. Once a try has started, its second side waits its whole spacing, past the
+  deadline too, so a started try never sends its second side early. Every wait is one spacing at
+  most, since a spacing ends one spacing after a side or read ends. So a try waits two spacings
+  at most: run 3's counts, 21 searches, wait 420 s at most at the default. Run 3 drew 20 of them,
+  whose first tries took 529 s unspaced (#1969). A retry, which starts `retry_spacing_s` after
+  its first try ended at the earliest, waits two spacings at most too. The deadline stays
+  2,700 s: the waits leave less of it to step 5's reads and the retries, and a retry not started
+  by it has no try. An operator who wants room for more retries passes a longer `deadline_s:`.
 
   ## Live pollers and Prowlarr's history
 
@@ -96,6 +152,7 @@ defmodule Cinder.Indexers.ParityRun do
   @budget 200
   @deadline_s 2_700
   @retry_spacing_s 660
+  @indexer_spacing_ms 10_000
   @history_wait_ms 5_000
 
   @probe_url "https://parity.invalid/get?apikey=PARITYPROBEKEY"
@@ -179,6 +236,7 @@ defmodule Cinder.Indexers.ParityRun do
         map: map,
         budget: Budget.new(Enum.map(indexers, & &1.id), limits.budget),
         deadline_at: mono() + limits.deadline_s * 1000,
+        free_at: %{},
         stopped: %{},
         statuses: before,
         before: before,
@@ -205,6 +263,7 @@ defmodule Cinder.Indexers.ParityRun do
       budget: Keyword.get(opts, :budget, @budget),
       deadline_s: Keyword.get(opts, :deadline_s, @deadline_s),
       retry_spacing_s: Keyword.get(opts, :retry_spacing_s, @retry_spacing_s),
+      indexer_spacing_ms: Keyword.get(opts, :indexer_spacing_ms, @indexer_spacing_ms),
       history_wait_ms: Keyword.get(opts, :history_wait_ms, @history_wait_ms)
     }
 
@@ -223,6 +282,7 @@ defmodule Cinder.Indexers.ParityRun do
     ctx.print.(
       "Limits: #{ctx.limits.budget} requests per indexer, deadline #{ctx.limits.deadline_s} s, " <>
         "retry spacing #{ctx.limits.retry_spacing_s} s, " <>
+        "indexer spacing #{ctx.limits.indexer_spacing_ms} ms, " <>
         "history wait #{ctx.limits.history_wait_ms} ms"
     )
 
@@ -244,7 +304,7 @@ defmodule Cinder.Indexers.ParityRun do
         {%{search | tries: List.wrap(try)}, ctx}
       end)
 
-    engine_indexers = engine_indexers(searches, ctx)
+    {engine_indexers, ctx} = engine_indexers(searches, ctx)
 
     with {:ok, run} <- engine_run(ctx, seed, searches, engine_indexers),
          {:ok, result} <- retried(Parity.compare(run), searches, ctx, seed, engine_indexers) do
@@ -296,28 +356,89 @@ defmodule Cinder.Indexers.ParityRun do
     if left > 0, do: Process.sleep(left)
   end
 
-  # One try of a search through both sides, in the search's order, or nil when the deadline has
-  # passed or no indexer of the set is left.
+  # One try of a search through both sides, in the search's order, or nil when no indexer of the
+  # set is left or the first side's spacing wait would end at the deadline or past it
+  # ("Spacing" in the moduledoc).
   defp run_try(search, ctx) do
     left = for i <- ctx.indexers, not Map.has_key?(ctx.stopped, i.id), do: i.id
 
-    if mono() >= ctx.deadline_at or left == [] do
-      {nil, ctx}
+    with [_ | _] <- left,
+         reached = reached(search.first, search.kind, left, ctx),
+         true <- wait_at(reached, ctx) < ctx.deadline_at do
+      tried(search, left, reached, ctx)
     else
-      started_at = DateTime.utc_now()
-
-      {sides, ctx} =
-        Enum.map_reduce([search.first, other(search.first)], ctx, fn side, ctx ->
-          {record, ctx} = run_side(side, search, left, ctx)
-          {{side, record}, ctx}
-        end)
-
-      sides = Map.new(sides)
-      {statuses, ctx} = after_status(started_at, ctx)
-      sides = put_in(sides, [:prowlarr, :stops], sides.prowlarr.stops ++ statuses)
-
-      {%{prowlarr: sides.prowlarr, native: sides.native, ended_ms: mono()}, ctx}
+      _no_try -> {nil, ctx}
     end
+  end
+
+  # The second side reads its reach once the first has run: a caps row the first side's fetch
+  # stored tells it more than the run knew before.
+  defp tried(search, left, reached, ctx) do
+    second = other(search.first)
+    pace(search, search.first, reached, ctx)
+    started_at = DateTime.utc_now()
+    {first, ctx} = spaced_side(search.first, search, left, reached, ctx)
+    reached = reached(second, search.kind, left, ctx)
+    pace(search, second, reached, ctx)
+    {second_record, ctx} = spaced_side(second, search, left, reached, ctx)
+
+    sides = %{search.first => first, second => second_record}
+    {statuses, ctx} = after_status(started_at, ctx)
+    sides = put_in(sides, [:prowlarr, :stops], sides.prowlarr.stops ++ statuses)
+
+    {%{prowlarr: sides.prowlarr, native: sides.native, ended_ms: mono()}, ctx}
+  end
+
+  # The indexers of the try's `left` that `side` of a search of `kind` may send a request
+  # (`IndexerSet.reaches?/3`), on Prowlarr's side only the mapped ones. An indexer the first side
+  # stopped stays in: the second side still asks it (`run_side/4`).
+  defp reached(side, kind, left, ctx) do
+    mapped = Map.values(ctx.map)
+
+    for i <- ctx.indexers,
+        i.id in left,
+        side == :native or i.id in mapped,
+        IndexerSet.reaches?(i, kind, side),
+        do: i.id
+  end
+
+  # When a side that reaches `ids` may start: now, or the latest spacing end among them.
+  defp wait_at(ids, ctx),
+    do: Enum.max([mono() | for(id <- ids, at = ctx.free_at[id], at != nil, do: at)])
+
+  # Waits for the side's spacing in full, past the deadline too: only a try's first side is
+  # held to the deadline (`run_try/2`). `[:cinder, :parity_run, :paced]` names the indexers the
+  # side reaches, and as `waiting` those of them whose spacing still runs. The sleep reads only
+  # `waiting`, so a test reads which indexers held the side back with no clock.
+  defp pace(search, side, reached, ctx) do
+    now = mono()
+    waiting = for id <- reached, at = ctx.free_at[id], at != nil, at > now, do: id
+
+    :telemetry.execute([:cinder, :parity_run, :paced], %{}, %{
+      kind: search.kind,
+      side: side,
+      indexers: reached,
+      waiting: waiting
+    })
+
+    wait_ms = wait_at(waiting, ctx) - mono()
+    if wait_ms > 0, do: Process.sleep(wait_ms)
+  end
+
+  # Runs one side, then starts the spacing of each indexer it sent a request: on Native's side
+  # every indexer whose spent requests rose, on Prowlarr's each reached one whose did, since a
+  # Prowlarr request charges every mapped indexer it names (`Recorder`).
+  defp spaced_side(side, search, left, reached, ctx) do
+    spent = Map.new(left, &{&1, Budget.spent(ctx.budget, &1)})
+    {record, ctx} = run_side(side, search, left, ctx)
+    sent = for id <- left, Budget.spent(ctx.budget, id) > spent[id], do: id
+    sent = if side == :native, do: sent, else: Enum.filter(sent, &(&1 in reached))
+    {record, spaced(ctx, sent)}
+  end
+
+  defp spaced(ctx, ids) do
+    at = mono() + ctx.limits.indexer_spacing_ms
+    %{ctx | free_at: Enum.reduce(ids, ctx.free_at, &Map.put(&2, &1, at))}
   end
 
   defp run_side(side, search, left, ctx) do
@@ -471,10 +592,16 @@ defmodule Cinder.Indexers.ParityRun do
   # stopped indexer, or any once the deadline has passed, is sent nothing more: it keeps every
   # kind, its `tvdb_search` is nil and its link check is not run, which names the stop and its
   # reason, or else the deadline (#1954).
+  #
+  # Each indexer first waits for its spacing, the deadline at most ("Spacing" in the moduledoc),
+  # and its spacing starts again when these reads sent it a request.
   defp engine_indexers(searches, ctx) do
     fetch_opts = Keyword.get(ctx.opts, :fetch_opts, [])
 
-    Enum.map(ctx.indexers, fn indexer ->
+    Enum.map_reduce(ctx.indexers, ctx, fn indexer, ctx ->
+      wait_until(wait_at([indexer.id], ctx), ctx)
+      spent = Budget.spent(ctx.budget, indexer.id)
+
       {caps, link_check} =
         case not_sent(indexer, ctx) do
           nil ->
@@ -485,13 +612,15 @@ defmodule Cinder.Indexers.ParityRun do
             {IndexerSet.unread(Corpus.kinds()), {:not_run, reason}}
         end
 
-      %{
-        id: indexer.id,
-        name: indexer.name,
-        kinds: caps.kinds,
-        tvdb_search: caps.tvdb_search,
-        link_check: link_check
-      }
+      sent = if Budget.spent(ctx.budget, indexer.id) > spent, do: [indexer.id], else: []
+
+      {%{
+         id: indexer.id,
+         name: indexer.name,
+         kinds: caps.kinds,
+         tvdb_search: caps.tvdb_search,
+         link_check: link_check
+       }, spaced(ctx, sent)}
     end)
   end
 

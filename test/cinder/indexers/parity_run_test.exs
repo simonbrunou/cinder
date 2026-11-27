@@ -79,34 +79,40 @@ defmodule Cinder.Indexers.ParityRunTest do
     end
 
     by_pid = Map.new(specs, fn {host, spec} -> {spec.pid, {host, spec}} end)
+    test_pid = self()
 
     route(
       Map.new(specs, fn {host, spec} ->
         {host,
          fn conn, query ->
-           cond do
-             String.starts_with?(conn.request_path, "/dl/") ->
-               Map.fetch!(spec, :get)
-
-             query["t"] == "caps" ->
-               Map.get(spec, :caps, @caps)
-
-             true ->
-               rss(
-                 for {title, size} <- spec.rows.(:native, next.({:native, host})),
-                     do: native_item(host, spec, title, size)
-               )
-           end
+           link? = String.starts_with?(conn.request_path, "/dl/")
+           send(test_pid, {:timed, if(link?, do: :link, else: :request), host, mono()})
+           native_answer(link?, query, host, spec, next)
          end}
       end)
     )
 
     prowlarr_search(history, fn _params, ids ->
       for id <- ids,
+          {host, _spec} <- List.wrap(Map.get(by_pid, id)),
+          do: send(test_pid, {:timed, :request, host, mono()})
+
+      for id <- ids,
           {host, spec} <- List.wrap(Map.get(by_pid, id)),
           {title, size} <- spec.rows.(:prowlarr, next.({:prowlarr, host})),
           do: prowlarr_row(title, size, id, spec)
     end)
+  end
+
+  defp native_answer(true, _query, _host, spec, _next), do: Map.fetch!(spec, :get)
+
+  defp native_answer(false, %{"t" => "caps"}, _host, spec, _next), do: Map.get(spec, :caps, @caps)
+
+  defp native_answer(false, _query, host, spec, next) do
+    rss(
+      for {title, size} <- spec.rows.(:native, next.({:native, host})),
+          do: native_item(host, spec, title, size)
+    )
   end
 
   defp native_item(host, %{protocol: protocol} = spec, title, size) do
@@ -237,6 +243,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     defaults = [
       seed: 1,
       retry_spacing_s: 0,
+      indexer_spacing_ms: 0,
       history_wait_ms: 0,
       fetch_opts: [
         plug: {Req.Test, Cinder.NewznabStub},
@@ -881,7 +888,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     assert prowlarr_ids() == []
   end
 
-  test "by default a run plans for 200 requests per indexer, a 2700 s deadline, a 660 s retry spacing and a 5000 ms history wait",
+  test "by default a run plans for 200 requests per indexer, a 2700 s deadline, a 660 s retry spacing, a 10000 ms indexer spacing and a 5000 ms history wait",
        %{history: history, statuses: statuses} do
     :newznab |> indexer!("nzb.example") |> link!(7)
     inception()
@@ -902,7 +909,7 @@ defmodule Cinder.Indexers.ParityRunTest do
 
     assert report =~
              "Limits: 200 requests per indexer, deadline 2700 s, retry spacing 660 s, " <>
-               "history wait 5000 ms\n"
+               "indexer spacing 10000 ms, history wait 5000 ms\n"
 
     assert report =~
              "Planned searches: movie_imdb 1, movie_title 1, season 1, season_zero 1, " <>
@@ -1420,6 +1427,370 @@ defmodule Cinder.Indexers.ParityRunTest do
     [plug: {Req.Test, Cinder.NewznabStub}, resolver: fn _host -> {:ok, [@public_address]} end]
   end
 
+  # --- the spacing (#1969) ---
+
+  defp mono, do: System.monotonic_time(:millisecond)
+
+  # Marks each side's start, which comes after its spacing wait, in the stubs' timeline.
+  defp timed_picks do
+    test_pid = self()
+
+    fn kind, target, opts, source ->
+      send(test_pid, {:timed, :side, nil, mono()})
+      Picks.run(kind, target, opts, source)
+    end
+  end
+
+  defp timed(acc \\ []) do
+    receive do
+      {:timed, kind, host, at} -> timed([{kind, host, at} | acc])
+    after
+      0 -> acc |> Enum.reverse() |> Enum.sort_by(fn {kind, _host, at} -> {at, kind != :side} end)
+    end
+  end
+
+  # Each side's start, in order.
+  defp side_marks(events), do: for({:side, _host, at} <- events, do: at)
+
+  # Per host, each gap in ms from one side's last request to the next side's first one, over the
+  # sides that sent the host a request, and the link check's fetches apart. A request belongs to
+  # the last side marked before it; the stubs time each request as it arrives.
+  defp side_gaps(events) do
+    {_side, by_host} =
+      Enum.reduce(events, {0, %{}}, fn
+        {:side, _host, _at}, {side, acc} ->
+          {side + 1, acc}
+
+        {:request, host, at}, {side, acc} ->
+          {side, Map.update(acc, host, [{side, at}], &[{side, at} | &1])}
+
+        {:link, _host, _at}, acc ->
+          acc
+      end)
+
+    Map.new(by_host, fn {host, requests} ->
+      gaps =
+        for [{side, at}, {next_side, next_at}] <-
+              requests |> Enum.reverse() |> Enum.chunk_every(2, 1, :discard),
+            side != next_side,
+            do: next_at - at
+
+      {host, gaps}
+    end)
+  end
+
+  defp attach_paced do
+    test_pid = self()
+    id = {__MODULE__, make_ref()}
+
+    :telemetry.attach(
+      id,
+      [:cinder, :parity_run, :paced],
+      fn _event, _measurements, metadata, _config ->
+        send(
+          test_pid,
+          {:paced, metadata.kind, metadata.side, metadata.indexers, metadata.waiting}
+        )
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(id) end)
+  end
+
+  defp paced(acc \\ []) do
+    receive do
+      {:paced, kind, side, indexers, waiting} -> paced([{kind, side, indexers, waiting} | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp anime!(title, tvdb_id) do
+    series =
+      series_fixture(%{
+        title: title,
+        tvdb_id: tvdb_id,
+        media_profile: :anime,
+        preferred_language: "original",
+        original_language: "ja"
+      })
+
+    episode_fixture(season_fixture(series))
+  end
+
+  # #1969's done-when: run 3's counts on two indexers that every kind reaches. Every side sends
+  # both a request, so each boundary between two sides, within a search and between searches, is
+  # one gap per indexer.
+  test "a run of run 3's counts keeps a spacing on each indexer between every two sides",
+       %{history: history, statuses: statuses} do
+    for n <- 1..10,
+        do: movie_fixture(%{imdb_id: "tt200000#{n}", title: "Movie #{n}", year: 2000 + n})
+
+    for n <- 1..5,
+        do:
+          episode_fixture(season_fixture(series_fixture(%{title: "Show #{n}", tvdb_id: 100 + n})))
+
+    zero = series_fixture(%{title: "Specials Show", tvdb_id: 200})
+    episode_fixture(season_fixture(zero, %{season_number: 0}))
+    anime!("Anime One", 301)
+    anime!("Anime Two", 302)
+    Cinder.BooksFixtures.monitored_book_target(:ebook)
+    Cinder.BooksFixtures.monitored_book_target(:audiobook)
+
+    a = :newznab |> indexer!("nzb.example") |> link!(7)
+    b = :newznab |> indexer!("nzb2.example") |> link!(8)
+    empty = fn _side, _n -> [] end
+
+    world(
+      %{
+        "nzb.example" => Map.put(nzb(7, empty), :caps, :default),
+        "nzb2.example" => Map.put(nzb(8, empty), :caps, :default)
+      },
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    counts = %{
+      anime_episodes: 2,
+      movie_title: 10,
+      season: 5,
+      movie_imdb: 1,
+      season_zero: 1,
+      ebook: 1,
+      audiobook: 1
+    }
+
+    report =
+      run!(counts: counts, indexers: [a.id, b.id], indexer_spacing_ms: 50, picks: timed_picks())
+
+    assert_received {:result, :ok}
+    assert report =~ "drawn: 21", report
+    gaps = side_gaps(timed())
+
+    for host <- ["nzb.example", "nzb2.example"] do
+      host_gaps = Map.fetch!(gaps, host)
+      # 21 searches of two sides each: 41 boundaries, retries aside.
+      assert length(host_gaps) >= 41, inspect({host, host_gaps})
+      assert Enum.all?(host_gaps, &(&1 >= 50)), inspect({host, host_gaps})
+    end
+  end
+
+  test "a search its kind cannot reach an indexer by is not held back by that indexer's spacing",
+       %{history: history, statuses: statuses} do
+    attach_paced()
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    Cinder.BooksFixtures.monitored_book_target(:ebook)
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    # The deadline leaves the book search 4 s to start after the movie search's 6 s wait, and
+    # step 5 waits out the movie search's spacing only to the deadline.
+    run!(
+      counts: %{movie_imdb: 1, ebook: 1},
+      indexers: [indexer.id],
+      indexer_spacing_ms: 6_000,
+      deadline_s: 10,
+      picks: timed_picks()
+    )
+
+    assert_received {:result, :ok}
+    id = indexer.id
+    events = timed()
+
+    # Seed 1: Native goes first in the movie search, and its caps fetch stores the row that the
+    # later plans read. The caps take movies alone, so the book search's sides wait for nothing.
+    assert [
+             {:movie_imdb, :native, [^id], []},
+             {:movie_imdb, :prowlarr, [^id], _movie_waiting},
+             {:ebook, :prowlarr, [], []},
+             {:ebook, :native, [], []}
+           ] = paced()
+
+    # The movie search's Prowlarr side came a spacing after its Native side. The book search's
+    # first side started well within a spacing of it: no sleep waited for the movie's spacing.
+    assert %{"nzb.example" => [movie_gap | _rest]} = side_gaps(events)
+    assert movie_gap >= 6_000
+    assert [_movie_native, movie_prowlarr, book_first, _book_second] = side_marks(events)
+    assert book_first - movie_prowlarr < 3_000
+    # The movie search's request alone: step 5 reached the deadline, so no link check ran.
+    assert ["movie"] = Enum.map(searches("nzb.example"), & &1["t"])
+  end
+
+  # The caps take audiobooks (3030) and no e-book: Prowlarr's e-book request still names the
+  # indexer and charges it, but Prowlarr would not ask it, so the audiobook search after it waits
+  # for no spacing of that request.
+  test "a side that names an indexer it cannot reach starts no spacing for it",
+       %{history: history, statuses: statuses} do
+    attach_paced()
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    Cinder.BooksFixtures.monitored_book_target(:ebook)
+    Cinder.BooksFixtures.monitored_book_target(:audiobook)
+
+    audio_caps =
+      caps(modes: %{"search" => ~s(available="yes" supportedParams="q")}, categories: [3030])
+
+    world(%{"nzb.example" => Map.put(nzb(7, fn _side, _n -> [] end), :caps, audio_caps)}, history)
+    prowlarr_api(history, statuses)
+    context = %{deadline_at: System.monotonic_time(:millisecond) + 5_000}
+    refute match?({:failed, _tag}, Indexer.Newznab.plan(indexer, {:search, "tt1"}, context))
+
+    run!(
+      counts: %{ebook: 1, audiobook: 1},
+      indexers: [indexer.id],
+      indexer_spacing_ms: 2_000,
+      picks: timed_picks()
+    )
+
+    assert_received {:result, :ok}
+    id = indexer.id
+    events = timed()
+
+    assert [
+             {:ebook, :native, [], []},
+             {:ebook, :prowlarr, [], []},
+             {:audiobook, :prowlarr, [^id], []},
+             {:audiobook, :native, [^id], _native_waiting}
+           ] = paced()
+
+    # The e-book request charged the indexer but did not reach it, so it started no spacing and
+    # the audiobook search's Prowlarr side found none running. That side sent the indexer a
+    # request, so the audiobook search's Native side came a spacing later.
+    assert %{"nzb.example" => gaps} = side_gaps(events)
+    assert List.last(gaps) >= 2_000
+    # Each book search's Prowlarr side names the indexer, the e-book one's too.
+    assert [[7] | _rest] = ids = prowlarr_ids()
+    assert length(ids) >= 2 and Enum.all?(ids, &(&1 == [7]))
+  end
+
+  test "Native's side counts an indexer with no stored caps as reached by an e-book search",
+       %{history: history, statuses: statuses} do
+    attach_paced()
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    Cinder.BooksFixtures.monitored_book_target(:ebook)
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    run!(counts: %{ebook: 1}, indexers: [indexer.id], indexer_spacing_ms: 1_000)
+
+    assert_received {:result, :ok}
+    id = indexer.id
+    # Native goes first with no caps row; its fetch stores one that tells Prowlarr's side the
+    # movie-only caps take no book, so that side waits for nothing.
+    assert [{:ebook, :native, [^id], []}, {:ebook, :prowlarr, [], []}] = paced()
+  end
+
+  # Prowlarr's first answer differs, so the search is tried again after the link check: the
+  # fetch waits for the first try's spacing, and the retry for the fetch's.
+  test "the link check waits for the spacing after the last side, and a retry for the link check's",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+
+    rows = fn
+      :prowlarr, 1 -> [{"Inception.2010.720p.WEB-DL-OTHER", 4_000_000_000}]
+      _side, _n -> [{@title, @size}]
+    end
+
+    world(%{"nzb.example" => nzb(7, rows)}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id], indexer_spacing_ms: 2_000)
+
+    assert_received {:result, :ok}
+    assert report =~ "link check passed", report
+    assert report =~ "try 2: ok", report
+
+    {before, [{:link, "nzb.example", link_at} | retry]} =
+      Enum.split_while(timed(), &(elem(&1, 0) != :link))
+
+    assert {:request, "nzb.example", last_at} = List.last(before)
+    assert link_at - last_at >= 2_000
+    assert [{:request, "nzb.example", retry_at} | _rest] = retry
+    assert retry_at - link_at >= 2_000
+  end
+
+  # Deadline 3 s, spacing 2 s: the first search's second side starts about 2 s in, before the
+  # deadline. The next search starts before the deadline too, but its first side would wait until
+  # about 4 s, so it has no try.
+  test "a try whose first side's wait would end past the deadline has no try",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    run!(
+      counts: %{movie_imdb: 2},
+      indexers: [indexer.id],
+      deadline_s: 3,
+      indexer_spacing_ms: 2_000,
+      picks: timed_picks()
+    )
+
+    assert_received {:result, :ok}
+    events = timed()
+    assert [_one, _two] = Enum.filter(events, &match?({:side, _, _}, &1))
+    assert %{"nzb.example" => [gap]} = side_gaps(events)
+    assert gap >= 2_000
+    assert length(prowlarr_ids()) == 1
+  end
+
+  # Deadline 2 s, spacing 3 s: the second side's wait ends about 1 s past the deadline.
+  test "a started try's second side waits its whole spacing, past the deadline too",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    run!(
+      counts: %{movie_imdb: 1},
+      indexers: [indexer.id],
+      deadline_s: 2,
+      indexer_spacing_ms: 3_000,
+      picks: timed_picks()
+    )
+
+    assert_received {:result, :ok}
+    events = timed()
+    assert [_one, _two] = Enum.filter(events, &match?({:side, _, _}, &1))
+    assert %{"nzb.example" => [gap]} = side_gaps(events)
+    assert gap >= 3_000
+  end
+
+  test "Prowlarr's side waits for no indexer it has no link for",
+       %{history: history, statuses: statuses} do
+    attach_paced()
+    linked = :newznab |> indexer!("nzb.example") |> link!(7)
+    unlinked = indexer!(:newznab, "nzb2.example")
+    inception()
+
+    world(
+      %{
+        "nzb.example" => nzb(7, same(@title, @size)),
+        "nzb2.example" => nzb(8, same(@title, @size))
+      },
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    run!(counts: %{movie_imdb: 1}, indexers: [linked.id, unlinked.id])
+
+    assert_received {:result, :ok}
+    both = Enum.sort([linked.id, unlinked.id])
+    linked_id = linked.id
+
+    assert [{:movie_imdb, :native, native, []}, {:movie_imdb, :prowlarr, [^linked_id], []}] =
+             paced()
+
+    assert Enum.sort(native) == both
+  end
+
   describe "the seams" do
     test "Indexer.request charges the context's budget per send and sends nothing it refuses" do
       route(%{"nzb.example" => fn _conn, _query -> rss() end})
@@ -1480,6 +1851,76 @@ defmodule Cinder.Indexers.ParityRunTest do
       assert IndexerSet.caps(broken, Corpus.kinds(), context.(broken)).kinds == Corpus.kinds()
       assert Budget.spent(budget, movies.id) == 1
       assert Budget.spent(budget, broken.id) == 1
+    end
+
+    test "a kind's reach plans from the stored caps alone, and an indexer with no row is reached" do
+      movies = indexer!(:newznab, "movies.example")
+      text = indexer!(:newznab, "text.example")
+
+      text_caps =
+        caps(modes: %{"search" => ~s(available="yes" supportedParams="q")}, categories: [2000])
+
+      route(%{
+        "movies.example" => fn _conn, _query -> @caps end,
+        "text.example" => fn _conn, _query -> text_caps end
+      })
+
+      for side <- [:native, :prowlarr],
+          do: assert(Enum.all?(Corpus.kinds(), &IndexerSet.reaches?(movies, &1, side)))
+
+      refute_received {:newznab_request, _host, _query}
+      assert Repo.all(Native.IndexerCaps) == []
+
+      for indexer <- [movies, text] do
+        context = %{deadline_at: System.monotonic_time(:millisecond) + 5_000}
+
+        # A plan that fetches the caps stores their row.
+        refute match?(
+                 {:failed, _tag},
+                 Indexer.Newznab.plan(indexer, {:search, "tt1"}, context)
+               )
+      end
+
+      reached = fn indexer, side ->
+        Enum.filter(Corpus.kinds(), &IndexerSet.reaches?(indexer, &1, side))
+      end
+
+      assert reached.(movies, :native) == [:movie_imdb]
+      # An indexer whose caps take no `imdbid` gets a movie by id as a text search (`Newznab`'s
+      # `search_movie` request), so that kind reaches it too.
+      assert reached.(text, :native) == [:movie_imdb, :movie_title]
+
+      # Prowlarr's TV searches and its movie by IMDb id name no categories, so they reach every
+      # indexer; its book searches name 7020 or 3030, which these caps do not list.
+      for indexer <- [movies, text],
+          do:
+            assert(
+              reached.(indexer, :prowlarr) ==
+                [:movie_imdb, :movie_title, :season, :season_zero, :anime_episodes]
+            )
+    end
+
+    test "a Cardigann indexer's reach reads its running copy's modes and categories, with no request" do
+      no_books = fn definition ->
+        definition
+        |> update_in(["caps", "categorymappings"], fn mappings ->
+          Enum.reject(mappings, &(&1["cat"] == "Books"))
+        end)
+        |> update_in(["caps", "modes"], &Map.delete(&1, "book-search"))
+      end
+
+      [t9] =
+        Cinder.CardigannFixtures.setup!(
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_like(no_books)}],
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_base(), %{}}]
+        )
+
+      for side <- [:native, :prowlarr] do
+        assert {side, Enum.filter(Corpus.kinds(), &IndexerSet.reaches?(t9, &1, side))} ==
+                 {side, [:movie_imdb, :movie_title, :season, :season_zero, :anime_episodes]}
+      end
+
+      refute_received {:cardigann_request, _host, _path, _query, _headers}
     end
 
     # #1933: Prowlarr sends a TV search with a TVDB id only to an indexer whose caps list it.
