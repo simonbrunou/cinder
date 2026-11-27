@@ -385,6 +385,18 @@ defmodule CinderWeb.SettingsIndexerDialogsTest do
     end
   end
 
+  # A cleared name casts to nil; the save refuses it as required instead of raising (#1907).
+  test "an edit that clears the name is refused and keeps the dialog", %{conn: conn} do
+    indexer = indexer!(:newznab, "a.example", %{})
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    open_edit(lv, indexer.id)
+    submit(lv, %{"indexer[name]" => ""})
+
+    assert has_element?(lv, "#indexer-dialog", "Enter a name.")
+    assert Cinder.Repo.get!(ConfiguredIndexer, indexer.id).name == indexer.name
+  end
+
   describe "focus on close" do
     test "goes back to the button that opened the dialog, on a close and on a save",
          %{conn: conn} do

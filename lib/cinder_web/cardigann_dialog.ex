@@ -1,10 +1,12 @@
 defmodule CinderWeb.CardigannDialog do
   @moduledoc """
-  The state of the Cardigann form in the Add and Edit dialogs of `CinderWeb.IndexersComponent`
-  (#1676, #1625 point 5), and its save through `Cinder.Indexers`.
+  The state of the Cardigann form in the Add, Edit and Switch dialogs of
+  `CinderWeb.IndexersComponent` (#1676, #1625 point 5, #1907), and its save through
+  `Cinder.Indexers`.
 
   A Cardigann dialog is a map with `step: :form`, `type: :cardigann` and a `mode`: `:add` for a
-  site picked from the add list, `:edit` for a Cardigann row. It holds:
+  site picked from the add list, `:edit` for a Cardigann row, `:switch` for Switch to %{name},
+  which opens a row on the definition that replaces its own. It holds:
 
   - `definition`, the file name the save sends, and `blob_sha`, the hash of the copy the form
     rendered, which the save carries so the store refuses it once the mirror or the pin holds
@@ -21,8 +23,17 @@ defmodule CinderWeb.CardigannDialog do
     Each secret input's id, new on each open, lets the browser keep what it holds across
     patches (`phx-update="ignore"`).
   - `stored_base_url`, an edit's saved base URL, which the base URL select keeps as an option.
-  - As `CinderWeb.IndexerDialog` has them: `id`, `lock_version` and `config_version` for an edit,
-    `errors`, and the `stale?` and `deleted?` flags a refused save sets.
+  - For a Switch, `hosts`: the credential hosts the save would send credentials to that the
+    indexer does not send them to today (`Cinder.Indexers.switch_hosts/4`), read from the
+    `lock_version`, plain attrs and secret input the save sends, on open, after a refused save
+    and on each change except one that `change/2` skips; or `{:error, reason}` when the input
+    of that read would be refused. A skipped change can leave the list up for an input the save
+    then refuses, which reads the list again. Each host
+    a secret fills shows as its template, so a typed secret never enters the dialog. The form
+    draws the list's digest (`shown_digest/1`) in a hidden input, the save sends the posted one,
+    and the store refuses it when the list it reads then differs.
+  - As `CinderWeb.IndexerDialog` has them: `id`, `lock_version` and `config_version` for an edit
+    or a Switch, `errors`, and the `stale?` and `deleted?` flags a refused save sets.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann
@@ -31,6 +42,7 @@ defmodule CinderWeb.CardigannDialog do
   alias CinderWeb.IndexerFormText
 
   @value_keys ~w(name base_url priority enabled)
+  @hostless_targets [["indexer", "name"], ["indexer", "priority"], ["indexer", "enabled"]]
   @secret_types ["text", "password"]
   @label_types ["info_useragent", "info_category_8000"]
 
@@ -72,6 +84,36 @@ defmodule CinderWeb.CardigannDialog do
 
       {:error, :not_found} ->
         deleted()
+    end
+  end
+
+  @doc """
+  The Switch dialog of the Cardigann configured indexer `id` (#1907; #1616 rule 7): its form on
+  the mirror's copy of the file that replaces the indexer's own. The name, priority and Enabled
+  carry over; a plain setting carries over by name when the new copy's setting of that name has
+  its type and accepts its value, as the save will (`CardigannSettings.switch/5`); the base URL
+  is the new copy's first link.
+  `{:error, :not_replaced}` when the mirror names no replacement that loads, and the deleted
+  line for a deleted indexer.
+  """
+  @spec switch(pos_integer()) :: map() | {:error, :not_replaced}
+  def switch(id) do
+    with {:ok, row, stored} <- Indexers.fetch_for_edit(id),
+         {:replaced_by, name} <- Definitions.name_status(row.definition),
+         {:in_mirror, %{definition: %{} = definition, result: :loads} = copy} <-
+           Definitions.import_copy(name) do
+      {:ok, plain, _secrets} =
+        CardigannSettings.switch(definition, row.settings || %{}, %{}, %{}, %{})
+
+      values = %{row_values(row, plain) | "base_url" => List.first(definition.links || []) || ""}
+
+      :switch
+      |> form(name, copy.blob_sha, definition, values)
+      |> opened(row, stored, [])
+      |> with_hosts(%{})
+    else
+      {:error, :not_found} -> deleted()
+      _other -> {:error, :not_replaced}
     end
   end
 
@@ -118,6 +160,7 @@ defmodule CinderWeb.CardigannDialog do
       values: Map.merge(%{"settings" => %{}, "clear" => %{}}, values),
       saved: [],
       plain: [],
+      hosts: [],
       stored_base_url: nil,
       errors: %{},
       stale?: false,
@@ -131,9 +174,36 @@ defmodule CinderWeb.CardigannDialog do
 
   defp strings(plain), do: Map.new(plain, fn {name, value} -> {name, to_string(value)} end)
 
-  @doc "Keeps the typed non-secret values of a `phx-change` event's `params`."
+  @doc """
+  Keeps the typed non-secret values of a `phx-change` event's `params`, and for a Switch reads
+  the new hosts again from the input the save would send. A change from the name, the priority
+  or Enabled, which no host reads, skips that read while `hosts` is a list (an empty one
+  included), so a refusal those fields cause shows only at the next other change or the
+  refused save. While `hosts` holds a refusal, which those fields can lift, it reads again.
+  """
   @spec change(map(), map()) :: map()
+  def change(%{mode: :switch} = dialog, params) do
+    dialog = %{dialog | values: typed(dialog, params)}
+
+    if params["_target"] in @hostless_targets and is_list(dialog.hosts),
+      do: dialog,
+      else: with_hosts(dialog, params)
+  end
+
   def change(dialog, params), do: %{dialog | values: typed(dialog, params)}
+
+  # The hosts of the input `save/3` sends for these `params`, or the save's refusal of it.
+  defp with_hosts(dialog, params) do
+    case Indexers.switch_hosts(
+           dialog.id,
+           dialog.lock_version,
+           attrs(dialog),
+           secrets(dialog, params)
+         ) do
+      {:ok, hosts} -> %{dialog | hosts: hosts}
+      {:error, reason} -> %{dialog | hosts: {:error, reason}}
+    end
+  end
 
   # Only text values under the keys the form renders: a payload of any other shape changes
   # nothing.
@@ -177,13 +247,13 @@ defmodule CinderWeb.CardigannDialog do
   @spec save(map(), term(), map()) :: {:ok, map()} | {:error, map()}
   def save(dialog, actor, params) do
     dialog = %{dialog | values: typed(dialog, params)}
-    attrs = attrs(dialog)
+    attrs = dialog |> attrs() |> posted_digest(dialog, params)
     secrets = if dialog.broken?, do: %{}, else: secrets(dialog, params)
 
     result =
       case dialog.mode do
         :add -> Indexers.create(actor, attrs, secrets)
-        :edit -> Indexers.update(actor, dialog.id, dialog.lock_version, attrs, secrets)
+        _edit_or_switch -> Indexers.update(actor, dialog.id, dialog.lock_version, attrs, secrets)
       end
 
     case result do
@@ -194,14 +264,19 @@ defmodule CinderWeb.CardigannDialog do
         {:error, %{dialog | deleted?: true, errors: %{}, values: %{}}}
 
       {:error, %Ecto.Changeset{} = changeset} ->
-        {:error,
-         %{
-           dialog
-           | stale?: IndexerFormText.stale?(changeset),
-             errors: IndexerFormText.errors(changeset, :cardigann)
-         }}
+        dialog = %{
+          dialog
+          | stale?: IndexerFormText.stale?(changeset),
+            errors: IndexerFormText.errors(changeset, :cardigann)
+        }
+
+        {:error, refused_hosts(dialog, params)}
     end
   end
+
+  # A refused Switch reads its hosts again from the input it sent (#1890).
+  defp refused_hosts(%{mode: :switch} = dialog, params), do: with_hosts(dialog, params)
+  defp refused_hosts(dialog, _params), do: dialog
 
   # An edit whose running copy no longer parses sends the fields its form holds and no hash, so
   # the store checks nothing against a copy (`Cinder.Indexers.update/5`).
@@ -218,10 +293,35 @@ defmodule CinderWeb.CardigannDialog do
       })
 
     case dialog.mode do
-      :add -> Map.merge(attrs, %{"type" => "cardigann", "definition" => dialog.definition})
-      :edit -> attrs
+      :add ->
+        Map.merge(attrs, %{"type" => "cardigann", "definition" => dialog.definition})
+
+      :switch ->
+        Map.put(attrs, "definition", dialog.definition)
+
+      :edit ->
+        attrs
     end
   end
+
+  # A Switch's save sends the digest the form drew (`switch_hosts_digest`), not the one of the
+  # dialog's last list: a submit can leave the browser before the re-render of a change the
+  # server already read, and the store then refuses the list the admin did not see.
+  defp posted_digest(attrs, %{mode: :switch}, params) do
+    digest = if is_binary(params["switch_hosts_digest"]), do: params["switch_hosts_digest"]
+    Map.put(attrs, "switch_hosts_digest", digest)
+  end
+
+  defp posted_digest(attrs, _dialog, _params), do: attrs
+
+  @doc """
+  The digest of the Switch host list `hosts` the form draws, which its save sends; nil while it
+  draws none, which the store refuses.
+  """
+  @spec shown_digest([Cinder.Indexers.Definitions.CredentialHosts.host()] | {:error, term()}) ::
+          String.t() | nil
+  def shown_digest(hosts) when is_list(hosts), do: Indexers.hosts_digest(hosts)
+  def shown_digest(_refused), do: nil
 
   defp base_attrs(values),
     do: %{
@@ -244,7 +344,7 @@ defmodule CinderWeb.CardigannDialog do
 
   @doc """
   Whether a save of this dialog that answered `row` starts a Test, `row` being enabled: after a
-  create, and after an edit that raised `config_version`.
+  create, and after an edit or a Switch that raised `config_version`.
   """
   @spec test_on_save?(map(), map()) :: boolean()
   def test_on_save?(%{mode: :add}, _row), do: true
@@ -331,8 +431,9 @@ defmodule CinderWeb.CardigannDialog do
   end
 
   @doc """
-  Whether the indexer stores a secret for the setting `name`. True for every secret when the
-  stored secrets do not decrypt.
+  Whether the indexer stores a secret for the setting `name`: a Switch carries a stored secret
+  by name onto a secret setting of the new copy. True for every secret when the stored secrets
+  do not decrypt.
   """
   @spec saved?(map(), String.t()) :: boolean()
   def saved?(%{saved: :unreadable}, _name), do: true

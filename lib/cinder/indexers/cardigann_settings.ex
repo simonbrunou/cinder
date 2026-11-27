@@ -13,6 +13,7 @@ defmodule Cinder.Indexers.CardigannSettings do
   - An edit checks its input against the running copy. A stored value keeps the class it was
     saved under, so a plain key stays plain and a secret key stays secret after an update
     retypes its setting. `secret_fields/3` lists the keys a secret input may set or clear.
+  - `switch/5` rebuilds every value for another file's copy, carrying a stored value by name.
   - A refusal is `{:error, field, validation}`: `:settings_keys` for a key the copy does not
     declare, `:settings_values` for a value of the wrong kind, `:select_option` for a select
     value outside its options, and `:secret_fields` from `Cinder.Indexers.Secrets.merge/3`.
@@ -38,6 +39,71 @@ defmodule Cinder.Indexers.CardigannSettings do
          :ok <- check_secret_values(definition, typed) do
       defaults = Map.new(names, &{&1, default(definition, &1)})
       {:ok, Map.merge(plain_defaults(definition), plain), Map.merge(defaults, typed)}
+    end
+  end
+
+  @doc """
+  The plain settings and secret values a Switch to the copy `definition` stores (#1907; #1616
+  rule 7), from the indexer's stored `plain` settings and `secrets`, the plain `input` and the
+  secret input `secret_input`. Each setting `definition` declares takes, first match: the typed
+  value; for a secret, the default when its Clear box is ticked; the stored value of the same
+  name and class (plain or secret) when it passes `definition`'s check for that setting and, for
+  a plain value, the setting has its type (a boolean for a checkbox, text for a select); the
+  copy's default as `create/3` reads it. A stored value `definition` does not declare is dropped.
+
+  With `secrets` `:unreadable` (the stored ones do not decrypt), nothing carries: the secret input
+  must set or clear every `text` and `password` setting `definition` declares, as
+  `Secrets.merge/3` reads it, else the Switch is refused as `:secrets_unreadable`.
+  """
+  @spec switch(map(), map(), Secrets.values() | :unreadable, map(), map()) ::
+          {:ok, map(), Secrets.values()} | refusal()
+  def switch(definition, plain, :unreadable, input, secret_input) do
+    names = names(definition, @secret_types)
+
+    with {:ok, plain, _secrets} <- switch(definition, plain, %{}, input, %{}) do
+      case edit_secrets(definition, :unreadable, secret_input, names) do
+        {:changed, values, _changed} -> {:ok, plain, values}
+        :unchanged when names == [] -> {:ok, plain, %{}}
+        :unchanged -> {:error, :secrets, :secrets_unreadable}
+        {:error, _field, _validation} = refusal -> refusal
+      end
+    end
+  end
+
+  def switch(definition, plain, secrets, input, secret_input) do
+    names = names(definition, @secret_types)
+
+    # A stored checkbox value is a boolean and a select value text, so a value carries only to
+    # a setting of its own type: a select option named "true" never becomes a ticked checkbox.
+    carried_plain =
+      for {key, value} <- plain,
+          %{type: type} = setting <- [setting(definition, key)],
+          type == plain_type(value),
+          match?({:ok, _}, check(setting, value)),
+          into: %{},
+          do: {key, value}
+
+    carried_secrets =
+      for {key, value} <- secrets,
+          key in names,
+          match?({:ok, _}, check(setting(definition, key), value)),
+          into: %{},
+          do: {key, value}
+
+    start = Map.merge(Map.new(names, &{&1, default(definition, &1)}), carried_secrets)
+
+    with {:ok, plain} <-
+           plain_values(
+             definition,
+             Map.merge(plain_defaults(definition), carried_plain),
+             MapSet.new(),
+             input
+           ) do
+      case edit_secrets(definition, {:ok, start}, secret_input, names) do
+        :unchanged -> {:ok, plain, start}
+        {:changed, values, _changed} -> {:ok, plain, values}
+        {:error, _field, _validation} = refusal -> refusal
+      end
     end
   end
 
@@ -114,6 +180,10 @@ defmodule Cinder.Indexers.CardigannSettings do
       end
     end)
   end
+
+  defp plain_type(value) when is_boolean(value), do: "checkbox"
+  defp plain_type(value) when is_binary(value), do: "select"
+  defp plain_type(_value), do: nil
 
   defp plain_values(_definition, stored, _secret_keys, input) when input == %{}, do: {:ok, stored}
 

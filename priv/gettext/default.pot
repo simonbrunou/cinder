@@ -9722,3 +9722,54 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "This captcha expired: show a new one."
 msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can't list the hosts this Switch would send the indexer's credentials to: the save would refuse the form as it is."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Re-enter every secret to see the hosts this Switch would send the indexer's credentials to."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Switch and save"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Switch to %{definition} for %{name}"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Switch to %{name}"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Switching drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "The hosts this Switch would send the indexer's credentials to changed: check the list again, then save."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "The new definition would send this indexer's credentials to these hosts, which it does not send them to today:"
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "The replacing definition can't be used."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a definition switched meanwhile"
+msgstr ""

@@ -28,9 +28,11 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
     host. One whose host holds a template is in the set as `{:unknown, "{{ .Config.<key> }}"}`.
     A URL whose scheme comes from a filled value is not read.
 
-  The Cardigann adapter's request path (`Cinder.Acquisition.Indexer.Cardigann.Fetch`, #1671)
-  calls `hosts/2` at run time, and so does its grab (#1672); the hold rules compare a candidate
-  copy's set with the running copy's (`Cinder.Indexers.Definitions.Hold`).
+  The Cardigann adapter (`Cinder.Acquisition.Indexer.Cardigann`) builds the set its search
+  (#1671) and its grab (#1672) check with `hosts/2`; the hold rules compare a candidate copy's set
+  with the running copy's (`Cinder.Indexers.Definitions.Hold`). `shown/3` walks the same URLs and
+  pairs each host with the form a page shows it in, for the Switch form's list
+  (`Cinder.Indexers.switch_hosts/4`), so `hosts/2` is the set of its first elements.
   """
 
   @type host :: String.t() | {:unknown, String.t()}
@@ -43,15 +45,30 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
 
   @doc "The hosts `definition` may send credentials to under the `stored` values."
   @spec hosts(map(), stored()) :: MapSet.t(host())
-  def hosts(definition, %{stored_url: _, settings: settings} = stored) when is_map(settings) do
+  def hosts(definition, stored), do: definition |> shown(stored, []) |> MapSet.new(&elem(&1, 0))
+
+  @doc """
+  Each host `hosts/2` finds, paired with the form a page shows it in: `{host, shown}`, one pair
+  per URL the walk reads, in no set order. `shown` is the host read again with each key of
+  `secret_keys` standing as its own template, so a host a secret fills is `{:unknown, raw}` and
+  a secret that holds a URL is `{:unknown, "{{ .Config.<key> }}"}`; it is `host` itself when no
+  secret fills it.
+  """
+  @spec shown(map(), stored(), [String.t()]) :: [{host(), host()}]
+  def shown(definition, %{stored_url: _, settings: settings} = stored, secret_keys)
+      when is_map(settings) do
     base = effective_base_url(definition, stored.stored_url)
     values = values(definition, settings)
+    masked = Map.merge(values, Map.new(secret_keys, &{&1, "{{ .Config.#{&1} }}"}))
+    secret = MapSet.new(secret_keys)
+    base_host = for host <- definition_hosts(base || "", nil, %{}), do: {host, host}
 
     definition
     |> texts([])
-    |> Enum.flat_map(&(definition_hosts(&1, base, values) ++ value_hosts(&1, values)))
-    |> Enum.concat(definition_hosts(base || "", nil, %{}))
-    |> MapSet.new()
+    |> Enum.flat_map(
+      &(definition_pairs(&1, base, values, masked) ++ value_pairs(&1, values, secret))
+    )
+    |> Enum.concat(base_host)
   end
 
   @doc """
@@ -109,6 +126,14 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
         do: host
   end
 
+  # `definition_hosts/3`, each host paired with the one `masked` fills.
+  defp definition_pairs(text, base, values, masked) do
+    for [url] <- Regex.scan(@url, text),
+        host = definition_host(url, base, values),
+        host != nil,
+        do: {host, definition_host(url, base, masked) || host}
+  end
+
   defp definition_host(url, base, values) do
     [scheme, authority] = String.split(url, "://", parts: 2)
     raw = after_userinfo(authority)
@@ -119,14 +144,17 @@ defmodule Cinder.Indexers.Definitions.CredentialHosts do
       else: filled |> String.split(@stop, parts: 2) |> hd() |> literal_host()
   end
 
-  # The URLs a referenced stored value or default holds on its own.
-  defp value_hosts(text, values) do
+  # The URLs a referenced stored value or default holds on its own, each paired with the
+  # template it shows as when the value is a secret's.
+  defp value_pairs(text, values, secret) do
     for [_whole, key] <- Regex.scan(@config, text),
         key != "sitelink",
         [url] <- Regex.scan(@url, Map.get(values, key, "")),
         host = value_host(url, key),
         host != nil,
-        do: host
+        do:
+          {host,
+           if(MapSet.member?(secret, key), do: {:unknown, "{{ .Config.#{key} }}"}, else: host)}
   end
 
   defp value_host(url, key) do

@@ -72,6 +72,7 @@ defmodule CinderWeb.DefinitionTextTest do
     {:definition, :definition_not_in_mirror},
     {:definition, :definition_fails},
     {:definition, :fixed_at_create},
+    {:definition, :switch_hosts_changed},
     {:base_url, :base_url_links},
     {:settings, :settings_keys},
     {:settings, :settings_values},

@@ -1,9 +1,9 @@
 defmodule CinderWeb.SettingsCardigannTest do
   # Cardigann sites in the indexers component of /settings (#1676): the add list's sites, the
-  # Cardigann form, Accept update, a replaced row and the Test button of a copy that does not
-  # run. The dialogs are a `<.portal>` to `body`: a test renders the portal and sends events with
-  # `with_target(view, "#indexers")`, as `CinderWeb.SettingsIndexerDialogsTest` does. Definitions
-  # come from `Cinder.DefinitionFixtures`.
+  # Cardigann form, Accept update, Switch to %{name} (#1907) and the Test button of a copy that
+  # does not run. The dialogs are a `<.portal>` to `body`: a test renders the portal and sends
+  # events with `with_target(view, "#indexers")`, as `CinderWeb.SettingsIndexerDialogsTest` does.
+  # Definitions come from `Cinder.DefinitionFixtures`.
   #
   # Not async: the Test runner, Native's clock, the adapter map and the Logger level are app-wide.
   use CinderWeb.ConnCase, async: false
@@ -613,25 +613,318 @@ defmodule CinderWeb.SettingsCardigannTest do
     end
   end
 
-  # Switch to <name> left #1676 for #1907: a row whose definition another file replaces reads
-  # its state and offers no way onto the replacing copy.
-  test "a row whose definition is replaced reads so and offers no Switch", %{conn: conn} do
+  describe "Switch to %{name}" do
+    setup do
+      mirror!(@base)
+
+      row =
+        cardigann!(@base, %{"password" => @password}, %{
+          settings: %{"freeleech" => true},
+          priority: 7
+        })
+
+      newer =
+        definition("newer", %{
+          "replaces" => ["tracker"],
+          "description" => "Mirror at https://new.invalid/"
+        })
+
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+      %{row: stored_row(row.id), newer: newer}
+    end
+
+    test "opens on the replacing copy with the row's values and the new hosts; saving moves it",
+         %{conn: conn} = ctx do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch", "Switch to newer.yml") |> render_click()
+
+      assert has_dialog_element?(lv, "#indexer-dialog-title", "Switch to newer.yml")
+      assert has_dialog_element?(lv, "#indexer-form-kind", "newer.yml")
+
+      assert has_dialog_element?(
+               lv,
+               "#indexer-form-drops",
+               "Switching drops this indexer's grabs"
+             )
+
+      assert has_dialog_element?(lv, "#indexer-form-name[value='#{ctx.row.name}']")
+      assert has_dialog_element?(lv, "#indexer-form-priority[value='7']")
+
+      assert has_dialog_element?(
+               lv,
+               "input[type='checkbox'][name='indexer[settings][freeleech]'][checked]"
+             )
+
+      assert has_dialog_element?(
+               lv,
+               "#indexer-form-hosts-region[aria-live='polite'] #indexer-form-hosts li",
+               "new.invalid"
+             )
+
+      [input] =
+        lv |> dialog_doc() |> LazyHTML.query("input[name='secrets[password]']") |> Enum.to_list()
+
+      assert attribute(input, "placeholder") == "•••• saved (leave blank to keep)"
+
+      submit(lv)
+
+      assert stored_row(ctx.row.id).definition == "newer.yml"
+      assert pin(ctx.row) == %{running: blob_sha(ctx.newer), held: nil, hold: nil}
+      assert secrets(ctx.row.id)["password"] == @password
+      refute has_element?(lv, "#indexer-#{ctx.row.id}-switch")
+
+      # The Switch button is gone, so focus goes back to the row's Edit, as after Accept update.
+      edit = "indexer-#{ctx.row.id}-edit"
+      assert_push_event(lv, "focus-invalid", %{id: ^edit})
+    end
+
+    test "Cancel closes the dialog and moves focus to the row's Edit", %{conn: conn} = ctx do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+      lv |> target() |> render_click("close", %{})
+
+      edit = "indexer-#{ctx.row.id}-edit"
+      assert_push_event(lv, "focus-invalid", %{id: ^edit})
+      refute has_element?(lv, "#indexer-dialog")
+      assert stored_row(ctx.row.id).definition == "tracker.yml"
+    end
+
+    # Secrets that do not decrypt let a Switch save once each is typed again. Until then the save
+    # would refuse, so the form lists no host and says why; then it lists every host, since an
+    # indexer whose secrets do not decrypt sends its credentials nowhere today.
+    test "lists the new hosts once every secret that does not decrypt is typed again",
+         %{conn: conn} = ctx do
+      :ok = undecryptable!(ctx.row)
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+
+      assert has_dialog_element?(lv, "#indexer-form-hosts-unknown", "Re-enter every secret")
+      refute has_dialog_element?(lv, "#indexer-form-hosts")
+
+      typed = %{
+        "secrets[username]" => "me",
+        "secrets[password]" => @password,
+        "secrets[apikey]" => "public-key"
+      }
+
+      change(lv, typed)
+
+      refute has_dialog_element?(lv, "#indexer-form-hosts-unknown")
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "new.invalid")
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "tracker.invalid")
+
+      submit(lv, typed)
+      assert stored_row(ctx.row.id).definition == "newer.yml"
+    end
+
+    # The list reads what the save would store, typed secrets included, and shows a host a secret
+    # fills as its template, so the typed value never reaches the page.
+    test "a host a typed secret fills shows as its template", %{conn: conn} = ctx do
+      newer =
+        definition("newer", %{
+          "replaces" => ["tracker"],
+          "description" => "https://{{ .Config.username }}.evil.invalid/"
+        })
+
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+      change(lv, %{"secrets[username]" => "SYNTH-user-5d2a"})
+
+      assert has_dialog_element?(
+               lv,
+               "#indexer-form-hosts li",
+               "https://{{ .Config.username }}.evil.invalid"
+             )
+
+      refute dialog(lv) =~ "SYNTH-user-5d2a"
+      refute dialog(lv) =~ @password
+    end
+
+    # A host the indexer sends to today stays off the list until a typed secret moves it.
+    test "a typed secret that changes a host the indexer sends to today lists it", %{conn: conn} do
+      url = "https://{{ .Config.username }}.x.invalid/"
+      running = definition("tracker", %{"description" => url})
+      mirror!(running)
+      row = cardigann!(running, %{"password" => @password, "username" => "own"})
+
+      newer = definition("newer", %{"replaces" => ["tracker"], "description" => url})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+      refute has_dialog_element?(lv, "#indexer-form-hosts")
+
+      change(lv, %{"secrets[username]" => "other"})
+
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "{{ .Config.username }}.x.invalid")
+      refute dialog(lv) =~ "other.x.invalid"
+    end
+
+    # A save whose input moves a host the form did not list yet, with no change event between
+    # (#1890): the store refuses it, and the refused form lists the hosts of the input it sent.
+    test "a refused save lists the hosts of the input it sent", %{conn: conn} do
+      url = "https://{{ .Config.username }}.x.invalid/"
+      running = definition("tracker", %{"description" => url})
+      mirror!(running)
+      row = cardigann!(running, %{"password" => @password, "username" => "own"})
+
+      newer = definition("newer", %{"replaces" => ["tracker"], "description" => url})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+      refute has_dialog_element?(lv, "#indexer-form-hosts")
+
+      submit(lv, %{"secrets[username]" => "other"})
+
+      assert has_dialog_element?(lv, ".indexer-form-error", "check the list again")
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "{{ .Config.username }}.x.invalid")
+      assert stored_row(row.id).definition == "tracker.yml"
+      refute dialog(lv) =~ "other.x.invalid"
+    end
+
+    # A submit can leave the browser before the re-render of a change the server already read.
+    # The save sends the digest the form drew, so the store refuses the list the admin never saw;
+    # once the form draws it, the same input saves.
+    test "a save sends the digest of the list the form drew", %{conn: conn} do
+      url = "https://{{ .Config.username }}.x.invalid/"
+      running = definition("tracker", %{"description" => url})
+      mirror!(running)
+      row = cardigann!(running, %{"password" => @password, "username" => "own"})
+
+      newer = definition("newer", %{"replaces" => ["tracker"], "description" => url})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+      typed = %{"secrets[username]" => "other"}
+      drawn_before = form_params(lv, typed)
+
+      change(lv, typed)
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "{{ .Config.username }}.x.invalid")
+
+      lv |> target() |> render_submit("save", drawn_before)
+      assert has_dialog_element?(lv, ".indexer-form-error", "check the list again")
+      assert stored_row(row.id).definition == "tracker.yml"
+
+      submit(lv, typed)
+      assert stored_row(row.id).definition == "newer.yml"
+    end
+
+    # The name, the priority and Enabled feed no host, so a change from one of them leaves the
+    # list as it was, even with a secret input that would move a host.
+    test "a change from the name, the priority or Enabled reads no hosts", %{conn: conn} do
+      url = "https://{{ .Config.username }}.x.invalid/"
+      running = definition("tracker", %{"description" => url})
+      mirror!(running)
+      row = cardigann!(running, %{"password" => @password, "username" => "own"})
+
+      newer = definition("newer", %{"replaces" => ["tracker"], "description" => url})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+
+      for field <- ["name", "priority", "enabled"] do
+        params =
+          lv
+          |> form_params(%{"secrets[username]" => "other"})
+          |> Map.put("_target", ["indexer", field])
+
+        lv |> target() |> render_change("change", params)
+        refute has_dialog_element?(lv, "#indexer-form-hosts")
+      end
+
+      change(lv, %{"secrets[username]" => "other"})
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "{{ .Config.username }}.x.invalid")
+    end
+
+    # An out-of-range priority makes the save refuse, so the form shows no list; the change that
+    # puts it back reads the list again, and the first save goes through.
+    test "a priority change that lifts the save's refusal reads the hosts again",
+         %{conn: conn} = ctx do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+
+      change(lv, %{"indexer[priority]" => "0"})
+      assert has_dialog_element?(lv, "#indexer-form-hosts-unknown")
+
+      params =
+        lv
+        |> form_params(%{"indexer[priority]" => "7"})
+        |> Map.put("_target", ["indexer", "priority"])
+
+      lv |> target() |> render_change("change", params)
+      refute has_dialog_element?(lv, "#indexer-form-hosts-unknown")
+      assert has_dialog_element?(lv, "#indexer-form-hosts li", "new.invalid")
+
+      submit(lv)
+      assert stored_row(ctx.row.id).definition == "newer.yml"
+    end
+
+    # A blank name casts to nil: the list and the save read it without raising, and the save
+    # refuses it as required.
+    test "a blank name refuses the save and keeps the dialog", %{conn: conn} = ctx do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+
+      change(lv, %{"indexer[name]" => ""})
+      change(lv, %{"indexer[name]" => "", "secrets[username]" => "me"})
+      assert has_dialog_element?(lv, "#indexer-form-name")
+
+      submit(lv, %{"indexer[name]" => ""})
+      assert has_dialog_element?(lv, "#indexer-form-name")
+      assert dialog(lv) =~ "Enter a name."
+      assert stored_row(ctx.row.id).definition == "tracker.yml"
+      assert stored_row(ctx.row.id).name == ctx.row.name
+    end
+
+    test "a replacing copy Cinder cannot run opens no form and says so", %{conn: conn} = ctx do
+      # `Cinder.DefinitionFixtures.check/1` keeps `[:html_search]` unsupported for an id in -ns.
+      newer = definition("newer-ns", %{"replaces" => ["tracker"]})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+
+      assert %{result: {:not_supported, _}} =
+               Enum.find(Definitions.picker(), &(&1.name == "newer.yml"))
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{ctx.row.id}-switch") |> render_click()
+
+      assert has_element?(lv, "#indexers-notice", "The replacing definition can't be used.")
+      refute has_element?(lv, "#indexer-dialog")
+      assert stored_row(ctx.row.id).definition == "tracker.yml"
+    end
+  end
+
+  # The state reads "Replaced by" and Switch shows only once another file replaces the row's.
+  test "a row offers Switch once its definition is replaced, and not before", %{conn: conn} do
     ConfigCase.put_env(:indexer_adapters, %{cardigann: Cinder.Acquisition.Indexer.Cardigann})
     mirror!(@base)
     row = cardigann!(@base)
     assert IndexerStatus.record(row, :success, @now) == :written
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    assert has_element?(lv, "#indexer-#{row.id}-edit")
+    refute has_element?(lv, "#indexer-#{row.id}-switch")
+
     newer = definition("newer", %{"replaces" => ["tracker"]})
     assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
 
-    {:ok, lv, html} = live(conn, ~p"/settings")
+    {:ok, lv, _html} = live(conn, ~p"/settings")
     assert has_element?(lv, "#indexer-#{row.id}-detail", "Replaced by newer.yml")
-    assert has_element?(lv, "#indexer-#{row.id}-edit")
-    refute has_element?(lv, "#indexer-#{row.id}-switch")
-    refute html =~ "Switch to"
+
+    assert has_element?(
+             lv,
+             "#indexer-#{row.id}-switch[aria-label='Switch to newer.yml for #{row.name}']",
+             "Switch to newer.yml"
+           )
   end
 
-  # A running copy that no longer loads reads red, which outranks the held code: Accept update
-  # still shows, since it is the way to a copy that runs.
+  # A running copy that no longer loads reads red, which outranks the held and replaced codes:
+  # Accept update and Switch still show, since each is the way to a copy that runs.
   describe "a row whose running copy no longer loads" do
     test "still offers Accept update for a held copy", %{conn: conn} do
       mirror!(@base)
@@ -644,6 +937,19 @@ defmodule CinderWeb.SettingsCardigannTest do
       assert has_element?(lv, "#indexer-#{row.id}-test[disabled]")
       lv |> element("#indexer-#{row.id}-accept") |> render_click()
       assert has_dialog_element?(lv, "#indexer-accept-confirm")
+    end
+
+    test "still offers Switch once its definition is replaced", %{conn: conn} do
+      mirror!(@base)
+      row = cardigann!(@base)
+      newer = definition("newer", %{"replaces" => ["tracker"]})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+      :ok = Definitions.store_results([{blob_sha(@base), {:error, :not_utf8}}])
+
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      assert has_element?(lv, "#indexer-#{row.id}-test[disabled]")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+      assert has_dialog_element?(lv, "#indexer-form-kind", "newer.yml")
     end
   end
 

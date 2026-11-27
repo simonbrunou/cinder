@@ -13,7 +13,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   (`Cinder.Acquisition.Indexer.Cardigann.copy/1`). A copy the boot re-check has not checked
   under this loader is `{:error, {:cardigann_grab, :definition_unchecked}}`, a capped retry while
   the re-check runs.
-  Any other copy that does not load (it fails, reads not supported, or lost its pin) changed
+  Any other copy that does not load (it fails, reads not supported, or lost its pin), and a row
+  switched to another definition since it was read (`:definition_switched`, #1907), changed
   after the search that found the row, which needed a copy that loads: `{:error,
   :indexer_changed}`, which drops the grab. Neither sends a request.
 

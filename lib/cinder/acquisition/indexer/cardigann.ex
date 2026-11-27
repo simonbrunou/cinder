@@ -15,7 +15,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   - the first code of a copy that reads not supported, as `report_feature/1` gives it;
   - `:definition_unchecked` for a copy the boot re-check has not checked under this loader;
   - `:definition_fails` for a copy that no longer loads;
-  - `:definition_missing` for an indexer with no pin.
+  - `:definition_missing` for an indexer with no pin;
+  - `:definition_switched` when the row now names another definition file than the struct's
+    `definition`: a Switch (`Cinder.Indexers.update/5`, #1907) moved the row and its pin after
+    the caller read the row, so the struct's settings and secrets belong to the old file and
+    are never sent under the new copy.
 
   ## A search
 
@@ -116,7 +120,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   first code: as the moduledoc's "Which copy runs" lists them.
   """
   @spec copy_codes() :: [atom()]
-  def copy_codes, do: [:definition_unchecked, :definition_fails, :definition_missing]
+  def copy_codes,
+    do: [:definition_unchecked, :definition_fails, :definition_missing, :definition_switched]
 
   @doc "Fetches a grab's link through `Cinder.Acquisition.Indexer.Cardigann.Grab`."
   @impl Indexer
@@ -131,6 +136,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   @spec copy(ConfiguredIndexer.t()) :: {:ok, map()} | {:not_supported, Report.feature()}
   def copy(%ConfiguredIndexer{} = indexer) do
     case Definitions.running_copy(indexer.id) do
+      {:ok, %{file: file}} when file != indexer.definition ->
+        {:not_supported, :definition_switched}
+
       {:ok, %{result: :loads, definition: definition, blob_sha: blob_sha}} ->
         {:ok, Map.put(running(indexer, definition), :blob_sha, blob_sha)}
 

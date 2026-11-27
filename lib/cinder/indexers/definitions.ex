@@ -812,20 +812,42 @@ defmodule Cinder.Indexers.Definitions do
 
   @doc """
   The copy the configured indexer `id` runs, as a search reads it (#1671): `{:ok, %{definition:,
-  result:, blob_sha:}}`, `definition` the loaded copy, `blob_sha` its hash, which the edit form
-  carries (#1676), and `result` its load result under the current fingerprint (`:unchecked` when none is stored yet, `:loads`, `{:not_supported, codes}` or
-  `{:fails, reason}`). `{:error, :no_pin}` for an indexer with no pin, `{:error, :fails}` for a
-  copy that no longer parses.
+  result:, blob_sha:, file:}}`, `definition` the loaded copy, `blob_sha` its hash, which the edit
+  form carries (#1676), `file` the definition file name the indexer's row holds, read with the
+  pin, which a Switch moves together with the pin (#1907), and `result` its load result under the
+  current fingerprint (`:unchecked` when none is stored yet, `:loads`, `{:not_supported, codes}`
+  or `{:fails, reason}`). `{:error, :no_pin}` for an indexer with no pin, `{:error, :fails}` for
+  a copy that no longer parses.
+
+  `file` comes from the row, not from the copy: two files can hold the same bytes, and one copy
+  row then stands for both under the last name an apply gave it.
   """
   @spec running_copy(pos_integer()) ::
-          {:ok, %{definition: map(), result: term(), blob_sha: String.t()}}
+          {:ok, %{definition: map(), result: term(), blob_sha: String.t(), file: String.t()}}
           | {:error, :no_pin | :fails}
   def running_copy(id) do
-    with %Pin{} = pin <- Repo.get(Pin, id) || {:error, :no_pin},
+    with {%Pin{} = pin, file} <- pin_and_file(id) || {:error, :no_pin},
          copy = Repo.get!(Copy, pin.running_copy_id),
          {:ok, definition} <- loaded(copy) do
-      {:ok, %{definition: definition, result: result_of(copy.blob_sha), blob_sha: copy.blob_sha}}
+      {:ok,
+       %{
+         definition: definition,
+         result: result_of(copy.blob_sha),
+         blob_sha: copy.blob_sha,
+         file: file
+       }}
     end
+  end
+
+  # The pin and the row's file name in one read: a Switch writes both in one transaction.
+  defp pin_and_file(id) do
+    from(p in Pin,
+      join: i in ConfiguredIndexer,
+      on: i.id == p.configured_indexer_id,
+      where: p.configured_indexer_id == ^id,
+      select: {p, i.definition}
+    )
+    |> Repo.one()
   end
 
   @doc """
@@ -1053,13 +1075,17 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   defp held_indexer(id) do
-    case {Enum.find(Indexers.cardigann_indexers(), &(elem(&1, 0).id == id)), Repo.get(Pin, id)} do
+    case {cardigann_indexer(id), Repo.get(Pin, id)} do
       {nil, _pin} -> {:error, :not_found}
       {_row, nil} -> {:error, :not_found}
       {{_row, :undecryptable}, _pin} -> {:error, :undecryptable}
       {{row, settings}, pin} -> {:ok, row, settings, pin}
     end
   end
+
+  # One Cardigann indexer with its stored values, as `Indexers.cardigann_indexers/0` reads them.
+  defp cardigann_indexer(id),
+    do: Enum.find(Indexers.cardigann_indexers(), &(elem(&1, 0).id == id))
 
   defp held_copy(%Pin{held_copy_id: nil}, _blob_sha), do: {:error, :stale}
 
@@ -1148,6 +1174,21 @@ defmodule Cinder.Indexers.Definitions do
   defp held_any(pin), do: {:ok, Repo.get!(Copy, pin.held_copy_id)}
 
   @doc """
+  Moves the configured indexer `id` onto the copy `pin/2` checked, for a Switch (#1907): its pin
+  runs that copy and holds none, then its copies are decided again against its row as stored
+  now, as an apply would. Runs inside the caller's transaction, after the row's write.
+  """
+  @spec switch_pin(pos_integer(), pinned()) :: :ok
+  def switch_pin(id, %{copy_id: copy_id}) do
+    :ok = write_pin(Repo.get!(Pin, id), copy_id, nil, nil)
+
+    case cardigann_indexer(id) do
+      {row, settings} -> decide_pin(row, settings, Repo.get!(Pin, id))
+      nil -> :ok
+    end
+  end
+
+  @doc """
   When the definitions were last checked: the end of the last update run that succeeded, an
   unchanged commit included (#1616 rule 12), or the loaded set's `loaded_at` when that is later;
   nil before any load.
@@ -1202,16 +1243,31 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   @doc """
-  Each pinned configured indexer's held update, by id, whatever its `indexer_codes/0` code
-  (#1676): `held`, the hold's reason as `{:held, reason}` gives it, nil with none. A red code
-  outranks it in `indexer_codes/0`, but Accept update is the way to a copy that runs, so the
-  table reads it here.
+  Each pinned configured indexer's held update and replacement, by id, whatever its
+  `indexer_codes/0` code (#1676, #1907): `held`, the hold's reason as `{:held, reason}` gives it,
+  and `replaced_by`, the file `name_status/1` names, each nil with none. A red code outranks both
+  in `indexer_codes/0`, but Accept update and Switch are the ways to a copy that runs, so the
+  table reads them here.
   """
-  @spec indexer_actions() :: %{pos_integer() => %{held: term() | nil}}
+  @spec indexer_actions() :: %{
+          pos_integer() => %{held: term() | nil, replaced_by: String.t() | nil}
+        }
   def indexer_actions do
-    from(p in Pin, join: i in ConfiguredIndexer, on: i.id == p.configured_indexer_id, select: p)
+    from(p in Pin,
+      join: i in ConfiguredIndexer,
+      on: i.id == p.configured_indexer_id,
+      select: {p, i.definition}
+    )
     |> Repo.all()
-    |> Map.new(&{&1.configured_indexer_id, %{held: hold_of(&1)}})
+    |> Map.new(fn {pin, name} ->
+      replaced_by =
+        case name_status(name) do
+          {:replaced_by, replacer} -> replacer
+          _other -> nil
+        end
+
+      {pin.configured_indexer_id, %{held: hold_of(pin), replaced_by: replaced_by}}
+    end)
   end
 
   defp indexer_code(_pin, {:not_supported, [feature | _]}, _name), do: {:not_supported, feature}

@@ -10069,3 +10069,54 @@ msgstr "Impossible d’afficher l’image du captcha : elle dépasse %{size} Mio
 #, elixir-autogen, elixir-format
 msgid "This captcha expired: show a new one."
 msgstr "Ce captcha a expiré : affichez-en un nouveau."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder can't list the hosts this Switch would send the indexer's credentials to: the save would refuse the form as it is."
+msgstr "Cinder ne peut pas lister les hôtes auxquels ce passage à la nouvelle définition enverrait les identifiants de l’indexeur : l’enregistrement refuserait le formulaire tel qu’il est."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Re-enter every secret to see the hosts this Switch would send the indexer's credentials to."
+msgstr "Saisissez de nouveau chaque secret pour voir les hôtes auxquels ce passage à la nouvelle définition enverrait les identifiants de l’indexeur."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Switch and save"
+msgstr "Passer et enregistrer"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Switch to %{definition} for %{name}"
+msgstr "Passer à %{definition} pour %{name}"
+
+#: lib/cinder_web/cardigann_components.ex
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Switch to %{name}"
+msgstr "Passer à %{name}"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Switching drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+msgstr "Le passage à la nouvelle définition abandonne les téléchargements de cet indexeur pas encore envoyés : les films et les épisodes sont recherchés à nouveau, les livres vous attendent."
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "The hosts this Switch would send the indexer's credentials to changed: check the list again, then save."
+msgstr "Les hôtes auxquels ce passage à la nouvelle définition enverrait les identifiants de l’indexeur ont changé : vérifiez de nouveau la liste, puis enregistrez."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "The new definition would send this indexer's credentials to these hosts, which it does not send them to today:"
+msgstr "La nouvelle définition enverrait les identifiants de cet indexeur à ces hôtes, auxquels il ne les envoie pas aujourd’hui :"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "The replacing definition can't be used."
+msgstr "La définition de remplacement ne peut pas être utilisée."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a definition switched meanwhile"
+msgstr "un passage à une autre définition entre-temps"

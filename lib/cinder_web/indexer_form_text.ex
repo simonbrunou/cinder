@@ -67,6 +67,13 @@ defmodule CinderWeb.IndexerFormText do
            "This site's definition changed while the form was open: close it and open it again."
          )
 
+  # A Switch's host list changed between the form's last read and the save (#1907).
+  defp cardigann_message({:definition, :switch_hosts_changed}),
+    do:
+      gettext(
+        "The hosts this Switch would send the indexer's credentials to changed: check the list again, then save."
+      )
+
   defp cardigann_message({:definition, :definition_fails}),
     do: gettext("This site's definition no longer loads, so Cinder can't check these settings.")
 

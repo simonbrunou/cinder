@@ -142,6 +142,7 @@ defmodule CinderWeb.DefinitionText do
   def feature(:definition_unchecked), do: gettext("a definition not checked yet")
   def feature(:definition_fails), do: gettext("a definition that no longer loads")
   def feature(:definition_missing), do: gettext("a missing definition")
+  def feature(:definition_switched), do: gettext("a definition switched meanwhile")
 
   def feature(_code), do: gettext("a feature this version of Cinder doesn't have")
 

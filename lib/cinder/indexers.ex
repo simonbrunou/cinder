@@ -29,6 +29,17 @@ defmodule Cinder.Indexers do
   their transaction, naming the changed fields and never a value. A create, a toggle and any
   other edit write none.
 
+  An edit of a Cardigann indexer whose `definition` names another file is a Switch (#1907;
+  #1616 rule 7): it moves the indexer onto the mirror's copy of the file that replaces its own,
+  rebuilds its settings and secrets for that copy (`CardigannSettings.switch/5`), raises both
+  counters, writes one audit row naming the changed fields, the changed secret names and the two
+  file names, and moves the pin, all in one transaction. `switch_hosts/4` reads the hosts it
+  would send credentials to that the indexer does not send them to today, from the same
+  builder, and the save is refused when that list changed since the form showed it
+  (`hosts_digest/1`). Unlike an edit, a Switch always writes a new `secrets_ciphertext` from the
+  secrets it builds. When the stored secrets do not decrypt, it needs every secret the new copy
+  declares set or cleared, and a Switch to a copy that declares none writes no ciphertext.
+
   The Prowlarr import (`Cinder.Indexers.ProwlarrImport`) creates its rows through
   `import_batch/2`, one transaction with one audit row, each row linked to its Prowlarr indexer
   by `prowlarr_indexer_id` (`create_imported/4`, the only write of that column).
@@ -55,10 +66,12 @@ defmodule Cinder.Indexers do
   import Ecto.Query
 
   alias Cinder.Accounts.User
+  alias Cinder.Acquisition.Indexer.Cardigann
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.IndexerState
   alias Cinder.Audit
   alias Cinder.Indexers.{CardigannSettings, ConfiguredIndexer, Definitions, Secrets}
+  alias Cinder.Indexers.Definitions.CredentialHosts
   alias Cinder.Repo
   alias Cinder.Settings
   alias Cinder.Settings.Registry
@@ -190,7 +203,7 @@ defmodule Cinder.Indexers do
     end
   end
 
-  defp blob_sha(attrs), do: Map.get(attrs, :definition_blob_sha, attrs["definition_blob_sha"])
+  defp blob_sha(attrs), do: attr(attrs, :definition_blob_sha)
 
   # A Cardigann create pins the copy the form rendered, then checks the base URL and the
   # settings against it, all inside one transaction.
@@ -201,7 +214,7 @@ defmodule Cinder.Indexers do
     name = Ecto.Changeset.get_field(changeset, :definition)
     input = Ecto.Changeset.get_field(changeset, :settings)
 
-    with {:ok, pinned} <- pin(changeset, name, blob_sha),
+    with {:ok, pinned} <- pin(changeset, name, blob_sha, :insert),
          :ok <- check_link(changeset, pinned.definition, :insert),
          {:ok, plain, values} <- cardigann_values(changeset, pinned.definition, input, secrets),
          {:ok, row} <-
@@ -213,13 +226,13 @@ defmodule Cinder.Indexers do
     end
   end
 
-  defp pin(changeset, name, blob_sha) do
+  defp pin(changeset, name, blob_sha, action) do
     case Definitions.pin(name, blob_sha) do
       {:ok, pinned} ->
         {:ok, pinned}
 
       {:error, reason} ->
-        {:error, refuse(changeset, :definition, pin_validation(reason), :insert)}
+        {:error, refuse(changeset, :definition, pin_validation(reason), action)}
     end
   end
 
@@ -328,12 +341,16 @@ defmodule Cinder.Indexers do
   # the row's is refused here, because Ecto skips the optimistic lock's check on a changeset that
   # fails validation; the immediate transaction keeps another write out until the save.
   defp edit(row, lock_version, attrs, secrets) do
-    changeset = ConfiguredIndexer.edit_changeset(row, Map.drop(attrs, plain_settings_keys(row)))
+    if switch?(row, attrs) do
+      switch(row, lock_version, attrs, secrets)
+    else
+      changeset = ConfiguredIndexer.edit_changeset(row, Map.drop(attrs, plain_settings_keys(row)))
 
-    cond do
-      row.lock_version != lock_version -> {:error, stale_error(changeset)}
-      not rendered_copy?(row, attrs) -> {:error, definition_changed(changeset)}
-      true -> edit_fields(row, changeset, attrs, secrets)
+      cond do
+        row.lock_version != lock_version -> {:error, stale_error(changeset)}
+        not rendered_copy?(row, attrs) -> {:error, definition_changed(changeset)}
+        true -> edit_fields(row, changeset, attrs, secrets)
+      end
     end
   end
 
@@ -352,13 +369,239 @@ defmodule Cinder.Indexers do
   defp definition_changed(changeset),
     do: refuse(changeset, :definition, :definition_changed, :update)
 
+  # --- Switch to %{name} (#1907; #1616 rule 7) ---
+
+  # A Switch names another definition file in `definition`; any other change of it stays
+  # refused as `:fixed_at_create`.
+  defp switch?(%ConfiguredIndexer{type: :cardigann, definition: current}, attrs) do
+    case attr(attrs, :definition) do
+      name when is_binary(name) -> name != current
+      _other -> false
+    end
+  end
+
+  defp switch?(_row, _attrs), do: false
+
+  # An attr the caller may key by atom or by string, as a form sends it.
+  defp attr(attrs, key), do: Map.get(attrs, key, attrs[Atom.to_string(key)])
+
+  # The save of a Switch: what `switch_build/4` builds, once the host list it gives matches the
+  # one the form showed (`switch_hosts_digest`). Both counters rise, one audit row names the
+  # changed fields and secrets and the two file names, and the pin moves to the new copy in the
+  # same transaction (`Definitions.switch_pin/2`).
+  defp switch(row, lock_version, attrs, secrets) do
+    with {:ok, built} <- switch_build(row, lock_version, attrs, secrets),
+         :ok <- check_hosts_digest(row, built, attrs) do
+      detail = switch_detail(row, built)
+
+      changeset =
+        built.changeset
+        |> put_ciphertext(row.id, built.values)
+        |> bump(:credentials_version, true)
+        |> bump(:config_version, true)
+
+      {:ok, changeset, {:switch, detail, built.pinned}}
+    end
+  end
+
+  # Names only, as an edit's row has them: the base URL counts when it differs from the stored
+  # one (the build casts it over none), and a secret when its value differs or, for stored
+  # secrets that do not decrypt, when the Switch sets it.
+  defp switch_detail(row, built) do
+    fields =
+      for {field, value} <- built.changeset.changes,
+          field != :base_url or value != row.base_url,
+          do: to_string(field)
+
+    secrets =
+      case built.stored do
+        :unreadable ->
+          Map.keys(built.values)
+
+        stored ->
+          stored
+          |> Map.merge(built.values)
+          |> Map.keys()
+          |> Enum.filter(&(stored[&1] != built.values[&1]))
+      end
+
+    %{
+      fields: Enum.sort(fields),
+      secrets: Enum.sort(secrets),
+      from_definition: row.definition,
+      to_definition: built.changeset.changes.definition
+    }
+  end
+
+  defp check_hosts_digest(row, built, attrs) do
+    if attr(attrs, :switch_hosts_digest) == hosts_digest(shown_hosts(host_pairs(row, built))),
+      do: :ok,
+      else: {:error, refuse(built.changeset, :definition, :switch_hosts_changed, :update)}
+  end
+
+  # Everything a Switch of `row` writes, from the plain `attrs` and the secret input `secrets`
+  # as the form sends them: the changeset with the new `definition`, its `settings` and the
+  # form's fields, the new copy `Definitions.pin/2` checked (`pinned`), and the plain settings
+  # and secret values (`plain`, `values`) `CardigannSettings.switch/5` builds over the row's
+  # stored ones. The save and the host list (`switch_host_pairs/4`) both call it, so the list
+  # reads the values the save writes.
+  defp switch_build(row, lock_version, attrs, secrets) do
+    new = attr(attrs, :definition)
+    plain_attrs = Map.drop(attrs, [:settings, "settings", :definition, "definition"])
+
+    # Cast over no base URL, so the form's one counts as a change and `check_link/3` checks it
+    # against the new copy's links even when it is the stored one.
+    changeset = ConfiguredIndexer.edit_changeset(%{row | base_url: nil}, plain_attrs)
+    input = attr(attrs, :settings) || %{}
+    stored = stored_secrets(row)
+
+    with :ok <- switch_allowed(row, changeset, lock_version, new),
+         {:ok, pinned} <- pin(changeset, new, blob_sha(attrs), :update),
+         :ok <- check_link(changeset, pinned.definition, :update),
+         {:ok, plain, values} <-
+           switch_values(changeset, row, pinned.definition, stored, input, secrets) do
+      changeset =
+        changeset
+        |> Ecto.Changeset.put_change(:definition, new)
+        |> Ecto.Changeset.put_change(:settings, plain)
+
+      {:ok, %{changeset: changeset, pinned: pinned, plain: plain, values: values, stored: stored}}
+    end
+  end
+
+  # Stored secrets that do not decrypt go on as `:unreadable`, so the input must then set or
+  # clear every secret of the new copy, as an edit's "re-enter every secret" rule does.
+  defp stored_secrets(row) do
+    case Secrets.open(row) do
+      {:ok, values} -> values
+      :unreadable -> :unreadable
+    end
+  end
+
+  defp switch_allowed(row, changeset, lock_version, new) do
+    cond do
+      row.lock_version != lock_version ->
+        {:error, stale_error(changeset)}
+
+      Definitions.name_status(row.definition) != {:replaced_by, new} ->
+        {:error, refuse(changeset, :definition, :fixed_at_create, :update)}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp switch_values(changeset, row, definition, stored, input, secrets) do
+    case CardigannSettings.switch(definition, row.settings || %{}, stored, input, secrets) do
+      {:ok, plain, values} -> {:ok, plain, values}
+      {:error, field, validation} -> {:error, refuse(changeset, field, validation, :update)}
+    end
+  end
+
+  @doc """
+  The credential hosts a Switch of the Cardigann configured indexer `id` would send credentials
+  to that it does not send them to today (#1907; #1616 rule 7), for the Switch form, from the
+  `lock_version`, plain `attrs` and secret input `secrets` its save would send. Each host shows
+  in the form `switch_host_pairs/4` gives it, sorted, once.
+  """
+  @spec switch_hosts(pos_integer(), integer(), map(), map()) ::
+          {:ok, [CredentialHosts.host()]} | {:error, switch_refusal()}
+  def switch_hosts(id, lock_version, attrs, secrets) do
+    with {:ok, pairs} <- switch_host_pairs(id, lock_version, attrs, secrets),
+         do: {:ok, shown_hosts(pairs)}
+  end
+
+  @typedoc """
+  Why a Switch's host list is not read: the indexer is gone or is no Cardigann indexer
+  (`:not_found`), or the save would refuse the input with `{field, validation}`, as
+  `{:lock_version, :stale}` or `{:secrets, :secrets_unreadable}`.
+  """
+  @type switch_refusal :: :not_found | {atom(), atom()}
+
+  @doc """
+  The hosts of `switch_hosts/4` as `{host, shown}` pairs, sorted. A page shows only `shown`:
+  `host` can hold a secret's value.
+
+  - The new side is each pair `CredentialHosts.shown/3` gives for the values the save writes
+    (`switch_build/4`, the save's own builder): the new copy, the base URL its changeset holds,
+    and its plain settings and secret values, each secret key standing as its template.
+  - The old side is the set of hosts the indexer's search and grab send a credential to today,
+    read through the adapter as a grab reads the row (`fetch_with_secrets/1`, so a disabled row
+    counts, and `Cinder.Acquisition.Indexer.Cardigann.copy/1`). It is empty when the row sends
+    no credential anywhere: its secrets do not decrypt, its running copy does not run, or it
+    holds no secret the adapter sends (the request's `secrets` is empty: none non-blank,
+    declared by the running copy and other than its default).
+  - A pair is left out only when the old side holds its `host` as text. An unknown host
+    (`{:unknown, raw}`) always stays: its raw text holds no filled value, so the same text on
+    both sides can still be two hosts.
+
+  The new side is not emptied when the values it reads hold no secret the adapter would send,
+  so such a list names every host of the new copy. The refusals are `switch_hosts/4`'s: the
+  list is never read for an input the save would refuse.
+  """
+  @spec switch_host_pairs(pos_integer(), integer(), map(), map()) ::
+          {:ok, [{CredentialHosts.host(), CredentialHosts.host()}]} | {:error, switch_refusal()}
+  def switch_host_pairs(id, lock_version, attrs, secrets) do
+    with {:ok, %ConfiguredIndexer{type: :cardigann} = row} <- fetch_row(id),
+         {:switch, true} <- {:switch, switch?(row, attrs)},
+         {:ok, built} <- switch_build(row, lock_version, attrs, secrets) do
+      {:ok, host_pairs(row, built)}
+    else
+      {:switch, false} -> {:error, {:definition, :fixed_at_create}}
+      {:error, %Ecto.Changeset{} = changeset} -> {:error, switch_refusal(changeset)}
+      _not_cardigann -> {:error, :not_found}
+    end
+  end
+
+  defp switch_refusal(%Ecto.Changeset{errors: [{field, {_message, opts}} | _]}),
+    do: {field, opts[:validation] || if(opts[:stale], do: :stale, else: :invalid)}
+
+  defp host_pairs(row, built) do
+    stored = %{
+      stored_url: Ecto.Changeset.get_field(built.changeset, :base_url),
+      settings: Map.merge(built.plain, built.values)
+    }
+
+    old = sent_today(row.id)
+
+    built.pinned.definition
+    |> CredentialHosts.shown(stored, Map.keys(built.values))
+    |> Enum.reject(fn {host, _shown} -> MapSet.member?(old, host) end)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  # The hosts the indexer sends a credential to today, as the adapter's request for it reads
+  # them, those named as text: none when the request sends no secret.
+  defp sent_today(id) do
+    with {:ok, indexer} <- fetch_with_secrets(id),
+         {:ok, %{request: request}} <- Cardigann.copy(indexer),
+         %{secrets: [_ | _], credential_hosts: hosts} <- request.(%{}, DateTime.utc_now()) do
+      MapSet.filter(hosts, &is_binary/1)
+    else
+      _sends_nowhere -> MapSet.new()
+    end
+  end
+
+  defp shown_hosts(pairs), do: pairs |> Enum.map(&elem(&1, 1)) |> Enum.uniq() |> Enum.sort()
+
+  @doc """
+  The digest of a Switch's host list as `switch_hosts/4` gives it. The Switch form sends it as
+  `switch_hosts_digest`, and the save is refused on `definition` as `:switch_hosts_changed`
+  when the list it reads at the save differs, so no host the form did not show gets a
+  credential.
+  """
+  @spec hosts_digest([CredentialHosts.host()]) :: String.t()
+  def hosts_digest(hosts),
+    do: :sha256 |> :crypto.hash(:erlang.term_to_binary(hosts)) |> Base.encode16(case: :lower)
+
   # A Cardigann edit's settings merge into the stored ones (`edit_cardigann/4`), so the cast
   # never sees them.
   defp plain_settings_keys(%ConfiguredIndexer{type: :cardigann}), do: [:settings, "settings"]
   defp plain_settings_keys(_row), do: []
 
   defp edit_fields(%ConfiguredIndexer{type: :cardigann} = row, changeset, attrs, secrets) do
-    input = Map.get(attrs, :settings, attrs["settings"]) || %{}
+    input = attr(attrs, :settings) || %{}
 
     if input == %{} and secrets == %{} and not Map.has_key?(changeset.changes, :base_url),
       do: finish_edit(changeset, row, :unchanged),
@@ -495,6 +738,19 @@ defmodule Cinder.Indexers do
   end
 
   defp audit_edit(_actor, _row, nil), do: :ok
+
+  # A Switch moves the pin once the row is saved, and its audit row names the fields and secrets,
+  # never a value, and the two definition file names.
+  defp audit_edit(actor, row, {:switch, detail, pinned}) do
+    :ok = Definitions.switch_pin(row.id, pinned)
+
+    Audit.log_or_rollback(
+      actor,
+      "switch_configured_indexer_definition",
+      row,
+      Map.put(detail, :to_copy, pinned.blob_sha)
+    )
+  end
 
   defp audit_edit(actor, row, detail),
     do: Audit.log_or_rollback(actor, "update_configured_indexer_access", row, detail)

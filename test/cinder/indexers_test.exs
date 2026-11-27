@@ -345,6 +345,18 @@ defmodule Cinder.IndexersTest do
       end
     end
 
+    # A blank name casts to nil, which the trim must pass on to the required check (#1907).
+    test "an edit that blanks the name is refused as required, not raised" do
+      row = create!(%{name: "Geek"})
+
+      for name <- ["", "   ", nil] do
+        assert {:error, changeset} = Indexers.update(nil, row.id, row.lock_version, %{name: name})
+        assert refusals(changeset, :name) == [{"can't be blank", :required}]
+      end
+
+      assert stored(row.id).name == "Geek"
+    end
+
     test "the name is stored trimmed, so a spaced copy of a taken name is refused" do
       assert stored(create!(%{name: "  Geek  "}).id).name == "Geek"
 

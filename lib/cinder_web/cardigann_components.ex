@@ -247,11 +247,24 @@ defmodule CinderWeb.CardigannComponents do
 
   def host(host) when is_binary(host), do: host
 
+  # Why a Switch's form lists no hosts: the save would refuse the input it holds.
+  defp hosts_unknown({:error, {:secrets, :secrets_unreadable}}),
+    do:
+      gettext(
+        "Re-enter every secret to see the hosts this Switch would send the indexer's credentials to."
+      )
+
+  defp hosts_unknown({:error, _reason}),
+    do:
+      gettext(
+        "Cinder can't list the hosts this Switch would send the indexer's credentials to: the save would refuse the form as it is."
+      )
+
   attr :dialog, :map, required: true
   attr :captcha, :map, default: nil, doc: "the Edit dialog's captcha (`CinderWeb.IndexerCaptcha`)"
   attr :myself, :any, required: true
 
-  @doc "The Cardigann form of the Add and Edit dialogs (`CinderWeb.CardigannDialog`)."
+  @doc "The Cardigann form of the Add, Edit and Switch dialogs (`CinderWeb.CardigannDialog`)."
   def cardigann_form(assigns) do
     dialog = assigns.dialog
 
@@ -301,6 +314,38 @@ defmodule CinderWeb.CardigannComponents do
             "This site's definition no longer loads on this version of Cinder: only the name, priority and Enabled can change."
           )}
         </p>
+        <%!-- The save sends the digest of the list drawn here, so a submit that leaves before a
+        change's re-render sends the list the admin saw, and the store refuses it. --%>
+        <input
+          :if={@dialog.mode == :switch}
+          type="hidden"
+          name="switch_hosts_digest"
+          id="indexer-form-hosts-digest"
+          value={CardigannDialog.shown_digest(@dialog.hosts)}
+        />
+        <div :if={@dialog.mode == :switch} id="indexer-form-hosts-region" aria-live="polite">
+          <div
+            :if={is_list(@dialog.hosts) and @dialog.hosts != []}
+            id="indexer-form-hosts"
+            class="alert alert-warning mb-2 block text-sm"
+          >
+            <p>
+              {gettext(
+                "The new definition would send this indexer's credentials to these hosts, which it does not send them to today:"
+              )}
+            </p>
+            <ul class="list-disc pl-5">
+              <li :for={host <- @dialog.hosts} class="break-all">{host(host)}</li>
+            </ul>
+          </div>
+          <p
+            :if={match?({:error, _}, @dialog.hosts)}
+            id="indexer-form-hosts-unknown"
+            class="alert alert-warning mb-2 text-sm"
+          >
+            {hosts_unknown(@dialog.hosts)}
+          </p>
+        </div>
         <p
           :for={message <- @errors[:form] || []}
           role="alert"
@@ -377,9 +422,7 @@ defmodule CinderWeb.CardigannComponents do
           id="indexer-form-drops"
           class="mt-1 text-sm text-base-content/70"
         >
-          {gettext(
-            "A new base URL or any changed credential drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
-          )}
+          {drops_text(@dialog.mode)}
         </p>
 
         <div class="mt-4 flex flex-wrap justify-end gap-2">
@@ -468,9 +511,26 @@ defmodule CinderWeb.CardigannComponents do
 
   defp title(%{mode: :add}), do: gettext("Add indexer")
   defp title(%{mode: :edit}), do: gettext("Edit indexer")
+  # The file name, as the row's "replaced by" line and Switch button name it.
+  defp title(%{mode: :switch, definition: name}), do: gettext("Switch to %{name}", name: name)
+
+  # A Switch raises `credentials_version` whatever it changes (`Cinder.Indexers`), so it drops
+  # every waiting grab (`Cinder.Download.GrabFailure`).
+  defp drops_text(:switch),
+    do:
+      gettext(
+        "Switching drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+      )
+
+  defp drops_text(_edit),
+    do:
+      gettext(
+        "A new base URL or any changed credential drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
+      )
 
   defp save_label(:add), do: gettext("Save and test")
   defp save_label(:edit), do: gettext("Save")
+  defp save_label(:switch), do: gettext("Switch and save")
 
   attr :dialog, :map, required: true
   attr :index, :integer, required: true

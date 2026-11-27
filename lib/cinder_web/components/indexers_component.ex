@@ -30,9 +30,10 @@ defmodule CinderWeb.IndexersComponent do
   is not checked yet is greyed with no click, and with no set loaded the list says so. A
   Cardigann row's Edit opens the same form on the copy it runs. A row whose pin holds an update
   for a credential rule offers Accept update, whose confirm names the held copy's reason and new
-  credential hosts and sends the hash it showed. It reads `Definitions.indexer_actions/0`, not
-  the row's code, so a disabled row or one whose running copy reads red offers it too, and it
-  gives focus back to the row's Edit. Test is disabled for a row whose running copy reads not
+  credential hosts and sends the hash it showed; a row whose file another replaces offers Switch
+  to %{name}, the form on the replacing copy (#1907). Both read `Definitions.indexer_actions/0`,
+  not the row's code, so a disabled row or one whose running copy reads red offers them too, and
+  both give focus back to the row's Edit. Test is disabled for a row whose running copy reads not
   supported or no longer loads. The parts render through `CinderWeb.CardigannComponents`.
 
   A Cardigann Edit whose `form` login shows an image captcha (#1681) holds the `captcha` assign,
@@ -204,9 +205,9 @@ defmodule CinderWeb.IndexersComponent do
   # states: a write between the two reads leaves a row's version older than its state, and its
   # next save is refused as stale. `:disabled` wins over `:undecryptable` in the state, so the
   # Test button and the detail read `secrets_readable` themselves.
-  # A Cardigann row's definition code (`Definitions.indexer_codes/0`) and its held update
-  # (`Definitions.indexer_actions/0`) come apart from the state, so a disabled row, whose state
-  # is `:disabled`, still offers Accept update.
+  # A Cardigann row's definition code (`Definitions.indexer_codes/0`) and its held update and
+  # replacement (`Definitions.indexer_actions/0`) come apart from the state, so a disabled row,
+  # whose state is `:disabled`, still offers Accept update or Switch.
   defp load_rows(socket) do
     stored = Map.new(Indexers.list(), &{&1.id, &1})
     codes = Definitions.indexer_codes()
@@ -221,7 +222,7 @@ defmodule CinderWeb.IndexersComponent do
           lock_version: row && row.lock_version,
           secrets_readable: entry.state != :undecryptable and row != nil and row.secrets_readable,
           definition_code: Map.get(codes, entry.id),
-          definition_actions: Map.get(actions, entry.id, %{held: nil})
+          definition_actions: Map.get(actions, entry.id, %{held: nil, replaced_by: nil})
         })
       end
 
@@ -296,6 +297,7 @@ defmodule CinderWeb.IndexersComponent do
       testing?: MapSet.member?(testing, row.id),
       testable?: testable?(row, testing),
       accept?: acceptable?(row.definition_actions),
+      switch_to: row.definition_actions.replaced_by,
       confirm: delete_confirm(row, rows, only_source?),
       focus_after_delete: focus_after_delete(row, rows)
     })
@@ -443,8 +445,25 @@ defmodule CinderWeb.IndexersComponent do
     end
   end
 
-  # Accept update gives focus back to the row's Edit when it closes: its own button goes once
-  # it succeeds.
+  # Switch and Accept update give focus back to the row's Edit when they close: their own button
+  # goes once they succeed.
+  def handle_event("open_switch", %{"id" => raw}, socket) do
+    with %{type: :cardigann} = row <- find_row(socket, raw),
+         name when is_binary(name) <- row.definition_actions.replaced_by,
+         %{} = dialog <- CardigannDialog.switch(row.id) do
+      {:noreply, assign(socket, dialog: dialog, opener: "indexer-#{row.id}-edit")}
+    else
+      {:error, :not_replaced} ->
+        {:noreply,
+         socket
+         |> assign(notice: gettext("The replacing definition can't be used."))
+         |> load_rows()}
+
+      _other ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event("open_accept", %{"id" => raw}, socket) do
     with %{} = row <- find_row(socket, raw),
          true <- acceptable?(row.definition_actions) do
@@ -1018,6 +1037,25 @@ defmodule CinderWeb.IndexersComponent do
                   aria-label={gettext("Accept update for %{name}", name: row.name)}
                 >
                   {gettext("Accept update")}
+                </.button>
+                <.button
+                  :if={row.switch_to}
+                  type="button"
+                  variant="neutral"
+                  size="xs"
+                  class="mt-1"
+                  id={"indexer-#{row.id}-switch"}
+                  phx-click="open_switch"
+                  phx-value-id={row.id}
+                  phx-target={@myself}
+                  aria-label={
+                    gettext("Switch to %{definition} for %{name}",
+                      name: row.name,
+                      definition: row.switch_to
+                    )
+                  }
+                >
+                  {gettext("Switch to %{name}", name: row.switch_to)}
                 </.button>
               </td>
               <td class="align-top">

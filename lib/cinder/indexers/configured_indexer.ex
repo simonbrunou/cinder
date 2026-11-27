@@ -114,7 +114,7 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
 
   defp validate(changeset) do
     changeset
-    |> update_change(:name, &String.trim/1)
+    |> update_change(:name, &(&1 && String.trim(&1)))
     |> validate_required([:name, :type, :base_url, :enabled, :flaresolverr, :settings, :priority])
     |> validate_number(:priority, greater_than_or_equal_to: 1, less_than_or_equal_to: 50)
     |> validate_change(:base_url, &base_url_errors/2)
