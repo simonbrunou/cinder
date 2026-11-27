@@ -99,7 +99,16 @@
   shapes in any slot" is the model. It runs its loads through `Task.async_stream` in 1.6 s on a
   quiet host and 2 to 4 s at a load of 61, where a first draft with nine shapes, one load after
   another, took 19 s. On #1664 the Standards review found that `[~]` in two list slots raised
-  `BadMapError`, a fix round the sweep would have saved.
+  `BadMapError`, a fix round the sweep would have saved. A commit that adds a check over the loaded
+  copy, such as one that adds a `Cinder.Indexers.Definitions.LoadCheck` code, or makes a check read
+  another slot, adds or extends a sweep that runs that check over every slot it reads. Each fixture
+  reads no code before the sweep: a check that stops at its first refusal reads no slot after it,
+  and an empty list shows that none stopped. A slot supported under only one response type therefore
+  gets a fixture of its own (`rows.count` is supported only on an all-JSON search).
+  `test/cinder/indexers/definitions/load_check_test.exs` "raises on none of seven value shapes in
+  any slot the three checks read" is the model for the rows, field and certificate slots. On #1678
+  the Standards review found the JSON, XML and certificate checks outside any sweep, and the sweep
+  then found `certificates: [null]` raising in `Regex.match?/2`.
 - A check that scans an untrusted pattern's text for a construct it refuses, such as
   `BoundedRegex`'s `\C`, has a test that runs every short string through each entry point. The
   strings are built from the backslash, the letters of the construct and of each escape that changes
