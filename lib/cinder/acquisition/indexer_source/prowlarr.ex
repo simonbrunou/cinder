@@ -123,12 +123,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   defp tag_query_origin(releases, origin),
     do: Enum.map(releases, &Map.put(&1, :query_origins, [origin]))
 
-  # One result per link and indexer: a refused submission blocks its title per indexer (#1515), so
-  # the copy from an indexer that is not blocked must reach the scorer. Each indexer's result is
-  # the link's first copy, with the query origins of every copy of the link, under the provenance
-  # of that indexer's first copy (`Release.put_provenance/2`: its id, source, name, link origin and
-  # credentials version). A copy with no indexer id adds no result when another copy of its link
-  # names an indexer.
+  # One result per link and indexer (`Release.per_indexer_rows/3`). A link is a `download_url`.
+  # The merge is the link's first copy with the query origins of every copy of the link.
   defp merge_query_origins(releases) do
     by_url =
       Enum.reduce(releases, %{}, fn release, by_url ->
@@ -137,15 +133,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
         end)
       end)
 
-    named =
-      for %{indexer_id: id} = r when not is_nil(id) <- releases,
-          into: MapSet.new(),
-          do: r.download_url
-
-    releases
-    |> Enum.reject(&(is_nil(Map.get(&1, :indexer_id)) and &1.download_url in named))
-    |> Enum.uniq_by(&{&1.download_url, Map.get(&1, :indexer_id)})
-    |> Enum.map(&Release.put_provenance(Map.fetch!(by_url, &1.download_url), &1))
+    Release.per_indexer_rows(releases, & &1.download_url, by_url)
   end
 
   @doc """

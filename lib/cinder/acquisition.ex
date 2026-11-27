@@ -634,29 +634,17 @@ defmodule Cinder.Acquisition do
   # queries' copies only for a TVDB id, when both queries answer `{:ok, _}`. The copy kept carries
   # every copy's query origins (`merge_query_origins/2`), because the title guard reads them.
   #
-  # One copy is kept per link and indexer, an indexer being a source and an id: a refused
-  # submission blocks its title per indexer (#1515, #1645), so one link from two indexers stays
-  # two candidates and the unblocked copy can still be picked. Each indexer's result is the link's
-  # merged copy under the provenance of that indexer's first copy (`Release.put_provenance/2`:
-  # its id, source, name, link origin and credentials version), so it carries the query origins
-  # of every copy of the link, whichever indexer sent it. A copy with no indexer id adds no result
-  # when another copy of its link from the same source names an indexer. A link is a protocol and
-  # a download URL, or a protocol, title and size for a copy with no URL (`tv_link_key/1`).
+  # One copy is kept per link and indexer (`Release.per_indexer_rows/3`), and each indexer's
+  # result carries the query origins of every copy of the link, whichever indexer sent it. A link
+  # is a protocol and a download URL, or a protocol, title and size for a copy with no URL
+  # (`tv_link_key/1`).
   defp deduplicate_tv_releases(releases) do
     by_link =
       Enum.reduce(releases, %{}, fn release, by_link ->
         Map.update(by_link, tv_link_key(release), release, &merge_query_origins(&1, release))
       end)
 
-    named =
-      for %{indexer_id: id} = r when not is_nil(id) <- releases,
-          into: MapSet.new(),
-          do: {tv_link_key(r), r.indexer_source}
-
-    releases
-    |> Enum.reject(&(is_nil(&1.indexer_id) and {tv_link_key(&1), &1.indexer_source} in named))
-    |> Enum.uniq_by(&{tv_link_key(&1), &1.indexer_source, &1.indexer_id})
-    |> Enum.map(&Release.put_provenance(Map.fetch!(by_link, tv_link_key(&1)), &1))
+    Release.per_indexer_rows(releases, &tv_link_key/1, by_link)
   end
 
   defp tv_link_key(%Release{download_url: url, protocol: protocol})

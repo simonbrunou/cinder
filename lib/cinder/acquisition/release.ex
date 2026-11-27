@@ -111,6 +111,47 @@ defmodule Cinder.Acquisition.Release do
     do: Map.merge(release, Map.take(copy, @provenance))
 
   @doc """
+  Picks one row per link and indexer from `copies`, the copies of releases that a search
+  returned. `link_key` maps a copy to its link, and `merged_by_link` maps each link key to that
+  link's copy merged over all its copies, which the caller builds.
+
+  An indexer is an `indexer_source` and an `indexer_id`. A refused submission blocks its title per
+  indexer (#1515, #1645), so one link from two indexers stays two rows and the unblocked copy can
+  still be picked. Three steps pick the rows:
+
+  1. A copy with no `indexer_id` is dropped when another copy of its link from the same source
+     names an indexer.
+  2. The first copy of each link and indexer is kept.
+  3. Each kept copy becomes its link's merged copy under that copy's provenance
+     (`put_provenance/2`: its id, source, name, link origin and credentials version), so every
+     indexer's row of a link carries the merge of every copy, whichever indexer sent it (#1644).
+
+  The rows come in the order of their first copy in `copies`. Works on structs and on the plain
+  maps an indexer source returns; a copy with no `indexer_source` or `indexer_id` key reads as
+  `nil` there.
+  """
+  @spec per_indexer_rows([map()], (map() -> term()), %{optional(term()) => map()}) :: [map()]
+  def per_indexer_rows(copies, link_key, merged_by_link)
+      when is_list(copies) and is_function(link_key, 1) and is_map(merged_by_link) do
+    keyed = Enum.map(copies, &{link_key.(&1), &1})
+
+    named =
+      for {link, copy} <- keyed,
+          not is_nil(Map.get(copy, :indexer_id)),
+          into: MapSet.new(),
+          do: {link, Map.get(copy, :indexer_source)}
+
+    keyed
+    |> Enum.reject(fn {link, copy} ->
+      is_nil(Map.get(copy, :indexer_id)) and {link, Map.get(copy, :indexer_source)} in named
+    end)
+    |> Enum.uniq_by(fn {link, copy} ->
+      {link, Map.get(copy, :indexer_source), Map.get(copy, :indexer_id)}
+    end)
+    |> Enum.map(fn {link, copy} -> put_provenance(Map.fetch!(merged_by_link, link), copy) end)
+  end
+
+  @doc """
   Builds the `Release` a book grab reserves (`Cinder.Download.grab_book_target/3`) from an
   `EbookRelease` or an `AudiobookRelease`: its title, size, link and protocol, and its provenance
   (`put_provenance/2`), so a new download intent stores its integer indexer id as a TV grab's

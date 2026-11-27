@@ -197,21 +197,23 @@ Up to two functions collapse the copies of one release link that a TV search ret
 is `merge_query_origins/1` in `Cinder.Acquisition.IndexerSource.Prowlarr`, which runs only when both
 of `search_tv/3`'s queries, the TVDB-scoped and the free-text one, succeed. The second is
 `deduplicate_tv_releases/1` in `Cinder.Acquisition` for a standard series, or `deduplicate/2` in
-`Cinder.Acquisition.Anime` for anime. The comment above each says what it merges across a link's
-copies and which copy it keeps for each indexer. A change to a release field that decides whether
-a result is picked or skipped, such as a blocklist key or a score input, reads all three
-functions and tests one link that two indexers return. On #1515 (PR #1582) the per-indexer block
-of a refused TV release first missed these functions, and review found the gaps one function and
-one merged field at a time: five fix commits, 33 minutes from the first finding to the clean
-re-check.
+`Cinder.Acquisition.Anime` for anime. Each builds its own link key and its own merge of a link's
+copies, which the comment above it describes, and hands both to `Release.per_indexer_rows/3`, the
+one place that picks the rows per link and indexer. A change to a release field that decides
+whether a result is picked or skipped, such as a blocklist key or a score input, reads
+`per_indexer_rows/3` and each caller's merge, and tests one link that two indexers return through
+each caller. On #1515 (PR #1582) the per-indexer block of a refused TV release first missed these
+functions, and review found the gaps one function and one merged field at a time: five fix
+commits, 33 minutes from the first finding to the clean re-check.
 
-Both functions run before `ReleaseJudge`, so a copy they drop never reaches the blocklist match.
-The first sees only Prowlarr results, so its keys need no source. The second drops a copy in two
-places. The `uniq_by` key, `{link, indexer_source, indexer_id}`, holds each indexer field that
-match reads. The `named` set, `{link, indexer_source}`, holds each of them but the id, and drops a
-copy with no indexer id when the set holds its entry. A change that makes the match read another
-indexer field adds that field to both, and its tests give two pairs of copies of one link: two
-that differ only in that field, and one with no id beside a named copy whose field differs.
+These functions run before `ReleaseJudge`, so a copy they drop never reaches the blocklist match.
+`per_indexer_rows/3` drops a copy in two places. The `uniq_by` key,
+`{link, indexer_source, indexer_id}`, holds each indexer field that match reads. The `named` set,
+`{link, indexer_source}`, holds each of them but the id, and drops a copy with no indexer id when
+the set holds its entry. Prowlarr's rows all carry the source `"prowlarr"`, so the source in those
+keys changes nothing there. A change that makes the match read another indexer field adds that
+field to both, and its tests give two pairs of copies of one link: two that differ only in that
+field, and one with no id beside a named copy whose field differs.
 
 On #1645 the match gained the indexer source while the key stayed `{link, indexer_id}` and the
 set held only the link: a Prowlarr copy hid a native copy with the same indexer id, an id-less

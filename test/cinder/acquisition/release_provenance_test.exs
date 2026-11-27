@@ -1,7 +1,8 @@
 defmodule Cinder.Acquisition.ReleaseProvenanceTest do
   # The indexer provenance each release struct carries (#1644): the source, name and credentials
   # version `new/1` copies from the indexer map, the Prowlarr default for a map with no source, the
-  # link `inspect/1` leaves out, and `Release.put_provenance/2`, which each per-indexer merge uses.
+  # link `inspect/1` leaves out, `Release.put_provenance/2`, and `Release.per_indexer_rows/3`, which
+  # each per-indexer merge uses.
   use ExUnit.Case, async: true
 
   alias Cinder.Acquisition.{AudiobookRelease, EbookRelease, Release}
@@ -150,6 +151,58 @@ defmodule Cinder.Acquisition.ReleaseProvenanceTest do
 
       assert Release.put_provenance(merged, copy) ==
                %{title: "Merged.Title", indexer_id: 2, indexer_name: "One"}
+    end
+  end
+
+  describe "per_indexer_rows/3" do
+    defp copy(link, source, id, name),
+      do: %{link: link, indexer_source: source, indexer_id: id, indexer_name: name}
+
+    defp rows(copies) do
+      merged = Map.new(copies, &{&1.link, %{link: &1.link, merged: true}})
+
+      copies
+      |> Release.per_indexer_rows(& &1.link, merged)
+      |> Enum.map(&{&1.link, &1.merged, &1.indexer_source, &1.indexer_id, &1.indexer_name})
+    end
+
+    test "keeps the first copy of each link and indexer, in input order, as the merged copy" do
+      copies = [
+        copy("b", "native", 1, "First"),
+        copy("a", "prowlarr", 1, "Prowlarr"),
+        copy("b", "native", 1, "Second"),
+        copy("b", "prowlarr", 1, "Other source"),
+        copy("b", "native", 2, "Other id")
+      ]
+
+      assert rows(copies) == [
+               {"b", true, "native", 1, "First"},
+               {"a", true, "prowlarr", 1, "Prowlarr"},
+               {"b", true, "prowlarr", 1, "Other source"},
+               {"b", true, "native", 2, "Other id"}
+             ]
+    end
+
+    test "drops a copy with no indexer id only when its link has a named copy from its source" do
+      copies = [
+        copy("a", "native", nil, "Folded"),
+        copy("a", "native", 3, "Named"),
+        copy("a", "prowlarr", nil, "Own source"),
+        copy("b", "native", nil, "Alone")
+      ]
+
+      assert rows(copies) == [
+               {"a", true, "native", 3, "Named"},
+               {"a", true, "prowlarr", nil, "Own source"},
+               {"b", true, "native", nil, "Alone"}
+             ]
+    end
+
+    test "reads a plain-map copy with no indexer keys as nil" do
+      merged = %{"a" => %{link: "a", merged: true}}
+
+      assert Release.per_indexer_rows([%{link: "a"}, %{link: "a"}], & &1.link, merged) ==
+               [%{link: "a", merged: true}]
     end
   end
 end
