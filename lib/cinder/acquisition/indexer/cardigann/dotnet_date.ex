@@ -32,10 +32,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
     0001-01-01 23:00 UTC).
 
   The `dateparse` filter writes a parsed time as `canonical/1`, which `from_unknown/2` reads
-  back. Every function is pure: `now` is a UTC `DateTime` the caller passes.
+  back. `from_unknown/2` reads a date field as Prowlarr's `DateTimeUtil.FromUnknown` does
+  (#1802), with two bounds. After `today`, `yesterday`, `tomorrow` or a day name with `at`, it
+  reads only blank text, as midnight, or `H:mm`, `H:mm:ss`, and `H` or `H:mm` with `AM` or
+  `PM`, each followed by at most one `+HH:mm` or `-HH:mm` offset up to 14:00, where .NET's
+  `DateTime.Parse` reads more (the issue's choice). A text on which a pattern hits its match
+  limit is `:error`, where .NET reads on. Every function is pure: `now` is a UTC `DateTime` the
+  caller passes.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.DotnetText
+  alias Cinder.Acquisition.Indexer.Cardigann.FuzzyDate
 
   @tokens ~w(yyyy yy MMMM MMM MM M dddd ddd dd d HH hh h mm ss tt zzz)
   @format_letters ~c"dfFghHKmMstyz"
@@ -107,21 +114,54 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
       |> DateTime.to_iso8601()
 
   @doc """
-  Reads a date field's value: the canonical text, all ASCII digits as Unix seconds, and any text
-  holding `now` in any letter case as `now`. Anything else is `:error`, which leaves the
-  release's publication time unset. Prowlarr's other `FromUnknown` fallbacks go to #1802.
+  Reads a date field's value as Prowlarr's `DateTimeUtil.FromUnknown` does (#1802), on the
+  trimmed text, trying in order:
+
+  - the canonical text `dateparse`, `timeago` and `fuzzytime` write, where Prowlarr writes the
+    Rfc1123Z text of the next branch;
+  - `ddd, dd MMM yyyy HH:mm:ss z`, read as `parse/3` reads a layout, where `z` is a sign and one
+    or two hour digits, at most 14, that shift the time to UTC. A time shifted past the year
+    9999 goes on to the next branches, as .NET's refusal does. One shifted before the year 1
+    reads one day later, as .NET's does: `Mon, 01 Jan 0001 00:30:00 +1` gives 0001-01-01 23:30;
+  - all ASCII digits as Unix seconds, `:error` past the year 9999;
+  - any text holding `now`, in any letter case, as `now`;
+  - a word starting with `ago` as `from_time_ago/2` reads the whole text;
+  - the branches of `Cinder.Acquisition.Indexer.Cardigann.FuzzyDate`: `today`, `yesterday`
+    and `tomorrow`, a day name with `at`, the missing-year rewrites and `DateTimeRoutines`.
+    The text left after `today` or a day name reads only as blank, which is midnight, or as
+    `H:mm`, `H:mm:ss`, and `H` or `H:mm` with `AM` or `PM`, each followed by at most one
+    `+HH:mm` or `-HH:mm` offset up to 14:00 (the issue's choice), where .NET reads more.
+
+  It is `:error` where .NET throws, where no branch reads the text, where a pattern hits its
+  match limit, and on text that is not UTF-8.
   """
   @spec from_unknown(String.t(), DateTime.t()) :: {:ok, DateTime.t()} | :error
   def from_unknown(text, %DateTime{} = now) when is_binary(text) do
-    trimmed = if String.valid?(text), do: String.trim(text), else: ""
-
-    with :error <- from_canonical(trimmed),
-         :error <- from_unix(trimmed) do
-      if String.contains?(String.downcase(trimmed), "now"), do: {:ok, now}, else: :error
-    end
+    if String.valid?(text), do: read_unknown(String.trim(text), now), else: :error
   end
 
   def from_unknown(_text, _now), do: :error
+
+  defp read_unknown(text, now) do
+    with :none <- from_canonical(text),
+         :none <- from_rfc1123(text, now),
+         :none <- from_unix(text),
+         :none <- from_now(text, now),
+         :none <- from_ago(text, now) do
+      FuzzyDate.from_unknown(text, now)
+    end
+  end
+
+  defp from_now(text, now),
+    do: if(String.contains?(DotnetText.downcase(text), "now"), do: {:ok, now}, else: :none)
+
+  defp from_ago(text, now) do
+    case FuzzyDate.ago?(text) do
+      true -> from_time_ago(text, now)
+      false -> :none
+      :error -> :error
+    end
+  end
 
   @doc """
   Reads a relative time, as Prowlarr's `timeago` and `reltime` filters do through
@@ -273,25 +313,46 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
          true <- canonical(time) == text do
       {:ok, time}
     else
-      _other -> :error
+      _other -> :none
     end
   end
 
-  # .NET's `long.TryParse` reads any number of leading zeros and then at most 19 digits, and
-  # `DateTime.from_unix/1` refuses a time past the year 9999, far below that. The size guard
-  # only spares converting a long run of digits.
+  # `DateTime.TryParseExact` with `Rfc1123ZPattern`: a refusal goes on to the next branch.
+  defp from_rfc1123(text, now) do
+    {:ok, tokens} = tokenize("ddd, dd MMM yyyy HH:mm:ss ", [])
+
+    with {:ok, %{offset: offset} = fields} <- read(tokens ++ [{:token, "z"}], text, %{}),
+         {:ok, local} <- assemble(Map.delete(fields, :offset), now) do
+      case DateTime.add(local, -offset * 60, :second) do
+        %DateTime{year: year} when year > 9999 -> :none
+        %DateTime{year: year} = time when year >= 1 -> {:ok, time}
+        # .NET wraps a time before the year 1 to the same time of day on 0001-01-01.
+        before_year_one -> {:ok, DateTime.add(before_year_one, 86_400)}
+      end
+    else
+      _refused -> :none
+    end
+  end
+
+  # .NET's `long.TryParse` reads any number of leading zeros and then at most 19 digits up to
+  # `long.MaxValue`; past it the text goes on to the next branches, which read no text of digits
+  # alone, so it is `:error` there too. `DateTime.from_unix/1` refuses a time past the year 9999,
+  # far below `long.MaxValue`, where .NET's `AddSeconds` throws, so no check of `long.MaxValue`
+  # changes an answer. The size guard only spares converting a long run of digits.
   defp from_unix(text) when byte_size(text) >= 1 do
     with true <- text |> :binary.bin_to_list() |> Enum.all?(&(&1 in ?0..?9)),
          significant = String.trim_leading(text, "0"),
-         true <- byte_size(significant) <= 19,
-         {:ok, time} <- DateTime.from_unix(String.to_integer("0" <> significant)) do
-      {:ok, time}
+         true <- byte_size(significant) <= 19 do
+      case DateTime.from_unix(String.to_integer("0" <> significant)) do
+        {:ok, time} -> {:ok, time}
+        {:error, _past_9999} -> :error
+      end
     else
-      _other -> :error
+      false -> :none
     end
   end
 
-  defp from_unix(_text), do: :error
+  defp from_unix(_text), do: :none
 
   # Layout tokens: `{:token, "yyyy"}` or `{:literal, codepoint}`.
   defp tokenize("", acc), do: {:ok, Enum.reverse(acc)}
@@ -361,6 +422,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   defp read_token("ddd", text), do: name(text, Enum.map(@days, &String.slice(&1, 0, 3)), :weekday)
   defp read_token("tt", text), do: name(text, ~w(AM PM), :meridiem)
   defp read_token("zzz", text), do: offset(text)
+  # `z`, which only the Rfc1123Z layout of `from_unknown/2` reads: one or two hour digits.
+  defp read_token("z", text), do: hour_offset(text)
 
   defp read_token("yy", text) do
     with {:ok, :year, yy, rest} <- digits(text, 2, 2, :year),
@@ -414,6 +477,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDate do
   end
 
   defp offset(_text), do: :error
+
+  defp hour_offset(<<sign, rest::binary>>) when sign in [?+, ?-] do
+    case digits(rest, 1, 2, :h) do
+      {:ok, :h, hours, rest} when hours <= 14 ->
+        {:ok, :offset, if(sign == ?+, do: hours * 60, else: -hours * 60), rest}
+
+      _bad ->
+        :error
+    end
+  end
+
+  defp hour_offset(_text), do: :error
 
   defp assemble(fields, now) do
     with {:ok, {year, month, day}} <- date_parts(fields, now),

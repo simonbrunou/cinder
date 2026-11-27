@@ -132,7 +132,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert {:ok, %{unsupported: []}} = Loader.load(yaml(@base))
     end
 
-    test "the features on are the filters, what slices (a) and (b), #1678 and #1679 build" do
+    test "the features on are the filters, what slices (a) and (b), #1678, #1679 and #1802 build" do
       features = Loader.features()
       assert length(features) == 80
       assert length(Enum.uniq_by(features, &elem(&1, 0))) == 80
@@ -140,7 +140,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       filters =
         ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append
            tolower toupper base64decode base64encode urldecode urlencode htmldecode htmlencode
-           timeago reltime validfilename diacritics jsonjoinarray hexdump strdump validate)
+           timeago reltime fuzzytime validfilename diacritics jsonjoinarray hexdump strdump
+           validate)
+
+      assert {{:filter, "fuzzytime"}, true} in features
 
       assert for({code, true} <- features, do: code) ==
                [
@@ -201,9 +204,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     # 5 the grab's download block (#1672), revision 6 the JSON and XML answers, the charsets and
     # the pinned certificates (#1678), revision 7 the remaining search and download keys (#1679),
     # revision 8 the post, get, form and cookie logins (#1680), revision 9 each copy's display name
-    # (#1676).
-    test "fingerprint/0 declares schema version 12 and revision 9" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 9}
+    # (#1676), revision 10 the fuzzytime filter and FromUnknown's date forms (#1802).
+    test "fingerprint/0 declares schema version 12 and revision 10" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 10}
     end
 
     # #1679's acceptance: every key the slice lifts, in one HTML definition, loads with no code,
@@ -285,8 +288,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     end
 
     test "a feature used twice is listed once" do
-      fields = %{"title" => field(%{"filters" => [filter("fuzzytime"), filter("fuzzytime")]})}
-      assert unsupported(["search", "fields"], fields) == [{:filter, "fuzzytime"}]
+      fields = %{"title|noappend" => field(%{}), "size|noappend" => field(%{})}
+      assert unsupported(["search", "fields"], fields) == [:field_modifier]
     end
   end
 
@@ -996,7 +999,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     @built_settings ~w(info text password checkbox select info_cookie info_flaresolverr)
     @built_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                       append tolower toupper base64decode base64encode urldecode urlencode
-                      htmldecode htmlencode timeago reltime validfilename diacritics
+                      htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
                       jsonjoinarray hexdump strdump validate)
 
     # #1678 reads `rows.count` on a JSON page only, and #1679 loads it on any search, as
@@ -1084,7 +1087,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       end
     end
 
-    test "a definition using each filter #1677 built has no filter code; the rest keep theirs" do
+    test "a definition using each filter #1677 built has no filter code; an unknown one keeps its code" do
       filters =
         Enum.map(
           ~w(querystring timeparse prepend tolower toupper base64decode base64encode urldecode
@@ -1104,8 +1107,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         "title" => field(%{"filters" => filters ++ [filter("fuzzytime"), filter("rot13")]})
       }
 
-      assert unsupported(["search", "fields"], more) ==
-               [{:unknown_value, :filter}, {:filter, "fuzzytime"}]
+      assert unsupported(["search", "fields"], more) == [{:unknown_value, :filter}]
 
       assert {:ok, definition} =
                Loader.load(
@@ -1179,7 +1181,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["search", "headers"], %{"Accept" => ["text/html"]}, []},
       {["search", "allowEmptyInputs"], true, []},
       {["search", "keywordsfilters"], [filter("trim")], []},
-      {["search", "keywordsfilters"], [filter("fuzzytime")], [{:filter, "fuzzytime"}]},
+      {["search", "keywordsfilters"], [filter("fuzzytime")], []},
+      {["search", "keywordsfilters"], [filter("rot13")], [{:unknown_value, :filter}]},
       {["search", "preprocessingfilters"], [filter("trim")], []},
       {["search", "error"],
        [%{"selector" => "div.e", "path" => "/", "message" => %{"selector" => "p"}}], []},
@@ -1234,7 +1237,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
          ]
        }, []},
       {["download"], %{"selectors" => [%{"selector" => "a", "filters" => [filter("fuzzytime")]}]},
-       [{:filter, "fuzzytime"}]},
+       []},
+      {["download"], %{"selectors" => [%{"selector" => "a", "filters" => [filter("rot13")]}]},
+       [{:unknown_value, :filter}]},
       # login
       {["login"], %{"method" => "form", "form" => "f", "submitpath" => "/s", "selectors" => true},
        []},
@@ -1254,8 +1259,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["login"],
        %{
          "method" => "form",
-         "selectorinputs" => %{"t" => %{"selector" => "i", "filters" => [filter("fuzzytime")]}}
-       }, [{:filter, "fuzzytime"}]},
+         "selectorinputs" => %{"t" => %{"selector" => "i", "filters" => [filter("rot13")]}}
+       }, [{:unknown_value, :filter}]},
       {["login"],
        %{
          "method" => "form",

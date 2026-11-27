@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   @moduledoc ~S"""
-  The Cardigann field filters (#1670 and #1677, part of #1610) and the `andmatch` row filter
-  (#1670), as Prowlarr's `CardigannBase.ApplyFilters` and `IndexerBase.FilterReleasesByQuery`
-  read them.
+  The Cardigann field filters (#1670, #1677 and #1802, part of #1610) and the `andmatch` row
+  filter (#1670), as Prowlarr's `CardigannBase.ApplyFilters` and
+  `IndexerBase.FilterReleasesByQuery` read them.
 
   A filter is the loader's record, `%{name: name, args: args}`, where `args` is `nil`, a string
   or a list of strings. A list runs in order, each step on the previous output:
@@ -36,6 +36,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   - `urlencode` and `urldecode`: in the definition's `encoding`, the `:encoding` option;
   - `timeago` and `reltime`: `DotnetDate.from_time_ago/2` written as `dateparse` writes, or
     `{:error, {:filter_failed, name}}` where .NET throws;
+  - `fuzzytime` (#1802): `DotnetDate.from_unknown/2` written as `dateparse` writes, or
+    `{:error, {:filter_failed, "fuzzytime"}}` where it answers `:error`;
   - `diacritics replace`: any other argument is a `{:filter_args, "diacritics"}` tag;
   - `validate list`: the words of the list the text holds;
   - `jsonjoinarray [path, separator]` (#1678): the text decoded as a JSON object by
@@ -69,13 +71,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   alias Cinder.Acquisition.Indexer.Cardigann.JsonText
   alias Cinder.Acquisition.Indexer.Cardigann.Template
 
-  @supported ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode htmlencode
-                jsonjoinarray prepend querystring re_replace regexp reltime replace split strdump timeago
-                timeparse tolower toupper trim urldecode urlencode validate validfilename)
+  @supported ~w(append base64decode base64encode dateparse diacritics fuzzytime hexdump htmldecode
+                htmlencode jsonjoinarray prepend querystring re_replace regexp reltime replace split
+                strdump timeago timeparse tolower toupper trim urldecode urlencode validate
+                validfilename)
   # The filters that read their input as text: bytes that are not UTF-8 read as U+FFFD, as .NET
   # decodes a response before any filter runs.
-  @text_filters ~w(base64decode base64encode diacritics htmldecode htmlencode jsonjoinarray prepend
-                   querystring
+  @text_filters ~w(base64decode base64encode diacritics fuzzytime htmldecode htmlencode
+                   jsonjoinarray prepend querystring
                    reltime timeago tolower toupper urldecode urlencode validate validfilename)
   # Prowlarr's debugging filters, which only log their input. Cinder logs nothing: the input can
   # hold a passkey.
@@ -229,6 +232,13 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
     case DotnetDate.from_time_ago(data, env.now) do
       {:ok, time} -> {:ok, DotnetDate.canonical(time), 0}
       :error -> {:error, {:filter_failed, name}}
+    end
+  end
+
+  defp text_step(%{name: "fuzzytime"}, data, env, _left) do
+    case DotnetDate.from_unknown(data, env.now) do
+      {:ok, time} -> {:ok, DotnetDate.canonical(time), 0}
+      :error -> {:error, {:filter_failed, "fuzzytime"}}
     end
   end
 

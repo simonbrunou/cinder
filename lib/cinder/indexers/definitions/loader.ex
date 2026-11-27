@@ -83,9 +83,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
   the revision in `fingerprint/0`, under which #1667 stores results.
 
   The flags on are the field filters `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0`
-  names, which #1670 and #1677 built, the row filters `andmatch` and `strdump` (a no-op), and the
-  setting types `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`. Then,
-  by the slice that built them:
+  names, which #1670, #1677, #1678 and #1802 built, the row filters `andmatch` and `strdump` (a
+  no-op), and the setting types `info`, `text`, `password`, `checkbox`, `select` and
+  `info_flaresolverr`. Then, by the slice that built them:
 
   - Cardigann slice (a) (#1671): an HTML search (`html_search`), `caps.allowrawsearch`
     (`raw_search`; Cinder never sends a raw query), `keywordsfilters`, `case`, `requestDelay`,
@@ -143,14 +143,16 @@ defmodule Cinder.Indexers.Definitions.Loader do
   #    (#1680), and `LoadCheck` checks a `login.inputs` key read as a selector.
   # 9: the definitions store keeps each copy's display name with its result (#1676), which the
   #    boot re-check fills in for every stored copy.
-  @revision 9
+  # 10: the `fuzzytime` filter loads, and a `date` field reads more of the dates Prowlarr's
+  #     `FromUnknown` reads (#1802).
+  @revision 10
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
                     htmldecode htmlencode timeago reltime fuzzytime validfilename diacritics
                     jsonjoinarray hexdump strdump validate)
   @row_filters ~w(andmatch strdump)
-  # The filters #1670 and #1677 built, and #1671's row filter and setting types.
+  # The filters #1670, #1677, #1678 and #1802 built, and #1671's row filter and setting types.
   @built_filters Cinder.Acquisition.Indexer.Cardigann.Filters.supported()
   @built_row_filters ~w(andmatch strdump)
   @built_setting_types ~w(info text password checkbox select info_cookie info_flaresolverr)

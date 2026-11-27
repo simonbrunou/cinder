@@ -13,12 +13,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
   defp run(input, filters, vars \\ %{}), do: Filters.apply(input, filters, vars, @now)
 
   describe "supported/0" do
-    test "lists the filters of #1670, #1677 and #1678" do
+    test "lists the filters of #1670, #1677, #1678 and #1802" do
       assert Filters.supported() ==
-               ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode
-                  htmlencode jsonjoinarray prepend querystring re_replace regexp reltime replace split strdump
-                  timeago timeparse tolower toupper trim urldecode urlencode validate
-                  validfilename)
+               ~w(append base64decode base64encode dateparse diacritics fuzzytime hexdump
+                  htmldecode htmlencode jsonjoinarray prepend querystring re_replace regexp reltime
+                  replace split strdump timeago timeparse tolower toupper trim urldecode urlencode
+                  validate validfilename)
     end
   end
 
@@ -218,8 +218,6 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
     end
 
     test "a filter the engine does not run is a not-supported tag" do
-      assert run("x", [f("fuzzytime")]) == {:error, {:not_supported, {:filter, "fuzzytime"}}}
-
       assert run("{}", [f("trim"), f("rot13")]) ==
                {:error, {:not_supported, {:filter, "rot13"}}}
 
@@ -312,6 +310,23 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
       assert run("3000 years", [f("reltime")]) == {:error, {:filter_failed, "reltime"}}
     end
 
+    test "fuzzytime writes the time DotnetDate.from_unknown/2 reads, and fails where it cannot" do
+      # The rows of DotnetDateFromUnknownTest, from the 2026-11-25 19:45:30 UTC of this module.
+      assert run("Yesterday 14:22", [f("fuzzytime")]) == {:ok, "2026-11-24T14:22:00Z"}
+      assert run("Yesterday 14:22 +08:00", [f("fuzzytime")]) == {:ok, "2026-11-24T06:22:00Z"}
+      assert run("Saturday at 14:22", [f("fuzzytime")]) == {:ok, "2026-11-21T14:22:00Z"}
+
+      assert run("Wed, 25 Nov 2026 13:02:00 +1", [f("fuzzytime")]) ==
+               {:ok, "2026-11-25T12:02:00Z"}
+
+      assert run("12:25am", [f("fuzzytime")]) == {:ok, "2026-11-25T00:25:00Z"}
+      assert run("garbage", [f("fuzzytime")]) == {:error, {:filter_failed, "fuzzytime"}}
+      assert run("Today 14h22", [f("fuzzytime")]) == {:error, {:filter_failed, "fuzzytime"}}
+      # The text a filter wrote reads back: `dateparse`'s canonical text, then `fuzzytime`.
+      filters = [f("dateparse", "dd/MM/yyyy"), f("fuzzytime")]
+      assert run("25/11/2026", filters) == {:ok, "2026-11-25T00:00:00Z"}
+    end
+
     test "validfilename replaces NUL and /" do
       assert run("AC/DC" <> <<0>>, [f("validfilename")]) == {:ok, "AC_DC_"}
     end
@@ -359,9 +374,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
       for {filter, out} <- [
             {f("querystring", "id"), {:ok, "\uFFFD"}},
             {f("timeago"), {:ok, "2026-11-25T19:45:30Z"}},
+            {f("fuzzytime"), {:ok, "2026-11-25T19:45:30Z"}},
             {f("base64decode"), {:error, {:filter_failed, "base64decode"}}}
           ] do
-        input = if filter.name == "querystring", do: <<"?id=", 0xFF>>, else: bad
+        input =
+          case filter.name do
+            "querystring" -> <<"?id=", 0xFF>>
+            # `now` then U+FFFD reads as now; the bytes as they came would be :error.
+            "fuzzytime" -> <<"now", 0xFF>>
+            _other -> bad
+          end
+
         assert {filter, run(input, [filter])} == {filter, out}
       end
     end

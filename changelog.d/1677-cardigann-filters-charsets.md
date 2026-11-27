@@ -13,6 +13,6 @@
   as not supported, and it raised its revision to 3. `LoadCheck` adds `{:regex, :dotnet_only}`
   for a .NET balancing group, a class subtraction or a `(?` group outside an allowlist, such as
   `(?x)` or `(?(`, and `{:regex, :invalid}` for any other `regexp` or `re_replace` filter pattern
-  the engine refuses; a `re_replace` inside a template is not checked at load. `fuzzytime`
-  still reads as not supported, and #1678 lifts `jsonjoinarray` and those nine charsets. A
-  Cardigann indexer's search or Test (#1671) calls these modules.
+  the engine refuses; a `re_replace` inside a template is not checked at load. #1802 lifts
+  `fuzzytime`, and #1678 lifts `jsonjoinarray` and those nine charsets. A Cardigann indexer's
+  search or Test (#1671) calls these modules.

@@ -318,6 +318,25 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
                  ]
     end
 
+    test "a copy whose optional date field goes through fuzzytime has no code" do
+      # At Prowlarr/Indexers 56b20b19 `{:filter, "fuzzytime"}` was the only code of those two
+      # files (#1802). Shaped like 1337x's `date_today` and mikan's `date_day`.
+      copy =
+        put_in(@base, ["search", "fields"], %{
+          "title" => %{"selector" => "a"},
+          "date_day" => %{
+            "selector" => "td:nth-child(1)",
+            "optional" => true,
+            "filters" => [
+              %{"name" => "replace", "args" => ["昨天", "Yesterday"]},
+              %{"name" => "fuzzytime"}
+            ]
+          }
+        })
+
+      assert {:ok, %{unsupported: []}} = LoadCheck.check(yaml(copy))
+    end
+
     test "adds nothing to a copy whose selectors all pass" do
       assert {:ok, %{unsupported: []}} = LoadCheck.check(yaml(@base))
       # Its login and download add the loader's codes, and its selectors none.

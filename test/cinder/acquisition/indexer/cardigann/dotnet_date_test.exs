@@ -180,6 +180,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDateTest do
     end
   end
 
+  # The accept rows from_unknown/2 read before #1802, kept apart so a run at that base passes.
   describe "canonical/1 and from_unknown/2" do
     test "canonical text is ISO 8601 in UTC" do
       assert DotnetDate.canonical(~U[2026-11-25 13:02:00Z]) == "2026-11-25T13:02:00Z"
@@ -209,13 +210,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.DotnetDateTest do
       assert DotnetDate.from_unknown("just NOW", @now) == {:ok, @now}
     end
 
-    test "anything else is :error" do
+    # The other texts this test once refused, such as `yesterday` and `2 hours ago`, read now
+    # (#1802): DotnetDateFromUnknownTest holds their .NET rows.
+    test "is :error where .NET throws" do
       for text <- [
-            "2026-11-25T13:02:00+01:00",
-            "2026-11-25 13:02:00Z",
-            "2026-11-25T13:02:00.5Z",
-            "2 hours ago",
-            "yesterday",
             "",
             "12a",
             "99999999999999999999",
