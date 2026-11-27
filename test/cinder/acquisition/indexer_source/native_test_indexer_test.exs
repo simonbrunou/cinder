@@ -41,6 +41,15 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTestIndexerTest do
     end
   end
 
+  # The raw query strings a route reported for `host`, in order.
+  defp query_strings(host) do
+    receive do
+      {:query_string, ^host, query_string} -> [query_string | query_strings(host)]
+    after
+      0 -> []
+    end
+  end
+
   # Answers the Test's `t=search` with `answer`, every caps request with the default caps.
   defp search_route(answer) do
     fn conn, query ->
@@ -80,7 +89,45 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTestIndexerTest do
       assert Native.test_indexer(indexer.id) == {:ok, %{outcome: :success, at: @now}}
 
       assert [%{"t" => "caps"}, search] = requests("nzb.example")
-      assert search == %{"t" => "search", "cat" => "2000,2040", "apikey" => key()}
+
+      assert search == %{
+               "t" => "search",
+               "cat" => "2000,2040",
+               "extended" => "1",
+               "apikey" => key()
+             }
+    end
+
+    # The raw query strings, which show a duplicate key and the encoding that the decoded query
+    # hides (#1742): the caps refetch sends neither `extended=1` nor a stored pair.
+    test "sends extended=1 and a Newznab row's stored pairs on its search, neither on its caps" do
+      newznab =
+        indexer!(:newznab, "nzb.example", %{
+          settings: %{"additional_parameters" => "&maxage=5&x=a%20b&flag"}
+        })
+
+      torznab = indexer!(:torznab, "tracker.example")
+      test_pid = self()
+
+      raw = fn conn, _query ->
+        send(test_pid, {:query_string, conn.host, conn.query_string})
+        :default
+      end
+
+      route(%{"nzb.example" => raw, "tracker.example" => raw})
+
+      assert {:ok, %{outcome: :success}} = Native.test_indexer(newznab.id)
+      assert {:ok, %{outcome: :success}} = Native.test_indexer(torznab.id)
+
+      assert query_strings("nzb.example") == [
+               "t=caps&apikey=#{key()}",
+               "t=search&cat=2000%2C2040&extended=1&maxage=5&x=a+b&flag=&apikey=#{key()}"
+             ]
+
+      assert query_strings("tracker.example") == [
+               "t=caps&apikey=#{key()}",
+               "t=search&cat=5000%2C5040%2C5070&extended=1&apikey=#{key()}"
+             ]
     end
 
     test "a Torznab Test scopes its search to TV, listed sub-categories included" do

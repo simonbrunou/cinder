@@ -19,6 +19,8 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
   alias Cinder.Indexers
 
   @key "nzb-key-0123456789"
+  # The planned parameters of `{:search_movie_query, "Dune", []}` against `caps_body/0`, as sent.
+  @dune "t=search&q=Dune&cat=2000%2C2040"
   @seven_days_s 7 * 24 * 60 * 60
 
   @modes %{
@@ -133,7 +135,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
     describe "#{@name}: search/1 (an IMDb id)" do
       test "asks t=movie with the id's digits, id-scoped, with no category" do
         assert planned(@adapter, {:search, "tt0133093"}) ==
-                 [{key(%{"t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
+                 [{key(%{"extended" => "1", "t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
       end
 
       test "pads a 6-digit id to 7 and cuts tt; a longer id goes out whole" do
@@ -143,7 +145,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
               {"tt12345678", "12345678"}
             ] do
           assert planned(@adapter, {:search, id}) ==
-                   [{key(%{"t" => "movie", "imdbid" => digits}), :id_scoped}]
+                   [{key(%{"extended" => "1", "t" => "movie", "imdbid" => digits}), :id_scoped}]
         end
       end
 
@@ -169,7 +171,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
     describe "#{@name}: search_movie/3 (a standard movie, #1632)" do
       test "asks only t=movie by the id when movie-search lists imdbid, and no t=search" do
         assert planned(@adapter, {:search_movie, "tt0133093", "The Matrix 1999", []}) ==
-                 [{key(%{"t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
+                 [{key(%{"extended" => "1", "t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
       end
 
       test "asks t=search with the text, scoped to 2000, when movie-search lacks imdbid" do
@@ -182,8 +184,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
                    modes: %{@modes | "movie-search" => attrs}
                  ) ==
                    [
-                     {key(%{"t" => "search", "q" => "The Matrix 1999", "cat" => "2000,2040"}),
-                      :free_text}
+                     {key(%{
+                        "extended" => "1",
+                        "t" => "search",
+                        "q" => "The Matrix 1999",
+                        "cat" => "2000,2040"
+                      }), :free_text}
                    ]
         end
       end
@@ -195,8 +201,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
                  modes: %{@modes | "movie-search" => nil}
                ) ==
                  [
-                   {key(%{"t" => "search", "q" => "The Matrix 1999", "cat" => "5070"}),
-                    :free_text}
+                   {key(%{
+                      "extended" => "1",
+                      "t" => "search",
+                      "q" => "The Matrix 1999",
+                      "cat" => "5070"
+                    }), :free_text}
                  ]
       end
 
@@ -227,7 +237,10 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
                  ) == {:not_asked, :caps}
 
           assert planned(@adapter, {:search_movie, "tt0133093", query, []}) ==
-                   [{key(%{"t" => "movie", "imdbid" => "0133093"}), :id_scoped}]
+                   [
+                     {key(%{"extended" => "1", "t" => "movie", "imdbid" => "0133093"}),
+                      :id_scoped}
+                   ]
         end
       end
     end
@@ -235,15 +248,35 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
     describe "#{@name}: search_tv/3" do
       test "asks the TVDB id with its season, and the title with its season, in that order" do
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 2}) == [
-                 {key(%{"t" => "tvsearch", "tvdbid" => "81189", "season" => "2"}), :id_scoped},
-                 {key(%{"t" => "tvsearch", "q" => "Breaking Bad", "season" => "2"}), :free_text}
+                 {key(%{
+                    "extended" => "1",
+                    "t" => "tvsearch",
+                    "tvdbid" => "81189",
+                    "season" => "2"
+                  }), :id_scoped},
+                 {key(%{
+                    "extended" => "1",
+                    "t" => "tvsearch",
+                    "q" => "Breaking Bad",
+                    "season" => "2"
+                  }), :free_text}
                ]
       end
 
       test "sends season 0 as 00 on both requests" do
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 0}) == [
-                 {key(%{"t" => "tvsearch", "tvdbid" => "81189", "season" => "00"}), :id_scoped},
-                 {key(%{"t" => "tvsearch", "q" => "Breaking Bad", "season" => "00"}), :free_text}
+                 {key(%{
+                    "extended" => "1",
+                    "t" => "tvsearch",
+                    "tvdbid" => "81189",
+                    "season" => "00"
+                  }), :id_scoped},
+                 {key(%{
+                    "extended" => "1",
+                    "t" => "tvsearch",
+                    "q" => "Breaking Bad",
+                    "season" => "00"
+                  }), :free_text}
                ]
       end
 
@@ -251,9 +284,13 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
         modes = %{@modes | "tv-search" => ~s(available="yes" supportedParams="q,tvdbid")}
 
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 2}, modes: modes) == [
-                 {key(%{"t" => "tvsearch", "tvdbid" => "81189"}), :id_scoped},
-                 {key(%{"t" => "search", "q" => "Breaking Bad", "cat" => "5000,5070"}),
-                  :free_text}
+                 {key(%{"extended" => "1", "t" => "tvsearch", "tvdbid" => "81189"}), :id_scoped},
+                 {key(%{
+                    "extended" => "1",
+                    "t" => "search",
+                    "q" => "Breaking Bad",
+                    "cat" => "5000,5070"
+                  }), :free_text}
                ]
       end
 
@@ -262,21 +299,39 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
         assert planned(@adapter, {:search_tv, nil, "Breaking Bad", 2}, modes: modes) ==
                  [
-                   {key(%{"t" => "search", "q" => "Breaking Bad", "cat" => "5000,5070"}),
-                    :free_text}
+                   {key(%{
+                      "extended" => "1",
+                      "t" => "search",
+                      "q" => "Breaking Bad",
+                      "cat" => "5000,5070"
+                    }), :free_text}
                  ]
       end
 
       test "with no TVDB id asks only the title" do
         assert planned(@adapter, {:search_tv, nil, "Breaking Bad", 2}) ==
-                 [{key(%{"t" => "tvsearch", "q" => "Breaking Bad", "season" => "2"}), :free_text}]
+                 [
+                   {key(%{
+                      "extended" => "1",
+                      "t" => "tvsearch",
+                      "q" => "Breaking Bad",
+                      "season" => "2"
+                    }), :free_text}
+                 ]
       end
 
       test "asks only the title when tv-search lacks tvdbid" do
         modes = %{@modes | "tv-search" => ~s(available="yes" supportedParams="q,season")}
 
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 2}, modes: modes) ==
-                 [{key(%{"t" => "tvsearch", "q" => "Breaking Bad", "season" => "2"}), :free_text}]
+                 [
+                   {key(%{
+                      "extended" => "1",
+                      "t" => "tvsearch",
+                      "q" => "Breaking Bad",
+                      "season" => "2"
+                    }), :free_text}
+                 ]
       end
 
       test "with no tv-search falls back to t=search scoped to TV, and to nothing without it" do
@@ -284,8 +339,12 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
         assert planned(@adapter, {:search_tv, 81_189, "Breaking Bad", 2}, modes: modes) ==
                  [
-                   {key(%{"t" => "search", "q" => "Breaking Bad", "cat" => "5000,5070"}),
-                    :free_text}
+                   {key(%{
+                      "extended" => "1",
+                      "t" => "search",
+                      "q" => "Breaking Bad",
+                      "cat" => "5000,5070"
+                    }), :free_text}
                  ]
 
         for {modes, categories} <- [
@@ -327,14 +386,21 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
           for opts <- [[], [categories: []]] do
             assert planned(@adapter, {@call, "Dune: Part Two", opts}) ==
                      [
-                       {key(%{"t" => "search", "q" => "Dune: Part Two", "cat" => @cat}),
-                        :free_text}
+                       {key(%{
+                          "extended" => "1",
+                          "t" => "search",
+                          "q" => "Dune: Part Two",
+                          "cat" => @cat
+                        }), :free_text}
                      ],
                    inspect(opts)
           end
 
           assert planned(@adapter, {@call, "Dune", categories: [5070]}) ==
-                   [{key(%{"t" => "search", "q" => "Dune", "cat" => "5070"}), :free_text}]
+                   [
+                     {key(%{"extended" => "1", "t" => "search", "q" => "Dune", "cat" => "5070"}),
+                      :free_text}
+                   ]
         end
 
         test "#{call} is not asked when search lacks q or the categories cover none of the scope" do
@@ -366,6 +432,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
           for opts <- [[], [categories: []]] do
             assert planned(@adapter, {@call, "Frank Herbert", "Dune", opts}) == [
                      {key(%{
+                        "extended" => "1",
                         "t" => "book",
                         "title" => "Dune",
                         "author" => "Frank Herbert",
@@ -381,7 +448,14 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
           for modes <- [@modes, modes] do
             assert planned(@adapter, {@call, nil, "Dune", []}, modes: modes) ==
-                     [{key(%{"t" => "book", "title" => "Dune", "cat" => @default}), :id_scoped}]
+                     [
+                       {key(%{
+                          "extended" => "1",
+                          "t" => "book",
+                          "title" => "Dune",
+                          "cat" => @default
+                        }), :id_scoped}
+                     ]
           end
         end
 
@@ -450,7 +524,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
         indexer = indexer!(type(@adapter), %{}, %{})
 
         assert planned(@adapter, {:search, "tt0133093"}, indexer: indexer) ==
-                 [{%{"t" => "movie", "imdbid" => "0133093"}, :id_scoped}]
+                 [{%{"t" => "movie", "imdbid" => "0133093", "extended" => "1"}, :id_scoped}]
       end
 
       test "the planned requests hold no key" do
@@ -462,6 +536,231 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
 
         refute inspect(planned, limit: :infinity) =~ @key
       end
+    end
+  end
+
+  # Plans `query` for `indexer` against a stub that answers `caps_body/0` and reports each raw
+  # query string, then sends every planned request: `{caps, searches}`, the query strings of the
+  # caps fetch and of the planned requests in order. A raw string shows a duplicate key and the
+  # encoding that the decoded `conn.query_params` hides.
+  defp query_strings(adapter, indexer, query) do
+    query_string_stub()
+    assert {:ok, planned} = adapter.plan(indexer, query, context())
+    caps = received_query_strings()
+
+    for %{params: params} <- planned do
+      assert {:ok, %Req.Response{status: 200}} =
+               Indexer.request(context(), adapter.request_options(indexer, params))
+    end
+
+    {caps, received_query_strings()}
+  end
+
+  defp query_string_stub do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.NewznabStub, fn conn ->
+      send(test_pid, {:query_string, conn.query_string})
+
+      case conn.query_params do
+        %{"t" => "caps"} -> Plug.Conn.send_resp(conn, 200, caps_body())
+        _search -> Plug.Conn.send_resp(conn, 200, "<rss><channel/></rss>")
+      end
+    end)
+  end
+
+  defp received_query_strings do
+    receive do
+      {:query_string, query_string} -> [query_string | received_query_strings()]
+    after
+      0 -> []
+    end
+  end
+
+  describe "extended=1 and the additional parameters (#1742)" do
+    test "a Newznab search ends in extended=1, the stored pairs re-encoded, then the key; caps sends neither" do
+      indexer =
+        indexer!(:newznab, %{settings: %{"additional_parameters" => "&maxage=5&x=a%20b&flag"}})
+
+      assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+               {["t=caps&apikey=#{@key}"],
+                ["t=search&q=Dune&cat=2000%2C2040&extended=1&maxage=5&x=a+b&flag=&apikey=#{@key}"]}
+    end
+
+    test "a Torznab search ends in extended=1 then the key, and its caps send neither" do
+      assert query_strings(Torznab, indexer!(:torznab), {:search_movie_query, "Dune", []}) ==
+               {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&apikey=#{@key}"]}
+    end
+
+    test "with no key, caps go out as t=caps alone and a search ends in the stored pairs" do
+      indexer =
+        indexer!(:newznab, %{settings: %{"additional_parameters" => "&maxage=5"}}, %{})
+
+      assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+               {["t=caps"], ["#{@dune}&extended=1&maxage=5"]}
+
+      assert query_strings(
+               Torznab,
+               indexer!(:torznab, %{}, %{}),
+               {:search_movie_query, "Dune", []}
+             ) ==
+               {["t=caps"], ["#{@dune}&extended=1"]}
+    end
+
+    test "every planned request carries them, an id-scoped one included" do
+      indexer = indexer!(:newznab, %{settings: %{"additional_parameters" => "&maxage=5"}})
+
+      assert query_strings(Newznab, indexer, {:search_tv, 81_189, "Breaking Bad", 2}) ==
+               {["t=caps&apikey=#{@key}"],
+                [
+                  "t=tvsearch&tvdbid=81189&season=2&extended=1&maxage=5&apikey=#{@key}",
+                  "t=tvsearch&q=Breaking+Bad&season=2&extended=1&maxage=5&apikey=#{@key}"
+                ]}
+    end
+
+    test "a stored pair may not set a name the request relies on, capitalised or percent-encoded" do
+      # Built past the write check, which lets these names through anyway.
+      indexer = %{
+        indexer!(:newznab)
+        | settings: %{
+            "additional_parameters" => "&t=caps&Cat=1&%71=x&o=json&limit=100&maxage=5"
+          }
+      }
+
+      assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+               {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&maxage=5&apikey=#{@key}"]}
+    end
+
+    # PHP's `parse_str/2` reads `cat=2000&cat[]=5000` as `cat => ["5000"]`, so a bracketed name
+    # would replace the planned value on a PHP Newznab server. The write check passes these.
+    test "a stored pair may not set a name the request relies on as a PHP array either" do
+      for value <- [
+            "&cat[]=5000&T[0]=x&o[]=json&maxage=5",
+            "&%63at%5B%5D=5000&+cat+[]=1&maxage=5",
+            "&apikey[]=evil&passkey[x]=evil&maxage=5"
+          ] do
+        indexer = %{indexer!(:newznab) | settings: %{"additional_parameters" => value}}
+
+        assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+                 {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&maxage=5&apikey=#{@key}"]},
+               value
+      end
+
+      # The control: a bracketed name that is no reserved one goes out.
+      indexer = %{indexer!(:newznab) | settings: %{"additional_parameters" => "&tags[]=a"}}
+
+      assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+               {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&tags%5B%5D=a&apikey=#{@key}"]}
+    end
+
+    # Each name the request table, the scope, the answer format, paging and the key rest on.
+    # Leaving any of the first 13 out of the drop turns its row red. `apikey` and `passkey` are
+    # refused whole by the write check's reading before the drop sees them, so the pair beside them
+    # goes too, and taking those two out of the drop leaves their rows green.
+    for {name, tail} <- [
+          {"t", "&maxage=5"},
+          {"o", "&maxage=5"},
+          {"q", "&maxage=5"},
+          {"cat", "&maxage=5"},
+          {"imdbid", "&maxage=5"},
+          {"tvdbid", "&maxage=5"},
+          {"season", "&maxage=5"},
+          {"ep", "&maxage=5"},
+          {"title", "&maxage=5"},
+          {"author", "&maxage=5"},
+          {"extended", "&maxage=5"},
+          {"limit", "&maxage=5"},
+          {"offset", "&maxage=5"},
+          {"apikey", ""},
+          {"passkey", ""}
+        ] do
+      @reserved name
+      @tail tail
+
+      @outcome if(tail == "", do: "drops the whole value", else: "is dropped")
+
+      test "a stored #{name}= #{@outcome}, in a capitalised, spaced or percent-encoded spelling too" do
+        encoded =
+          @reserved |> String.to_charlist() |> Enum.map_join(&"%#{Integer.to_string(&1, 16)}")
+
+        for spelling <- [@reserved, String.upcase(@reserved), "+#{@reserved}+", encoded] do
+          indexer = %{
+            indexer!(:newznab)
+            | settings: %{"additional_parameters" => "&#{spelling}=0&maxage=5"}
+          }
+
+          assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+                   {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1#{@tail}&apikey=#{@key}"]},
+                 spelling
+        end
+      end
+    end
+
+    test "a value that names a credential sends none of its pairs, and the key only as stored" do
+      for value <- ["&ApiKey=evil", "&a=1;apikey=evil", "&passkey=evil", "&%61pikey=evil"] do
+        keyed = %{indexer!(:newznab) | settings: %{"additional_parameters" => value}}
+
+        assert query_strings(Newznab, keyed, {:search_movie_query, "Dune", []}) ==
+                 {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&apikey=#{@key}"]},
+               value
+
+        keyless = %{indexer!(:newznab, %{}, %{}) | settings: %{"additional_parameters" => value}}
+
+        assert query_strings(Newznab, keyless, {:search_movie_query, "Dune", []}) ==
+                 {["t=caps"], ["#{@dune}&extended=1"]},
+               value
+      end
+    end
+
+    test "a Torznab row sends no stored pair, whatever its settings hold" do
+      indexer = %{indexer!(:torznab) | settings: %{"additional_parameters" => "&maxage=5"}}
+
+      assert query_strings(Torznab, indexer, {:search_movie_query, "Dune", []}) ==
+               {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1&apikey=#{@key}"]}
+    end
+
+    # `{stored value, the query string's tail before the key}`, one row per way the reading splits,
+    # decodes, drops or refuses a value.
+    for {value, tail} <- [
+          {:none, ""},
+          {"", ""},
+          {"  ", ""},
+          {"&&=x&", ""},
+          {nil, ""},
+          {5, ""},
+          {"&a=1#x", ""},
+          {"&%00=1", ""},
+          {"?maxage=5", "&maxage=5"},
+          {"??maxage=5&?a=1", "&maxage=5&a=1"},
+          {"&a=1;b=2", "&a=1&b=2"},
+          {"&a=b=c", "&a=b%3Dc"},
+          {"&flag", "&flag="},
+          {"&a=1+2&b=%C3%A9", "&a=1+2&b=%C3%A9"},
+          {"&+maxage+=5", "&+maxage+=5"},
+          {"&MaxAge=5", "&MaxAge=5"}
+        ] do
+      @value value
+      @value_tail tail
+
+      test "a stored #{inspect(value)} adds #{inspect(tail)}" do
+        settings = if @value == :none, do: %{}, else: %{"additional_parameters" => @value}
+        indexer = %{indexer!(:newznab) | settings: settings}
+
+        assert query_strings(Newznab, indexer, {:search_movie_query, "Dune", []}) ==
+                 {["t=caps&apikey=#{@key}"], ["#{@dune}&extended=1#{@value_tail}&apikey=#{@key}"]}
+      end
+    end
+
+    test "search/3 sends them on the wire, after the planned parameters" do
+      indexer = indexer!(:newznab, %{settings: %{"additional_parameters" => "&maxage=5"}})
+      query_string_stub()
+
+      assert {[], :asked} = Newznab.search(indexer, {:search_movie_query, "Dune", []}, context())
+
+      assert received_query_strings() == [
+               "t=caps&apikey=#{@key}",
+               "#{@dune}&extended=1&maxage=5&apikey=#{@key}"
+             ]
     end
   end
 

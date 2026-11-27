@@ -99,6 +99,28 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
     movie-search lacks `imdbid` gets the movie's `"Title Year"` text instead (#1632), and one
     that lists it never gets the text, also when the id is not digits.
 
+  Each search request, every planned one and the Test's `t=search`, ends in its own parameters,
+  then `extended=1`, then a Newznab row's additional parameters, then `apikey` when the indexer
+  has a key (#1742). `extended=1` asks for every `newznab:attr` of a result, as Prowlarr's
+  `NewznabRequestGenerator` asks on each search. The `t=caps` request carries neither, as
+  Prowlarr's caps fetch sends `apikey` alone.
+
+  - The additional parameters come from
+    `Cinder.Indexers.ConfiguredIndexer.additional_parameters/2`, which reads the stored value
+    as the write check's `parameters_refusal/1` reads it: split on `&` and `;`, the `?`s that
+    lead each name cut, each name and value decoded by `URI.decode_www_form/1`. Each pair goes
+    out in stored order as a Req query parameter, so Req encodes it again: `x=a%20b` goes out
+    as `x=a+b`, and `flag` with no `=` as `flag=`. A name goes out as decoded, untrimmed and
+    in its own case.
+  - A pair whose trimmed name is empty is left out. A value the write check refuses, such as
+    one naming `apikey` or `passkey` in any spelling, sends none of its pairs. A Torznab row,
+    whose settings Cinder never stores, sends none, whatever its settings map holds.
+  - A pair whose name, trimmed and downcased, is one the requests set or rely on is dropped:
+    `t`, `o`, `q`, `cat`, `imdbid`, `tvdbid`, `season`, `ep`, `title`, `author`, `extended`,
+    `limit`, `offset`, `apikey` and `passkey`. So is one whose name's part before its first `[`,
+    trimmed and downcased, is one of them, such as `cat[]`, which a PHP indexer reads as `cat`.
+    So none of those names goes out with a stored value.
+
   The Req options a request is built from come from `config :cinder, #{inspect(__MODULE__)},
   req_options: [...]` at runtime, which the tests point at a `Req.Test` stub.
   """
@@ -113,13 +135,26 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   alias Cinder.HTTPPolicy
   alias Cinder.Indexers.ConfiguredIndexer
 
-  @typedoc "One request to send: its query parameters, the key left out, and its query origin."
-  @type planned :: %{params: keyword(String.t()), origin: :id_scoped | :free_text}
+  @typedoc """
+  One request to send: its query parameters, the key left out, and its query origin. A stored
+  additional parameter keeps its name as a string.
+  """
+  @type planned :: %{
+          params: [{atom() | String.t(), String.t()}],
+          origin: :id_scoped | :free_text
+        }
 
   @movie_category 2000
   @tv_category 5000
   @ebook_category 7020
   @audiobook_category 3030
+
+  # The names a stored additional parameter may not set: the request table's, the category
+  # scope's, the answer format's, paging's and the credentials'. A value naming `apikey` or
+  # `passkey` themselves never reaches this drop: the write check's refusal sends none of its
+  # pairs. Their bracketed forms, such as `apikey[]`, pass that refusal and are dropped here.
+  @reserved_parameters ~w(t o q cat imdbid tvdbid season ep title author extended limit offset
+                          apikey passkey)
 
   @doc """
   The requests one seam call sends `indexer`: `{:ok, planned}` with at least one request,
@@ -130,19 +165,30 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
           {:ok, [planned()]} | {:not_asked, :caps} | {:failed, atom() | tuple()}
   def plan(%ConfiguredIndexer{} = indexer, query, context) do
     case IndexerCaps.read(indexer, fn -> fetch_caps(indexer, context) end) do
-      {:ok, caps} -> query |> requests(caps) |> planned()
+      {:ok, caps} -> query |> requests(caps) |> planned(indexer)
       {:error, tag} -> {:failed, tag}
     end
   end
 
-  defp planned([]), do: {:not_asked, :caps}
-  defp planned(requests), do: {:ok, requests}
+  defp planned([], _indexer), do: {:not_asked, :caps}
+
+  defp planned(requests, indexer),
+    do:
+      {:ok,
+       for(request <- requests, do: Map.update!(request, :params, &search_params(indexer, &1)))}
+
+  # A search request's parameters, a planned one's or the Test's: its own, then `extended=1`, then
+  # a Newznab row's additional parameters in stored order. The caps request carries neither.
+  defp search_params(indexer, params),
+    do:
+      params ++
+        [extended: "1"] ++ ConfiguredIndexer.additional_parameters(indexer, @reserved_parameters)
 
   @doc """
   The Req options of one request to `indexer` with the query `params`: a GET to the base URL with
   its own path kept, the API path, and `apikey` when the indexer has a key.
   """
-  @spec request_options(ConfiguredIndexer.t(), keyword()) :: keyword()
+  @spec request_options(ConfiguredIndexer.t(), [{atom() | String.t(), String.t()}]) :: keyword()
   def request_options(%ConfiguredIndexer{} = indexer, params) do
     Keyword.merge(req_options(),
       method: :get,
@@ -215,10 +261,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   The per-indexer Test of `indexer` (#1657), which asks it whatever its backoff state holds:
 
   1. it refetches the caps and stores them on success (`IndexerCaps.refetch/2`);
-  2. then it sends one `t=search` with no query terms, with `apikey` when the indexer has a key
-     (`request_options/2`), scoped to the type's default category, Movies (2000) for Newznab
-     and TV (5000) for Torznab: `cat` lists the caps' ids under it (`Caps.categories/2`), and
-     is left out when the caps list none. An RSS answer, an empty one included, is a pass.
+  2. then it sends one `t=search` with no query terms, scoped to the type's default category,
+     Movies (2000) for Newznab and TV (5000) for Torznab: `cat` lists the caps' ids under it
+     (`Caps.categories/2`), and is left out when the caps list none. It carries `extended=1`
+     and a Newznab row's additional parameters as a planned search does (the moduledoc's "The
+     requests"), and `apikey` when the indexer has a key (`request_options/2`). An RSS answer,
+     an empty one included, is a pass.
 
   Each request holds the indexer's slot in `context`'s class (`Indexer.leased/4`, with no gate),
   and `Indexer.request/3` gives each one its one retry after an HTTP 502, 503, 504 or 408. The
@@ -265,7 +313,7 @@ defmodule Cinder.Acquisition.Indexer.Newznab do
   end
 
   defp test_search(indexer, caps, context, record) do
-    params = [t: "search"] ++ test_category(indexer.type, caps)
+    params = search_params(indexer, [t: "search"] ++ test_category(indexer.type, caps))
     response = Indexer.request(context, request_options(indexer, params), raw_body: true)
 
     case NewznabAnswer.read(response, now()) do

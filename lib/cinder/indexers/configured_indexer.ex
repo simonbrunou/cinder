@@ -186,6 +186,37 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
   def parameters_refusal(value),
     do: settings_refusal(%{"additional_parameters" => value}, ["additional_parameters"])
 
+  @doc """
+  The query pairs a search of `indexer` adds from its stored additional parameters (#1742), in
+  stored order, each name and value decoded once, as `parameters_refusal/1` reads the names: the
+  value is split on `&` and `;`, the `?`s that lead each name are cut, and each name and value
+  is read by `URI.decode_www_form/1`. A pair with no `=` reads an empty value. A pair is left out
+  when its name, trimmed, is empty, or when its name, trimmed and downcased, or that name's part
+  before its first `[`, trimmed, is in `reserved`: a PHP indexer reads `cat[]` as `cat`.
+
+  Answers `[]` for a type whose settings keys have no `additional_parameters` (Torznab and
+  Cardigann, whatever their settings map holds), for a row with no such setting, and for a value
+  `parameters_refusal/1` refuses, so no pair of a refused value goes out.
+  """
+  @spec additional_parameters(t(), [String.t()]) :: [{String.t(), String.t()}]
+  def additional_parameters(%__MODULE__{type: type, settings: settings}, reserved) do
+    stored = settings["additional_parameters"]
+
+    if "additional_parameters" in Map.get(@settings_keys, type, []) and
+         parameters_refusal(stored) == nil,
+       do:
+         for({name, value} <- parameter_pairs(stored), kept?(name, reserved), do: {name, value}),
+       else: []
+  end
+
+  # A PHP indexer reads `cat[]=5000` as its `cat`, replacing the planned one, so a name is
+  # compared by its part before any `[`.
+  defp kept?(name, reserved) do
+    normal = normal_name(name)
+    [base | _index] = String.split(normal, "[", parts: 2)
+    normal != "" and String.trim(base) not in reserved
+  end
+
   defp settings_refusal(settings, allowed) do
     names = parameter_names(settings["additional_parameters"])
 
@@ -214,14 +245,23 @@ defmodule Cinder.Indexers.ConfiguredIndexer do
   defp parameter_names(value) do
     if String.contains?(value, "#"),
       do: [:undecodable],
-      else: value |> String.split(["&", ";"]) |> Enum.map(&parameter_name/1)
+      else: for({name, _value} <- parameter_pairs(value), do: parameter_name(name))
   end
 
-  defp parameter_name(pair) do
-    [name | _value] = String.split(pair, "=", parts: 2)
-    decoded = name |> String.trim_leading("?") |> URI.decode_www_form()
+  defp parameter_name(decoded),
+    do: if(text?(decoded), do: normal_name(decoded), else: :undecodable)
 
-    if text?(decoded), do: decoded |> String.trim() |> String.downcase(), else: :undecodable
+  defp normal_name(decoded), do: decoded |> String.trim() |> String.downcase()
+
+  # Each `name=value` pair of a text value, the name with the `?`s that lead it cut, both decoded by
+  # `URI.decode_www_form/1`; a pair with no `=` has an empty value. The write check and the
+  # request path (`additional_parameters/2`) both read the value through this.
+  defp parameter_pairs(stored) do
+    for pair <- String.split(stored, ["&", ";"]) do
+      [name | rest] = String.split(pair, "=", parts: 2)
+      value = List.first(rest, "")
+      {name |> String.trim_leading("?") |> URI.decode_www_form(), URI.decode_www_form(value)}
+    end
   end
 
   # http or https with a host and a port in range; no userinfo, query or fragment.

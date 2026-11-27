@@ -541,7 +541,47 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
     end
   end
 
+  # The raw query strings a route reported for `host`, in order.
+  defp query_strings(host) do
+    receive do
+      {:query_string, ^host, query_string} -> [query_string | query_strings(host)]
+    after
+      0 -> []
+    end
+  end
+
   describe "through Native" do
+    # The raw query strings (#1742), which show a duplicate key and the encoding that the decoded
+    # query hides: each search of a Newznab row carries `extended=1` then its stored pairs, a
+    # Torznab row's `extended=1` alone, and the caps fetch neither.
+    test "search_tv/3 sends extended=1 and a Newznab row's stored pairs on each search request" do
+      newznab =
+        indexer!(:newznab, "a.example", %{settings: %{"additional_parameters" => "&maxage=5"}})
+
+      torznab = indexer!(:torznab, "b.example")
+      test_pid = self()
+
+      raw = fn conn, _query ->
+        send(test_pid, {:query_string, conn.host, conn.query_string})
+        :default
+      end
+
+      route(%{"a.example" => raw, "b.example" => raw})
+
+      assert {:ok, [], report} = Native.search_tv(81_189, "Show", 2)
+      assert outcomes(report) == %{newznab.id => :asked, torznab.id => :asked}
+
+      for {host, extra} <- [{"a.example", "&maxage=5"}, {"b.example", ""}] do
+        assert {host, query_strings(host)} ==
+                 {host,
+                  [
+                    "t=caps&apikey=#{key()}",
+                    "t=tvsearch&tvdbid=81189&season=2&extended=1#{extra}&apikey=#{key()}",
+                    "t=tvsearch&q=Show&season=2&extended=1#{extra}&apikey=#{key()}"
+                  ]}
+      end
+    end
+
     test "search_tv/3 with one Newznab indexer answers its rows, id-scoped first, and a report" do
       indexer = indexer!(:newznab, "a.example")
 
@@ -623,8 +663,10 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
              ]
 
       assert_movie_requests(%{
-        "a.example" => [%{"t" => "movie", "imdbid" => "1160419"}],
-        "b.example" => [%{"t" => "search", "q" => "Dune 2021", "cat" => "2000"}],
+        "a.example" => [%{"t" => "movie", "imdbid" => "1160419", "extended" => "1"}],
+        "b.example" => [
+          %{"t" => "search", "q" => "Dune 2021", "cat" => "2000", "extended" => "1"}
+        ],
         "c.example" => []
       })
     end
@@ -642,7 +684,7 @@ defmodule Cinder.Acquisition.Indexer.NewznabSearchTest do
              }
 
       assert_movie_requests(%{
-        "a.example" => [%{"t" => "movie", "imdbid" => "1160419"}],
+        "a.example" => [%{"t" => "movie", "imdbid" => "1160419", "extended" => "1"}],
         "b.example" => [],
         "c.example" => []
       })

@@ -281,6 +281,44 @@ defmodule Cinder.IndexersTest do
                Indexers.create(nil, attrs(%{settings: %{"additional_parameters" => "&cat=2000"}}))
     end
 
+    # The request path (#1742) reads the value as the write check does: each value listed below,
+    # which the check refuses, sends no pair, and the names it passes are read alike.
+    test "additional_parameters/2: no pair from a refused value or a type without the setting" do
+      for value <- [
+            "&apikey=x",
+            "&maxage=5&%61pikey=x",
+            "& apikey =x",
+            "?apikey=x",
+            "maxage=5;apikey=x",
+            "&maxage=5&%FF=x",
+            "&maxage=5#x",
+            5
+          ] do
+        assert {value, refused_on_create(:settings, %{"additional_parameters" => value}) != []} ==
+                 {value, true}
+
+        newznab = %ConfiguredIndexer{
+          type: :newznab,
+          settings: %{"additional_parameters" => value}
+        }
+
+        assert {value, ConfiguredIndexer.additional_parameters(newznab, [])} == {value, []}
+      end
+
+      for type <- [:torznab, :cardigann] do
+        row = %ConfiguredIndexer{type: type, settings: %{"additional_parameters" => "&maxage=5"}}
+        assert {type, ConfiguredIndexer.additional_parameters(row, [])} == {type, []}
+      end
+
+      row = %ConfiguredIndexer{
+        type: :newznab,
+        settings: %{"additional_parameters" => "?CAT=1&maxage=5&x=a%20b&flag"}
+      }
+
+      assert ConfiguredIndexer.additional_parameters(row, ["cat"]) ==
+               [{"maxage", "5"}, {"x", "a b"}, {"flag", ""}]
+    end
+
     test "additional parameters: refuses a name that is not text without control bytes, and a #" do
       for params <- ["&%FF=x", "&%00apikey=x", "&cat=2000#apikey=x"] do
         settings = %{"additional_parameters" => params}
