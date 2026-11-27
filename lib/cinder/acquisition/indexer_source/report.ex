@@ -37,6 +37,10 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
       request that would carry a secret to a host outside the copy's credential hosts;
       `:too_many_redirects`; `:definition_error`, a template or URL of the definition that
       cannot be built.
+    - Cardigann's JSON and XML answers (#1678): `:invalid_json` and `:invalid_xml`, a body that
+      does not parse; `:xml_dtd`, an XML body that holds a DTD, which Cinder refuses before any
+      entity expands; `:no_results_list`, a JSON body whose rows path selects no array of
+      objects while `rows.missingAttributeEqualsNoResults` is off.
 
   This set is closed: `put/4` raises `ArgumentError` on any other outcome, so a new reason needs
   a change here first. Every reason is an atom or a tuple of atoms, integers and `DateTime`s, and
@@ -80,6 +84,10 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
           | :secret_host
           | :too_many_redirects
           | :definition_error
+          | :invalid_json
+          | :invalid_xml
+          | :xml_dtd
+          | :no_results_list
   @type outcome ::
           :asked
           | {:not_asked, not_asked_reason()}
@@ -104,7 +112,11 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
     :forbidden_address,
     :secret_host,
     :too_many_redirects,
-    :definition_error
+    :definition_error,
+    :invalid_json,
+    :invalid_xml,
+    :xml_dtd,
+    :no_results_list
   ]
 
   @rank %{not_asked: 0, asked: 1, skipped: 2, failed: 3}

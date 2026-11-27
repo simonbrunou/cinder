@@ -14,7 +14,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Charset do
     .NET writes one per UTF-16 unit. .NET first tries a best-fit character for some, such as
     `a` for `ā`; Cinder does not.
 
-  Every function is pure. Only the `urlencode` and `urldecode` filters call it in #1677.
+  Every function is pure. The `urlencode` and `urldecode` filters call it (#1677). Since #1678
+  the Cardigann adapter decodes each search page and each download page the grab reads in the
+  definition's charset (`of_definition/1`), and encodes each query-string input's name and
+  value in it. Path values go out in UTF-8, as Prowlarr writes them, and a grabbed torrent's
+  bytes are never decoded.
   """
 
   # Each table's code points for the bytes 0x80 to 0xFF, in hex, FFFD where the mapping file
@@ -182,6 +186,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Charset do
   @spec fetch(String.t()) :: {:ok, t()} | :error
   def fetch(name) when is_binary(name), do: Map.fetch(@names, String.downcase(name, :ascii))
   def fetch(_name), do: :error
+
+  @doc """
+  The charset of `definition`'s `encoding`, UTF-8 for a name outside the set: the load check
+  reports such a definition "not supported", so no search runs it.
+  """
+  @spec of_definition(%{encoding: String.t() | nil}) :: t()
+  def of_definition(%{encoding: name}) do
+    case fetch(name) do
+      {:ok, charset} -> charset
+      :error -> :utf8
+    end
+  end
 
   @doc "`bytes` read in `charset` as UTF-8 text."
   @spec decode(binary(), t()) :: String.t()

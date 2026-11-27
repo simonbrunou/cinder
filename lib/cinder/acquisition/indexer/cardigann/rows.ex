@@ -1,16 +1,21 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   @moduledoc """
   The rows of one Cardigann search page (#1671; #1618 points 6, 7 and 15), read as Prowlarr's
-  `CardigannParser` reads an HTML page (`b0b5774`), with the exceptions the issue sets.
+  `CardigannParser` reads a page (`b0b5774`), with the exceptions the issue sets.
 
   ## Extraction
 
-  The page is read as UTF-8, each byte sequence that is not UTF-8 as U+FFFD
-  (`String.replace_invalid/1`), so one such byte costs no row. Every selector runs in a
-  `Cinder.Indexers.ParserWorker`: the rows selector and each field's selector, rendered first
-  with the search variables, go in as one plan, and per-row values come out. A field written as
-  `text` has no selector in the plan. The worker gets the smaller of 30 s and the time left
-  before the search deadline.
+  The page is read in the definition's charset (`Cinder.Acquisition.Indexer.Cardigann.Charset`,
+  #1678), whatever its `Content-Type` says, as Prowlarr's `HttpResponse.Content` reads the
+  request's encoding first. A byte the charset cannot read becomes U+FFFD, so one such byte costs
+  no row. The search path's `response.type` picks the reader:
+
+  - none: an HTML page. Every selector runs in a `Cinder.Indexers.ParserWorker`: the rows
+    selector and each field's selector, rendered first with the search variables, go in as one
+    plan, and per-row values come out. A field written as `text` has no selector in the plan.
+    The worker gets the smaller of 30 s and the time left before the search deadline;
+  - `json`: `Cinder.Acquisition.Indexer.Cardigann.JsonRows`, in the search process;
+  - `xml`: `Cinder.Acquisition.Indexer.Cardigann.XmlRows`, in the search process.
 
   ## Fields
 
@@ -21,7 +26,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
      `case` field the first matching key's value rendered as a template;
   2. an `optional` field with a blank value takes its `default` rendered; a blank default leaves
      `.Result.<name>` nil and skips the filters;
-  3. the field's filters (`Cinder.Acquisition.Indexer.Cardigann.Filters`). The issue orders the
+  3. the field's filters (`Cinder.Acquisition.Indexer.Cardigann.Filters`, in the definition's
+     charset). The issue orders the
      default before the filters; Prowlarr filters the selector's value and leaves the default
      unfiltered.
 
@@ -53,7 +59,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   rows then pass `Cinder.Acquisition.Indexer.Newznab.Items.kept/1`.
   """
 
-  alias Cinder.Acquisition.Indexer.Cardigann.{DotnetDate, Fetch, Filters, Query, Size, Template}
+  alias Cinder.Acquisition.Indexer.Cardigann.{
+    Charset,
+    DotnetDate,
+    Fetch,
+    Filters,
+    JsonRows,
+    Query,
+    Size,
+    Template,
+    XmlRows
+  }
+
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Indexers.ParserWorker
 
@@ -67,16 +84,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
         }
 
   @doc """
-  Reads `html`, the page `uri` answered to the Fetch `request` (its secrets, credential hosts and
-  clock), for `definition` under the search `variables`, with the call's query text `query_text`
-  (nil for none) and `deadline_at` in `System.monotonic_time(:millisecond)`. Answers
+  Reads `body`, the page `uri` answered to the Fetch `request` (its secrets, credential hosts
+  and clock), for `definition` under the search `variables`, with the call's query text
+  `query_text` (nil for none), `deadline_at` in `System.monotonic_time(:millisecond)` and the
+  search path's `response` record (nil for an HTML page). Answers
   `{:ok, page}`: `rows`, `count` (how many rows the rows selector matched, before the row filter
   and the row rules, which Prowlarr's page loop counts), `partial` (nil, `:regex_limit` or `:filter_output_cap`) and `missing`, the required
   field each row dropped for lack of one lacked first (`:title`, then `:download_url`), in page
   order, for the canary. Or `{:error, reason}`:
   `:parser_failed` for a worker that crashed, ran out of memory or time, or refused a selector;
   `:deadline` for a worker the search deadline cut; `:definition_error` for a selector template
-  that does not render.
+  that does not render; and the JSON and XML readers' own failures, `:invalid_json`,
+  `:invalid_xml`, `:xml_dtd` and `:no_results_list`.
 
   The worker gets 30 s or what is left before `deadline_at`, whichever is less, and
   `[:cinder, :cardigann, :parse]` reports that budget as `deadline_ms` before it starts.
@@ -88,14 +107,28 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
           URI.t(),
           String.t() | nil,
           integer(),
-          Fetch.request()
+          Fetch.request(),
+          map() | nil
         ) ::
           {:ok, page()} | {:error, atom()}
-  def read(html, definition, variables, uri, query_text, deadline_at, request) do
-    with {:ok, plan} <- plan(definition, variables, request.now),
-         {:ok, values} <- run(String.replace_invalid(html), plan, deadline_at) do
-      read_rows(values, definition, variables, uri, query_text, request)
+  def read(body, definition, variables, uri, query_text, deadline_at, request, response \\ nil) do
+    charset = Charset.of_definition(definition)
+    text = Charset.decode(body, charset)
+
+    with {:ok, values} <- values(text, definition, variables, deadline_at, request, response) do
+      read_rows(values, definition, variables, uri, query_text, request, charset)
     end
+  end
+
+  defp values(text, definition, variables, _deadline_at, request, %{type: "json"} = response),
+    do: JsonRows.values(text, definition, variables, request.now, response)
+
+  defp values(text, definition, variables, _deadline_at, request, %{type: "xml"}),
+    do: XmlRows.values(text, definition, variables, request.now)
+
+  defp values(html, definition, variables, deadline_at, request, _html_response) do
+    with {:ok, plan} <- plan(definition, variables, request.now),
+         do: run(html, plan, deadline_at)
   end
 
   # --- the worker ---
@@ -163,7 +196,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
 
   # --- the fields ---
 
-  defp read_rows(values, definition, variables, uri, query_text, request) do
+  defp read_rows(values, definition, variables, uri, query_text, request, charset) do
     now = request.now
     fields = definition.search.fields
 
@@ -180,7 +213,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
 
     {rows, missing, partial} =
       Enum.reduce(values, {[], [], nil}, fn row_values, {rows, missing, partial} ->
-        case fields(fields, Map.new(row_values), seeded, now) do
+        case fields(fields, Map.new(row_values), seeded, now, charset) do
           {:ok, results} -> {rows, missing, partial} |> add_row(one_row.(results))
           {:dropped, kind} -> {rows, missing, partial || kind}
         end
@@ -203,9 +236,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
 
   defp add_row({rows, missing, partial}, row), do: {[row | rows], missing, partial}
 
-  defp fields(fields, worker_values, variables, now) do
+  defp fields(fields, worker_values, variables, now, charset) do
     Enum.reduce_while(fields, {:ok, variables}, fn {name, field}, {:ok, vars} ->
-      case field_value(field, Map.get(worker_values, name), vars, now) do
+      case field_value(field, Map.get(worker_values, name), vars, now, charset) do
         {:ok, value} -> {:cont, {:ok, Map.put(vars, ".Result." <> name, value)}}
         {:dropped, kind} -> {:halt, {:dropped, kind}}
       end
@@ -213,10 +246,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   end
 
   # `{:ok, value}`, value nil for a field that failed or stayed blank, or `{:dropped, kind}`.
-  defp field_value(field, worker_value, vars, now) do
+  defp field_value(field, worker_value, vars, now, charset) do
     with {:ok, raw} <- found(field, raw(field, worker_value, vars, now)),
          {:ok, value} <- defaulted(field, raw, vars, now) do
-      filtered(field, value, vars, now)
+      filtered(field, value, vars, now, charset)
     else
       :none -> {:ok, nil}
       {:dropped, kind} -> {:dropped, kind}
@@ -269,8 +302,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   defp rendered_default({:ok, default}), do: if(blank?(default), do: :none, else: {:ok, default})
   defp rendered_default(other), do: other
 
-  defp filtered(field, value, vars, now) do
-    case Filters.apply(value, field.filters || [], vars, now) do
+  defp filtered(field, value, vars, now, charset) do
+    case Filters.apply(value, field.filters || [], vars, now, encoding: charset) do
       {:ok, filtered} -> {:ok, filtered}
       {:error, kind} when kind in [:regex_limit, :filter_output_cap] -> {:dropped, kind}
       {:error, _reason} -> {:ok, nil}

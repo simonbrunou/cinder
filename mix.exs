@@ -139,6 +139,9 @@ defmodule Cinder.MixProject do
       # The Newznab and Torznab adapters parse their caps answers with it
       # (`Cinder.Acquisition.Indexer.Newznab.XML`), which refuses a document type declaration.
       {:saxy, "~> 1.7"},
+      # The Cardigann adapter matches selectors on an XML search answer, a `Saxy.SimpleForm`
+      # tree, with its selector engine alone (`Cinder.Acquisition.Indexer.Cardigann.XmlRows`).
+      {:floki, "~> 0.38"},
       {:mox, "~> 1.3", only: :test}
     ]
   end

@@ -227,6 +227,13 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     end
   end
 
+  @doc """
+  The `max_heap_size` flag each search process runs under, and each Test's task in
+  `Cinder.Acquisition.IndexerSource.Native.TestRunner`: a heap past it kills the process.
+  """
+  @spec max_heap_size() :: %{size: pos_integer(), kill: true, error_logger: true}
+  def max_heap_size, do: %{size: @max_heap_words, kill: true, error_logger: true}
+
   @doc "The Test's budget in milliseconds: 90 s unless config sets `test_budget_ms`."
   @spec test_budget_ms() :: pos_integer()
   def test_budget_ms, do: Keyword.get(config(), :test_budget_ms, @test_budget_ms)
@@ -347,7 +354,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     context = indexer_context(context, indexer)
 
     Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn ->
-      Process.flag(:max_heap_size, %{size: @max_heap_words, kill: true, error_logger: true})
+      Process.flag(:max_heap_size, max_heap_size())
       search_one(adapter, indexer, query, context)
     end)
   end

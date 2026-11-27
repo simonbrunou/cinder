@@ -38,14 +38,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
 
   ## Paths
 
-  Each search path, in file order: the path template rendered with each value URL-encoded
-  (spaces as `%20`) and resolved against the base URL, then the search inputs followed by the
-  path's own, each rendered and left out when blank, appended as a query string. An input name
-  in both lists is sent twice, search value first, as Prowlarr's `GetRequest` sends it. Two paths
-  that render one URL send it once.
+  Each search path, in file order: the path template rendered with each value URL-encoded in
+  UTF-8 (spaces as `%20`) and resolved against the base URL, then the search inputs followed by
+  the path's own, each rendered and left out when blank, appended as a query string. Each
+  input's name and value are written in the definition's charset
+  (`Cinder.Acquisition.Indexer.Cardigann.Charset.of_definition/1`, #1678) and each byte outside
+  RFC 3986's unreserved set is percent-encoded, so a `windows-1251` definition sends `А` as
+  `%C0`. An input name in both lists is sent twice, search value first,
+  as Prowlarr's `GetRequest` sends it. Two paths that render one URL send it once, with the
+  first path's `response`. The keyword filters run in the definition's charset too.
   """
 
-  alias Cinder.Acquisition.Indexer.Cardigann.{Filters, Template, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Filters, Template, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Caps
 
   @movie_category 2000
@@ -141,15 +145,19 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
         }
 
   @typedoc """
-  One query to ask: its origin, the variables its templates read, its GET URLs in path order,
-  and the text `andmatch` compares rows with (nil for none).
+  One query to ask: its origin, the variables its templates read, its GET pages in path order
+  (each URL with its search path's `response` record, nil for none), and the text `andmatch`
+  compares rows with (nil for none).
   """
   @type planned :: %{
           origin: :id_scoped | :free_text,
           variables: Template.variables(),
-          urls: [String.t()],
+          pages: [page()],
           andmatch: String.t() | nil
         }
+
+  @typedoc "One GET of a query: its URL and its search path's `response` record, nil for none."
+  @type page :: %{url: String.t(), response: map() | nil}
 
   @doc """
   The queries one seam call asks, in order: `{:ok, entries}` with at least one, each
@@ -176,10 +184,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
   The Test's request (#1657), as Prowlarr's `TestConnection` builds it: a keywordless search
   with no category, so `.Categories` holds the default site ids (none when no mapping is marked
   `default`) and no category rule leaves the indexer out. Answers
-  `{:ok, url, variables}` for its first URL, or `{:error, reason}` as `plan/4` does.
+  `{:ok, page, variables}` for its first page, or `{:error, reason}` as `plan/4` does.
   """
   @spec test_plan(map(), config(), DateTime.t()) ::
-          {:ok, String.t(), Template.variables()} | {:error, atom()}
+          {:ok, page(), Template.variables()} | {:error, atom()}
   def test_plan(definition, config, now) do
     ask = %{
       origin: :free_text,
@@ -191,8 +199,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
     }
 
     case planned(definition, config, ask, now) do
-      {:ok, %{urls: [url | _], variables: variables}} -> {:ok, url, variables}
-      {:ok, %{urls: []}} -> {:error, :definition_error}
+      {:ok, %{pages: [page | _], variables: variables}} -> {:ok, page, variables}
+      {:ok, %{pages: []}} -> {:error, :definition_error}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -356,9 +364,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
 
     with {:ok, keywords} <- keywords(definition, ask.keywords, base, now),
          variables = Map.put(base, ".Keywords", keywords),
-         {:ok, urls} <- urls(definition, config.base_url, variables, now) do
+         {:ok, pages} <- pages(definition, config.base_url, variables, now) do
       {:ok,
-       %{origin: ask.origin, variables: variables, urls: Enum.uniq(urls), andmatch: andmatch(ask)}}
+       %{
+         origin: ask.origin,
+         variables: variables,
+         pages: Enum.uniq_by(pages, & &1.url),
+         andmatch: andmatch(ask)
+       }}
     end
   end
 
@@ -409,7 +422,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
   defp select_default(_setting), do: nil
 
   defp keywords(definition, text, variables, now) do
-    case Filters.apply(text, definition.search.keywordsfilters, variables, now) do
+    charset = Charset.of_definition(definition)
+
+    case Filters.apply(text, definition.search.keywordsfilters, variables, now, encoding: charset) do
       {:ok, keywords} -> {:ok, keywords}
       {:error, reason} -> {:error, failure(reason)}
     end
@@ -423,24 +438,26 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
 
   # --- the URLs ---
 
-  defp urls(definition, base_url, variables, now) do
+  defp pages(definition, base_url, variables, now) do
+    charset = Charset.of_definition(definition)
+
     Enum.reduce_while(definition.search.paths, {:ok, []}, fn path, {:ok, acc} ->
-      case url(definition.search.inputs, path, base_url, variables, now) do
-        {:ok, url} -> {:cont, {:ok, [url | acc]}}
+      case url(definition.search.inputs, path, base_url, variables, now, charset) do
+        {:ok, url} -> {:cont, {:ok, [%{url: url, response: path.response} | acc]}}
         {:error, _reason} = error -> {:halt, error}
       end
     end)
     |> case do
-      {:ok, urls} -> {:ok, Enum.reverse(urls)}
+      {:ok, pages} -> {:ok, Enum.reverse(pages)}
       error -> error
     end
   end
 
-  defp url(search_inputs, path, base_url, variables, now) do
+  defp url(search_inputs, path, base_url, variables, now, charset) do
     with {:ok, rendered} <- render(path.path, variables, now, modifier: &encode/1),
          {:ok, inputs} <- inputs(search_inputs ++ path.inputs, variables, now),
          {:ok, uri} <- resolve(base_url, rendered) do
-      {:ok, uri |> with_inputs(inputs) |> URI.to_string()}
+      {:ok, uri |> with_inputs(inputs, charset) |> URI.to_string()}
     end
   end
 
@@ -480,10 +497,16 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
     end
   end
 
-  defp with_inputs(uri, []), do: uri
+  defp with_inputs(uri, [], _charset), do: uri
 
-  defp with_inputs(uri, inputs) do
-    query = URI.encode_query(inputs, :rfc3986)
+  defp with_inputs(uri, inputs, charset) do
+    query =
+      inputs
+      |> Enum.map(fn {key, value} ->
+        {Charset.encode(key, charset), Charset.encode(value, charset)}
+      end)
+      |> URI.encode_query(:rfc3986)
+
     %{uri | query: if(uri.query in [nil, ""], do: query, else: uri.query <> "&" <> query)}
   end
 end

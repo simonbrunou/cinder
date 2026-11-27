@@ -54,7 +54,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Fetch, Query, Rows, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Fetch, Query, Rows, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
@@ -131,7 +131,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
               stored_url: indexer.base_url,
               settings: Map.merge(plain, secrets)
             }),
-          now: now
+          now: now,
+          charset: Charset.of_definition(definition),
+          certificate_pins: Fetch.certificate_pins(definition, base_url)
         }
       end,
       delay_ms: delay_ms(definition.request_delay)
@@ -234,7 +236,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   end
 
   defp send_query(indexer, copy, {:ok, planned}, context) do
-    case pages(indexer, copy, planned, context, planned.urls, nil, []) do
+    case pages(indexer, copy, planned, context, planned.pages, nil, []) do
       {:ok, rows, partial} -> {:ok, tagged(rows, planned), partial}
       {:stop, rows, stop, answered?} -> {:stop, tagged(rows, planned), stop, answered?}
     end
@@ -249,15 +251,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   # The page loop: `first` is the first page's row count, nil before it.
   defp pages(_indexer, _copy, _planned, _context, [], _first, acc), do: finished(acc)
 
-  defp pages(indexer, copy, planned, context, [url | urls], first, acc) do
-    case page(indexer, copy, planned, url, context) do
+  defp pages(indexer, copy, planned, context, [page | rest], first, acc) do
+    case page(indexer, copy, planned, page, context) do
       {:ok, page} ->
         acc = [page | acc]
         first = first || page.count
 
         if first == 0 or page.count < first,
           do: finished(acc),
-          else: pages(indexer, copy, planned, context, urls, first, acc)
+          else: pages(indexer, copy, planned, context, rest, first, acc)
 
       {:error, stop} ->
         {:stop, acc |> Enum.reverse() |> Enum.flat_map(& &1.rows), stop, acc != []}
@@ -270,8 +272,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   end
 
   # One search request in the indexer's slot: the page, or the stop it gives.
-  defp page(indexer, copy, planned, url, context) do
-    fun = fn -> read_page(indexer, copy, planned, url, context) end
+  defp page(indexer, copy, planned, page, context) do
+    fun = fn -> read_page(indexer, copy, planned, page, context) end
 
     case Indexer.leased(indexer, context, fun, delay_ms: copy.delay_ms) do
       {:ran, answer} -> answer
@@ -280,11 +282,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     end
   end
 
-  defp read_page(indexer, copy, planned, url, context) do
+  defp read_page(indexer, copy, planned, page, context) do
     now = now()
     request = copy.request.(context, now)
 
-    with {:ok, body, uri} <- Fetch.get(url, request),
+    with {:ok, body, uri} <- Fetch.get(page.url, request),
          {:ok, page} <-
            Rows.read(
              body,
@@ -293,7 +295,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
              uri,
              planned.andmatch,
              context.deadline_at,
-             request
+             request,
+             page.response
            ) do
       IndexerStatus.record(indexer, :success, now)
       if page.partial, do: IndexerStatus.record(indexer, page.partial, now)
@@ -344,8 +347,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
         when value: term()
   def test(%ConfiguredIndexer{} = indexer, context, record) do
     with {:ok, copy} <- copy(indexer),
-         {:ok, url, variables} <- Query.test_plan(copy.definition, copy.config, now()) do
-      fun = fn -> record.(test_answer(copy, url, variables, context)) end
+         {:ok, page, variables} <- Query.test_plan(copy.definition, copy.config, now()) do
+      fun = fn -> record.(test_answer(copy, page, variables, context)) end
       Indexer.leased(indexer, context, fun, gate: false, delay_ms: copy.delay_ms)
     else
       {:not_supported, feature} -> {:not_run, {:not_asked, {:not_supported, feature}}}
@@ -353,12 +356,21 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     end
   end
 
-  defp test_answer(copy, url, variables, context) do
+  defp test_answer(copy, test_page, variables, context) do
     request = copy.request.(context, now())
 
-    with {:ok, body, uri} <- Fetch.get(url, request),
+    with {:ok, body, uri} <- Fetch.get(test_page.url, request),
          {:ok, page} <-
-           Rows.read(body, copy.definition, variables, uri, nil, context.deadline_at, request) do
+           Rows.read(
+             body,
+             copy.definition,
+             variables,
+             uri,
+             nil,
+             context.deadline_at,
+             request,
+             test_page.response
+           ) do
       cond do
         page.rows != [] -> :test_success
         page.partial != nil -> page.partial

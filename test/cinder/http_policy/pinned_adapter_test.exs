@@ -12,6 +12,9 @@ defmodule Cinder.HTTPPolicy.PinnedAdapterTest do
 
     @impl true
     def call(conn, _opts) do
+      # The pinned-certificate tests count the requests the server reads.
+      if hits = :persistent_term.get({__MODULE__, :hits}, nil), do: :counters.add(hits, 1, 1)
+
       case conn.request_path do
         "/slow" ->
           conn = Plug.Conn.send_chunked(conn, 200)
@@ -154,6 +157,134 @@ defmodule Cinder.HTTPPolicy.PinnedAdapterTest do
     end
 
     test "rejects a certificate chain that is not trusted", %{port: port} do
+      assert {:error, %Req.TransportError{reason: {:tls_alert, {:unknown_ca, _}}}} =
+               get(target("https", "pinned.example", port))
+    end
+  end
+
+  describe "pinned certificates (#1678)" do
+    setup do
+      %{server_config: server_config} =
+        :public_key.pkix_test_data(%{
+          server_chain: %{
+            root: [key: {:rsa, 2048, 65_537}],
+            intermediates: [],
+            peer: [
+              key: {:rsa, 2048, 65_537},
+              extensions: [{:Extension, {2, 5, 29, 17}, false, [dNSName: ~c"pinned.example"]}]
+            ]
+          },
+          client_chain: %{root: [key: {:rsa, 2048, 65_537}], intermediates: [], peer: []}
+        })
+
+      server =
+        start_supervised!(
+          {Bandit,
+           plug: Echo,
+           scheme: :https,
+           ip: {127, 0, 0, 1},
+           port: 0,
+           thousand_island_options: [
+             transport_options: Keyword.take(server_config, [:cert, :key])
+           ]}
+        )
+
+      hits = :counters.new(1, [])
+      :persistent_term.put({Echo, :hits}, hits)
+      on_exit(fn -> :persistent_term.erase({Echo, :hits}) end)
+
+      %{
+        port: listener_port(server),
+        cacerts: Keyword.fetch!(server_config, :cacerts),
+        sha: :crypto.hash(:sha, Keyword.fetch!(server_config, :cert)),
+        hits: hits
+      }
+    end
+
+    defp pinned(host, shas, extra \\ []),
+      do: [connect_options: [certificate_pins: {host, shas}] ++ extra]
+
+    test "a listed thumbprint accepts a certificate no trusted root signed", %{
+      port: port,
+      sha: sha,
+      hits: hits
+    } do
+      assert {:ok, %{status: 200, body: body}} =
+               get(target("https", "pinned.example", port), pinned("pinned.example", [sha]))
+
+      assert body == "host=pinned.example:#{port}"
+      assert :counters.get(hits, 1) == 1
+    end
+
+    test "it also accepts the certificate on a name the certificate does not list", %{
+      port: port,
+      sha: sha
+    } do
+      assert {:ok, %{status: 200}} =
+               get(target("https", "other.example", port), pinned("other.example", [sha]))
+    end
+
+    test "the pins' host matches the hostname in any case, with or without a trailing dot", %{
+      port: port,
+      sha: sha
+    } do
+      assert {:ok, %{status: 200}} =
+               get(target("https", "pinned.example", port), pinned("Pinned.Example.", [sha]))
+    end
+
+    test "another thumbprint verifies as usual, and the first connection sends no request", %{
+      port: port,
+      sha: sha,
+      cacerts: cacerts,
+      hits: hits
+    } do
+      other = :crypto.hash(:sha, "another certificate")
+
+      assert {:error, %Req.TransportError{reason: {:tls_alert, {:unknown_ca, _}}}} =
+               get(target("https", "pinned.example", port), pinned("pinned.example", [other]))
+
+      assert :counters.get(hits, 1) == 0
+
+      # A trusted chain still passes after the pin missed, with one request read.
+      trusted = pinned("pinned.example", [other], transport_opts: [cacerts: cacerts])
+      assert {:ok, %{status: 200}} = get(target("https", "pinned.example", port), trusted)
+      assert :counters.get(hits, 1) == 1
+
+      # A thumbprint written as hex digits, not 20 bytes, is no pin.
+      assert {:error, %Req.TransportError{reason: {:tls_alert, {:unknown_ca, _}}}} =
+               get(
+                 target("https", "pinned.example", port),
+                 pinned("pinned.example", [Base.encode16(sha)])
+               )
+    end
+
+    test "a Cardigann request carries its pins to its base URL host only", %{port: port, sha: sha} do
+      alias Cinder.Acquisition.Indexer.Cardigann.Fetch
+
+      request = fn host ->
+        %{
+          context: %{deadline_at: System.monotonic_time(:millisecond) + 10_000},
+          certificate_pins: {host, [sha]},
+          req_options: [retry: false]
+        }
+      end
+
+      assert {:ok, %{status: 200}} =
+               Fetch.send_get(target("https", "pinned.example", port), request.("pinned.example"))
+
+      assert {:error, _tls} =
+               Fetch.send_get(target("https", "pinned.example", port), request.("site.example"))
+    end
+
+    test "pins for another host do nothing", %{port: port, sha: sha} do
+      assert {:error, %Req.TransportError{reason: {:tls_alert, {:unknown_ca, _}}}} =
+               get(target("https", "pinned.example", port), pinned("site.example", [sha]))
+    end
+
+    test "a pinned session is not resumed by a later request", %{port: port, sha: sha} do
+      assert {:ok, %{status: 200}} =
+               get(target("https", "pinned.example", port), pinned("pinned.example", [sha]))
+
       assert {:error, %Req.TransportError{reason: {:tls_alert, {:unknown_ca, _}}}} =
                get(target("https", "pinned.example", port))
     end

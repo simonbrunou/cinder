@@ -134,6 +134,30 @@ defmodule Cinder.Acquisition.Indexer.CardigannGrabTest do
       assert requests() == [{"t9.test", "/torrent/1", %{}}]
     end
 
+    test "a windows-1251 details page reads in it, and its selector filters run in it (#1678)" do
+      urldecoded = fn definition ->
+        definition
+        |> Map.put("encoding", "windows-1251")
+        |> selectors([
+          %{
+            "selector" => ~S|a[href^="magnet:?"]|,
+            "attribute" => "href",
+            "filters" => [%{"name" => "urldecode"}]
+          }
+        ])
+      end
+
+      indexer = t9!(urldecoded)
+      # "Дюна" written in windows-1251 by hand, then percent-encoded from those bytes.
+      page =
+        torrent9_details(link: @magnet <> "-WORD-%C4%FE%ED%E0")
+        |> String.replace("WORD", <<0xC4, 0xFE, 0xED, 0xE0>>)
+
+      route(%{"t9.test" => fn _conn, _query -> {200, "text/html; charset=utf-8", page} end})
+
+      assert grab(indexer) == {:magnet, @magnet <> "-Дюна-Дюна"}
+    end
+
     test "a magnet quoted only in a script comes back through the second selector's filter" do
       indexer = t9!()
       route(%{"t9.test" => fn _conn, _query -> torrent9_details(script: @magnet) end})

@@ -10,6 +10,11 @@ defmodule Cinder.CardigannFixtures do
   Each builder takes a function that edits the map before it is written.
 
   The pages are hand-written HTML: `nyaa_page/1` and `torrent9_page/1` take one map per row.
+
+  #1678 adds `api_like/1`, a JSON API definition shaped like the UNIT3D trackers' (rows under
+  `data`, each row's fields under `attributes`), with `api_page/1`, and `rss_like/1`, an XML
+  feed definition shaped like the RSS trackers' (`rss > channel > item`, Torznab-style
+  `[name=...]` attributes), with `rss_page/1`. Every key, value and name is written here.
   """
 
   import ExUnit.Assertions
@@ -19,6 +24,14 @@ defmodule Cinder.CardigannFixtures do
 
   @nyaa_base "https://nyaa.test/"
   @torrent9_base "https://t9.test/"
+  @api_base "https://api.test/"
+  @rss_base "https://rss.test/"
+
+  @doc "The base URL the JSON API definition lists first."
+  def api_base, do: @api_base
+
+  @doc "The base URL the RSS definition lists first."
+  def rss_base, do: @rss_base
 
   @doc "The base URL the Nyaa-shaped definition lists first."
   def nyaa_base, do: @nyaa_base
@@ -257,6 +270,189 @@ defmodule Cinder.CardigannFixtures do
   end
 
   @doc """
+  A JSON API definition shaped like the UNIT3D trackers': private, an `apikey` setting sent as
+  the `api_token` input, one GET path answering JSON with a `noResultsMessage`, rows under
+  `data` without hidden ones (`:not(attributes.hidden)`), each narrowed to its `attributes`,
+  `rows.count` read from `meta.total`, a `..id` field read from the row before it was narrowed,
+  an array field (`genres`), a `case` keyed on `True` and `False`, and a date written as
+  Newtonsoft prints it and read with `dateparse`.
+  """
+  def api_like(edit \\ & &1) do
+    %{
+      "id" => "cindertestapi",
+      "name" => "Cinder Test API",
+      "description" => "A private tracker API shaped like UNIT3D's, written for Cinder's tests",
+      "language" => "en-US",
+      "type" => "private",
+      "encoding" => "UTF-8",
+      "links" => [@api_base],
+      "caps" => %{
+        "categorymappings" => [
+          %{"id" => "1", "cat" => "Movies", "desc" => "Movies"},
+          %{"id" => "2", "cat" => "TV", "desc" => "TV"}
+        ],
+        "modes" => %{"search" => ["q"], "tv-search" => ["q"], "movie-search" => ["q"]}
+      },
+      "settings" => [%{"name" => "apikey", "type" => "text", "label" => "API key"}],
+      "search" => %{
+        "paths" => [
+          %{
+            "path" => "api/torrents/filter",
+            "response" => %{"type" => "json", "noResultsMessage" => ~S("data":[])}
+          }
+        ],
+        "inputs" => obj([{"api_token", "{{ .Config.apikey }}"}, {"name", "{{ .Keywords }}"}]),
+        "rows" => %{
+          "selector" => "data:not(attributes.hidden)",
+          "attribute" => "attributes",
+          "count" => %{"selector" => "meta.total"}
+        },
+        "fields" =>
+          obj([
+            {"category", %{"selector" => "category_id"}},
+            {"title", %{"selector" => "name"}},
+            {"details", %{"selector" => "details_link"}},
+            {"download", %{"selector" => "download_link"}},
+            {"size", %{"selector" => "size"}},
+            {"seeders", %{"selector" => "seeders"}},
+            {"genres", %{"selector" => "genres", "optional" => "true"}},
+            {"free",
+             %{
+               "selector" => "freeleech",
+               "optional" => "true",
+               "case" => obj([{"True", "1"}, {"False", "0"}])
+             }},
+            {"id", %{"selector" => "..id"}},
+            {"date",
+             %{
+               "selector" => "created_at",
+               "filters" => [
+                 %{"name" => "append", "args" => " +00:00"},
+                 %{"name" => "dateparse", "args" => "MM/dd/yyyy HH:mm:ss zzz"}
+               ]
+             }},
+            {"description",
+             %{"text" => "{{ .Result.genres }} {{ .Result.free }} {{ .Result.id }}"}}
+          ])
+      }
+    }
+    |> edit.()
+  end
+
+  @doc """
+  A search answer of the API-shaped definition. Each row map takes `:id`, `:name`, `:size` (a
+  number), `:category` (a site id) and, optionally, `:hidden`, `:freeleech` (a boolean),
+  `:genres` (a list), `:seeders` and `:created_at` (ISO 8601 text). `meta.total` is the row
+  count unless `:total` is given.
+  """
+  def api_page(rows, opts \\ []) do
+    data =
+      Enum.map(rows, fn row ->
+        attributes =
+          [
+            {"name", row.name},
+            {"size", row.size},
+            {"category_id", row.category},
+            {"details_link", "#{@api_base}torrents/#{row.id}"},
+            {"download_link", "#{@api_base}torrent/download/#{row.id}.abc"},
+            {"seeders", Map.get(row, :seeders, 3)},
+            {"genres", Map.get(row, :genres, [])},
+            {"freeleech", Map.get(row, :freeleech, false)},
+            {"created_at", Map.get(row, :created_at, "2026-11-25T10:30:00.000000Z")}
+          ] ++ if(row[:hidden], do: [{"hidden", true}], else: [])
+
+        obj([{"type", "torrent"}, {"id", row.id}, {"attributes", obj(attributes)}])
+      end)
+
+    total = Keyword.get(opts, :total, length(rows))
+    Jason.encode!(obj([{"data", data}, {"meta", obj([{"total", total}])}]))
+  end
+
+  @doc """
+  An XML feed definition shaped like the RSS trackers': public, one GET path answering XML,
+  rows `rss > channel > item`, fields read from `title`, `link`, `pubDate` (through
+  `dateparse`, as most RSS definitions read it), the `enclosure`'s
+  `url` and `length`, and Torznab-style `[name=seeders]` and `[name=category]` attributes'
+  `value`, and a `case` keyed on a `:contains` selector.
+  """
+  def rss_like(edit \\ & &1) do
+    %{
+      "id" => "cindertestrss",
+      "name" => "Cinder Test RSS",
+      "description" => "A public RSS feed tracker, written for Cinder's tests",
+      "language" => "en-US",
+      "type" => "public",
+      "encoding" => "UTF-8",
+      "links" => [@rss_base],
+      "caps" => %{
+        "categorymappings" => [
+          %{"id" => "2000", "cat" => "Movies", "desc" => "Movies"},
+          %{"id" => "5000", "cat" => "TV", "desc" => "TV"}
+        ],
+        "modes" => %{"search" => ["q"], "tv-search" => ["q"], "movie-search" => ["q"]}
+      },
+      "settings" => [],
+      "search" => %{
+        "paths" => [%{"path" => "rss", "response" => %{"type" => "xml"}}],
+        "inputs" => obj([{"q", "{{ .Keywords }}"}]),
+        "rows" => %{"selector" => "rss > channel > item"},
+        "fields" =>
+          obj([
+            {"title", %{"selector" => "title"}},
+            {"details", %{"selector" => "link"}},
+            {"download", %{"selector" => "enclosure", "attribute" => "url"}},
+            {"size", %{"selector" => "enclosure", "attribute" => "length"}},
+            {"date",
+             %{
+               "selector" => "pubDate",
+               "filters" => [%{"name" => "dateparse", "args" => "ddd, dd MMM yyyy HH:mm:ss zzz"}]
+             }},
+            {"seeders", %{"selector" => "[name=seeders]", "attribute" => "value"}},
+            {"category", %{"selector" => "[name=category]", "attribute" => "value"}},
+            {"free",
+             %{
+               "selector" => "description",
+               "optional" => "true",
+               "case" => obj([{~S|:contains("Freeleech")|, "1"}, {"*", "0"}])
+             }}
+          ])
+      }
+    }
+    |> edit.()
+  end
+
+  @doc """
+  A feed of the RSS-shaped definition. Each row map takes `:title`, `:id`, `:size` (bytes),
+  `:category` and, optionally, `:seeders`, `:description` and `:date` (RFC 1123 text). `:prolog`
+  writes an XML declaration first, and `:extra` any text right after it.
+  """
+  def rss_page(rows, opts \\ []) do
+    items =
+      Enum.map_join(rows, "\n", fn row ->
+        """
+        <item>
+          <title>#{row.title}</title>
+          <link>#{@rss_base}details/#{row.id}</link>
+          <description>#{row[:description] || "Uploaded"}</description>
+          <pubDate>#{row[:date] || "Wed, 25 Nov 2026 10:30:00 +0000"}</pubDate>
+          <enclosure url="#{@rss_base}download/#{row.id}.torrent" length="#{row.size}" type="application/x-bittorrent"/>
+          <torznab:attr name="seeders" value="#{row[:seeders] || 4}"/>
+          <torznab:attr name="category" value="#{row.category}"/>
+        </item>
+        """
+      end)
+
+    """
+    #{Keyword.get(opts, :prolog, "")}#{Keyword.get(opts, :extra, "")}<rss version="2.0" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+    <channel>
+    <title>Cinder Test RSS</title>
+    #{items}
+    </channel>
+    </rss>
+    """
+  end
+
+  @doc """
   Mirrors each `{file_name, definition}` (maps as `nyaa_like/1` builds them) beside
   `Cinder.DefinitionFixtures`' fillers, checking each through the real
   `Cinder.Indexers.Definitions.LoadCheck` and the fillers through `DefinitionFixtures.check/1`,
@@ -298,14 +494,15 @@ defmodule Cinder.CardigannFixtures do
   Stubs `Cinder.CardigannStub` with `routes`, a map of host to answer function. The host is the
   request's `Host` header, the site's name: the URL holds the pinned address. Each function
   takes the conn and its query parameters and answers HTML (a 200 `text/html` page), `{status,
-  body}`, `{:redirect, status, location}`, `{:transport, reason}` or a conn. Each request sends
+  body}`, `{status, content_type, body}`, `{:redirect, status, location}`,
+  `{:transport, reason}` or a conn. Each request sends
   the test process `{:cardigann_request, host, path, query, headers}` first.
   """
   def route(routes) do
     test_pid = self()
 
     Req.Test.stub(Cinder.CardigannStub, fn conn ->
-      conn = Plug.Conn.fetch_query_params(conn)
+      conn = query_params(conn)
       [host | _] = Plug.Conn.get_req_header(conn, "host")
 
       send(
@@ -318,6 +515,14 @@ defmodule Cinder.CardigannFixtures do
     end)
   end
 
+  # A query string that is not UTF-8, as a windows-1251 definition sends, reads as no parameters:
+  # its test reads `conn.query_string`.
+  defp query_params(conn) do
+    Plug.Conn.fetch_query_params(conn)
+  rescue
+    Plug.Conn.InvalidQueryError -> %{conn | query_params: %{}}
+  end
+
   defp respond(_conn, %Plug.Conn{} = conn), do: conn
   defp respond(conn, {:transport, reason}), do: Req.Test.transport_error(conn, reason)
 
@@ -327,6 +532,13 @@ defmodule Cinder.CardigannFixtures do
 
   defp respond(conn, {status, body}) when is_integer(status) do
     conn |> Plug.Conn.put_resp_content_type("text/html") |> Plug.Conn.send_resp(status, body)
+  end
+
+  # A content type written as given, charset parameter included, as #1678's charset tests need.
+  defp respond(conn, {status, content_type, body}) when is_integer(status) do
+    conn
+    |> Plug.Conn.put_resp_header("content-type", content_type)
+    |> Plug.Conn.send_resp(status, body)
   end
 
   defp respond(conn, body) when is_binary(body), do: respond(conn, {200, body})

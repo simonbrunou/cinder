@@ -428,6 +428,14 @@ defmodule Cinder.Acquisition.Indexer.NewznabTest do
         assert_received {:request, "/prowlarr/5/api", %{"t" => "movie", "apikey" => @key}}
       end
 
+      test "carry no pinned certificates, whatever the configured Req options set (#1678)" do
+        options = @adapter.request_options(indexer!(type(@adapter)), t: "caps")
+        # The positive control: the options are the configured ones, with the stub plug.
+        assert Keyword.fetch!(options, :plug) == {Req.Test, Cinder.NewznabStub}
+        refute Keyword.has_key?(Keyword.get(options, :connect_options, []), :certificate_pins)
+        refute Keyword.has_key?(options, :adapter)
+      end
+
       test "go out as a GET whatever method the configured Req options set" do
         config = Application.get_env(:cinder, Newznab)
         req_options = Keyword.put(Keyword.fetch!(config, :req_options), :method, :post)

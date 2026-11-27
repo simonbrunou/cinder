@@ -24,14 +24,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
 
   1. The link, the details page, is fetched. A redirect to a magnet reads as step 3's magnet
      rule says. A non-2xx answer and a login redirect go to the check as they are.
-  2. A 2xx page's body is decoded (`Cinder.Acquisition.Indexer.Cardigann.Fetch.decoded/1`) and
-     read once in a `Cinder.Indexers.ParserWorker`, one field per selector, each selector a
-     template rendered first. A selector whose template does not render, renders blank, or that
-     `Cinder.Indexers.Selector.compile/2` refuses is left out of the worker's plan, so one bad
-     selector costs no other. Prowlarr fetches the page once per selector (`b0b5774`); Cinder
-     fetches it once.
-  3. In file order, each selector's value, trimmed, runs through its `filters`. The first that
-     gives a value that is not blank wins:
+  2. A 2xx page's body is decoded (`Cinder.Acquisition.Indexer.Cardigann.Fetch.decoded/1`),
+     read as text in the definition's charset (`Cinder.Acquisition.Indexer.Cardigann.Charset`,
+     #1678) whatever its `Content-Type` says, and read once in a `Cinder.Indexers.ParserWorker`,
+     one field per selector, each selector a template rendered first. A selector whose template
+     does not render, renders blank, or that `Cinder.Indexers.Selector.compile/2` refuses is left
+     out of the worker's plan, so one bad selector costs no other. Prowlarr fetches the page once
+     per selector (`b0b5774`); Cinder fetches it once.
+  3. In file order, each selector's value, trimmed, runs through its `filters`, in the
+     definition's charset. The first that gives a value that is not blank wins:
      - a magnet holding a secret off the credential hosts
        (`Cinder.Acquisition.Indexer.Cardigann.Fetch.secret_link?/2`) is
        `{:cardigann_grab, :secret_host}`; any other magnet is `{:magnet, link}` under the
@@ -92,7 +93,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann
-  alias Cinder.Acquisition.Indexer.Cardigann.{Fetch, Filters, Query, Template, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Fetch, Filters, Query, Template, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Grab, as: NewznabGrab
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Download.Client.DownloadCheck
@@ -137,7 +138,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   defp grab(indexer, copy, url, opts) do
     deadline_at = System.monotonic_time(:millisecond) + deadline_ms()
     request = request(copy, deadline_at, opts)
-    state = %{request: request, deadline_at: deadline_at, jar: %{}, opts: opts}
+
+    state = %{
+      request: request,
+      deadline_at: deadline_at,
+      jar: %{},
+      opts: opts,
+      charset: Charset.of_definition(copy.definition)
+    }
+
     download = copy.definition.download
 
     {fetched, from_source} =
@@ -278,7 +287,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
       cap = worker_ms()
       plan = %{rows: "html", fields: fields}
 
-      case ParserWorker.run(String.replace_invalid(html), plan, deadline_ms: min(cap, left_ms)) do
+      text = Charset.decode(html, state.charset)
+
+      case ParserWorker.run(text, plan, deadline_ms: min(cap, left_ms)) do
         {:ok, [row | _]} -> {:ok, Map.new(row)}
         {:ok, []} -> {:ok, %{}}
         {:error, :timeout} when left_ms <= cap -> {:error, :deadline}
@@ -334,7 +345,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   defp next_or_answer(answer, _copy, _rest, _page, _trusted_limit), do: answer
 
   defp selector_link(value, filters, variables, page_uri, state) when is_binary(value) do
-    case Filters.apply(String.trim(value), filters, variables, state.request.now) do
+    case Filters.apply(String.trim(value), filters, variables, state.request.now,
+           encoding: state.charset
+         ) do
       {:ok, filtered} -> link_of(String.trim(filtered), page_uri)
       {:error, kind} when kind in [:regex_limit, :filter_output_cap] -> {:limit, kind}
       {:error, _reason} -> :next

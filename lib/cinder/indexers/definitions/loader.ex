@@ -91,8 +91,15 @@ defmodule Cinder.Indexers.Definitions.Loader do
   `download` block's `before` is `download_before`, its `infohash` `download_infohash`, a
   `method: post` `download_post`, non-empty `headers` `download_headers` and a selector's
   `usebeforeresponse` `download_use_before_response`, all #1679's. A field whose name holds `|`,
-  a modifier Prowlarr reads after the name, is `field_modifier`. Every other flag is off.
+  a modifier Prowlarr reads after the name, is `field_modifier`. #1678 switched on JSON and XML
+  search answers (`json_search`, `xml_search`) and pinned certificates (`certificates`), with
+  `jsonjoinarray` among the filters. Two codes stay off but are reported for less: `encoding`
+  only for a name `Cinder.Acquisition.Indexer.Cardigann.Charset.fetch/1` does not know, so the
+  nine legacy charsets and UTF-8 load, and `rows_count` only on a search whose paths are not all
+  JSON. Every other flag is off.
   """
+
+  alias Cinder.Acquisition.Indexer.Cardigann.Charset
 
   @max_bytes 524_288
   @schema_version 12
@@ -102,7 +109,10 @@ defmodule Cinder.Indexers.Definitions.Loader do
   #    static layout code (#1671).
   # 5: the grab runs a `download` block with `selectors` (#1672), and `LoadCheck` renders a
   #    download selector that holds a template.
-  @revision 5
+  # 6: JSON and XML responses, `jsonjoinarray`, the legacy charsets and pinned certificates
+  #    load (#1678), `rows.count` loads on a JSON-only search, and `LoadCheck` adds the JSON
+  #    path, XML selector and certificate codes.
+  @revision 6
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -216,8 +226,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # flag: true once a slice builds it.
   @features [
               html_search: true,
-              json_search: false,
-              xml_search: false,
+              json_search: true,
+              xml_search: true,
               search_post: false,
               search_path: false,
               search_path_categories: false,
@@ -250,7 +260,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
                 follow_redirect: true,
                 path_follow_redirect: false,
                 encoding: false,
-                certificates: false,
+                certificates: true,
                 category_default: true,
                 tv_search_imdb: false
               ] ++
@@ -748,7 +758,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
       unless(d.type in @privacy_types, do: {:unknown_value, :privacy_type}),
       if(d.request_delay, do: :request_delay),
       if(d.followredirect, do: :follow_redirect),
-      unless(String.downcase(d.encoding) in ["utf-8", "utf8"], do: :encoding),
+      if(Charset.fetch(d.encoding) == :error, do: :encoding),
       if(d.certificates != [], do: :certificates)
     ]
     |> Enum.reject(&is_nil/1)
@@ -813,8 +823,15 @@ defmodule Cinder.Indexers.Definitions.Loader do
     ]
     |> Enum.reject(&is_nil/1)
     |> Kernel.++(Enum.flat_map(search.paths, &path_uses/1))
-    |> Kernel.++(rows_uses(search.rows))
+    |> Kernel.++(rows_uses(search.rows, json_only?(search.paths)))
   end
+
+  # `rows.count` runs on a JSON page only (#1678): a search with no path, or one whose paths are
+  # not all JSON, still reports it.
+  defp json_only?([_ | _] = paths),
+    do: Enum.all?(paths, &match?(%{response: %{type: "json"}}, &1))
+
+  defp json_only?([]), do: false
 
   defp path_uses(path) do
     [
@@ -836,7 +853,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
 
   defp raw_input?(inputs), do: List.keymember?(inputs, "$raw", 0)
 
-  defp rows_uses(rows) do
+  defp rows_uses(rows, json_only?) do
     filters =
       Enum.map(rows.filters, fn
         %{name: name} when name in @row_filters -> {:row_filter, name}
@@ -845,7 +862,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
 
     [
       if(rows.after > 0, do: :rows_after),
-      if(rows.count, do: :rows_count),
+      if(rows.count && not json_only?, do: :rows_count),
       if(rows.dateheaders, do: :rows_dateheaders)
     ]
     |> Enum.reject(&is_nil/1)
@@ -869,7 +886,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
   end
 
   # Every field filter list, `case` block and `remove` in the definition, wherever its selector
-  # block sits. `search.rows.filters` holds row filters, which `rows_uses/1` reads.
+  # block sits. `search.rows.filters` holds row filters, which `rows_uses/2` reads.
   defp walk(map, path) when is_map(map) do
     Enum.flat_map(map, fn {key, value} ->
       key_uses(key, value, path) ++ walk(value, [key | path])

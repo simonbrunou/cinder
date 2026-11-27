@@ -37,7 +37,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
   - `timeago` and `reltime`: `DotnetDate.from_time_ago/2` written as `dateparse` writes, or
     `{:error, {:filter_failed, name}}` where .NET throws;
   - `diacritics replace`: any other argument is a `{:filter_args, "diacritics"}` tag;
-  - `validate list`: the words of the list the text holds.
+  - `validate list`: the words of the list the text holds;
+  - `jsonjoinarray [path, separator]` (#1678): the text decoded as a JSON object by
+    `Cinder.Acquisition.Indexer.Cardigann.JsonPath.decode/1`, the path selected, and its
+    children's texts (`Cinder.Acquisition.Indexer.Cardigann.JsonText.items/1`) joined with the
+    separator. Text that is not a JSON object, a path `JsonPath.parse/1` refuses, and a path that
+    selects nothing are `{:error, {:filter_failed, "jsonjoinarray"}}`, where Prowlarr throws.
 
   `hexdump` and `strdump` give their input unchanged, bytes that are not UTF-8 included.
   Prowlarr logs it at debug level; Cinder logs nothing, since the input can hold a passkey.
@@ -50,23 +55,27 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
 
   One chain has one byte budget, `Cinder.Acquisition.Indexer.Cardigann.Template.output_cap/0`:
   each step's output and each template a step evaluates count against it, and passing it ends
-  the chain with `{:error, :filter_output_cap}`. A `re_replace` or a `replace` that would build
-  past the budget stops before it builds; the other steps build their output and the chain then
-  checks it. Every function is pure, and no error holds a value, a pattern or a replacement.
+  the chain with `{:error, :filter_output_cap}`. A `re_replace`, a `replace` or a
+  `jsonjoinarray` that would build past the budget stops before it builds; the other steps
+  build their output and the chain then checks it. Every function is pure, and no error holds a
+  value, a pattern or a replacement.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.BoundedRegex
   alias Cinder.Acquisition.Indexer.Cardigann.Charset
   alias Cinder.Acquisition.Indexer.Cardigann.DotnetDate
   alias Cinder.Acquisition.Indexer.Cardigann.DotnetText
+  alias Cinder.Acquisition.Indexer.Cardigann.JsonPath
+  alias Cinder.Acquisition.Indexer.Cardigann.JsonText
   alias Cinder.Acquisition.Indexer.Cardigann.Template
 
   @supported ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode htmlencode
-                prepend querystring re_replace regexp reltime replace split strdump timeago
+                jsonjoinarray prepend querystring re_replace regexp reltime replace split strdump timeago
                 timeparse tolower toupper trim urldecode urlencode validate validfilename)
   # The filters that read their input as text: bytes that are not UTF-8 read as U+FFFD, as .NET
   # decodes a response before any filter runs.
-  @text_filters ~w(base64decode base64encode diacritics htmldecode htmlencode prepend querystring
+  @text_filters ~w(base64decode base64encode diacritics htmldecode htmlencode jsonjoinarray prepend
+                   querystring
                    reltime timeago tolower toupper urldecode urlencode validate validfilename)
   # Prowlarr's debugging filters, which only log their input. Cinder logs nothing: the input can
   # hold a passkey.
@@ -228,6 +237,20 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Filters do
 
   defp text_step(%{name: "validate", args: list}, data, _env, _left) when is_binary(list),
     do: {:ok, DotnetText.validate(data, list), 0}
+
+  defp text_step(%{name: "jsonjoinarray", args: [path, separator]}, data, _env, left)
+       when is_binary(path) and is_binary(separator) do
+    with {:ok, %Jason.OrderedObject{} = root} <- JsonPath.decode(data),
+         {:ok, steps} <- JsonPath.parse(path),
+         {:ok, value} <- JsonPath.select(root, steps) do
+      case JsonText.join(value, separator, max(left, 0)) do
+        {:ok, text} -> {:ok, text, 0}
+        :too_large -> {:error, :filter_output_cap}
+      end
+    else
+      _failed -> {:error, {:filter_failed, "jsonjoinarray"}}
+    end
+  end
 
   defp text_step(%{name: name}, data, _env, _left) when is_map_key(@text_functions, name),
     do: {:ok, Kernel.apply(DotnetText, Map.fetch!(@text_functions, name), [data]), 0}

@@ -54,13 +54,37 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   once, after the selector codes. A `re_replace` written inside a template is not checked here:
   it runs, and fails its field, when the template is evaluated.
 
+  Last come the checks of #1678, each code once, in this order:
+
+  - `{:json, :path}` when a copy with a JSON search path holds a rows selector, a `rows.count`
+    selector or a field selector (its leading dots trimmed) that
+    `Cinder.Acquisition.Indexer.Cardigann.JsonPath.chain/1` does not read, or a `rows.attribute`
+    that `JsonPath.parse/1` does not read; and, in any copy, a `jsonjoinarray` filter whose path
+    `JsonPath.parse/1` does not read. A selector that holds `{{` is checked as it renders, as a
+    rows or field selector above is, and one that does not render gets the code too;
+  - `{:xml_selector, name}` or `{:xml_selector, :invalid}` for each rows selector, field
+    selector and field `case` key of a copy with an XML search path that
+    `Cinder.Acquisition.Indexer.Cardigann.XmlSelector.compile/2` refuses, the first refusal of
+    each selector, each code once in the order found; a template is checked as it renders, and
+    one that does not render is `{:xml_selector, :invalid}`;
+  - `{:certificates, :malformed}` for a `certificates` entry that is not 40 hex digits.
+
   The answer is `Loader.load/1`'s with those codes added. The selector check raised
   `Loader.fingerprint/0`'s revision to 2, the pattern check to 3, the layout check, with the
   features #1671 switched on, to 4, and the download selector templates, with the download block
-  #1672 switched on, to 5, for #1667 to store the answer under.
+  #1672 switched on, to 5, and the JSON, XML and certificate checks, with what #1678 switched
+  on, to 6, for #1667 to store the answer under.
   """
 
-  alias Cinder.Acquisition.Indexer.Cardigann.{BoundedRegex, DotnetDate, Template, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{
+    BoundedRegex,
+    DotnetDate,
+    JsonPath,
+    Template,
+    Variables,
+    XmlSelector
+  }
+
   alias Cinder.Indexers.Definitions.Loader
   alias Cinder.Indexers.ParserWorker
 
@@ -78,10 +102,19 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   ]
 
   @regex_codes [{:regex, :dotnet_only}, {:regex, :invalid}]
+  @json_code {:json, :path}
+  @certificate_code {:certificates, :malformed}
+  @thumbprint ~r/\A[0-9A-Fa-f]{40}\z/
 
-  @doc "Every code `check/2` can add, in the order it adds them."
-  @spec codes() :: [{:selector, atom()} | {:regex, atom()}]
-  def codes, do: Keyword.values(@codes) ++ @regex_codes
+  @doc """
+  Every code `check/2` can add, in the order it adds them, with `{:xml_selector, :invalid}`
+  standing for every `{:xml_selector, name}` too.
+  """
+  @spec codes() :: [tuple() | atom()]
+  def codes,
+    do:
+      Keyword.values(@codes) ++
+        @regex_codes ++ [@json_code, {:xml_selector, :invalid}, @certificate_code]
 
   @doc """
   Loads `bytes` and checks the copy's selectors and static patterns. `opts` goes to
@@ -91,7 +124,10 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   def check(bytes, opts \\ []) when is_binary(bytes) do
     with {:ok, definition} <- Loader.load(bytes) do
       codes =
-        static_codes(definition) ++ selector_codes(definition, opts) ++ regex_codes(definition)
+        static_codes(definition) ++
+          selector_codes(definition, opts) ++
+          regex_codes(definition) ++
+          json_codes(definition) ++ xml_codes(definition) ++ certificate_codes(definition)
 
       {:ok, %{definition | unsupported: definition.unsupported ++ codes}}
     end
@@ -111,6 +147,88 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
     for code <- @regex_codes, code in found, do: code
   end
+
+  ## JSON, XML and certificates (#1678)
+
+  defp json_codes(definition) do
+    search = definition.search
+
+    selectors =
+      if response?(search, "json") do
+        rows = search.rows
+
+        [{:chain, rows.selector || ""}, {:path, rows.attribute}] ++
+          [{:chain, rows.count && trimmed(rows.count.selector)}] ++
+          for({_name, field} <- search.fields, do: {:chain, trimmed(field.selector)})
+      else
+        []
+      end
+
+    joins =
+      for %{name: "jsonjoinarray", args: [path | _]} <- filters(definition),
+          is_binary(path),
+          do: {:path, path}
+
+    if Enum.all?(selectors ++ joins, &json_readable?(&1, definition)), do: [], else: [@json_code]
+  end
+
+  defp trimmed(nil), do: nil
+  defp trimmed(selector), do: String.trim_leading(selector, ".")
+
+  defp json_readable?({_kind, nil}, _definition), do: true
+
+  defp json_readable?({kind, text}, definition) do
+    texts = if String.contains?(text, "{{"), do: renderings(text, definition), else: [text]
+
+    Enum.all?(texts, fn
+      {:outcome, _template} -> false
+      text when kind == :chain -> JsonPath.chain(text) != :error
+      text -> JsonPath.parse(text) != :error
+    end)
+  end
+
+  defp xml_codes(definition) do
+    search = definition.search
+
+    if response?(search, "xml") do
+      fields = for {_name, field} <- search.fields, do: field
+
+      [search.rows.selector || ""]
+      |> Kernel.++(Enum.map(fields, & &1.selector))
+      |> Kernel.++(for field <- fields, {key, _value} <- field.case || [], do: key)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.flat_map(&xml_refusals(&1, definition))
+      |> Enum.uniq()
+    else
+      []
+    end
+  end
+
+  defp xml_refusals(selector, definition) do
+    texts =
+      if String.contains?(selector, "{{"), do: renderings(selector, definition), else: [selector]
+
+    for text <- texts, code = xml_refusal(text), code != nil, do: code
+  end
+
+  defp xml_refusal({:outcome, _template}), do: {:xml_selector, :invalid}
+
+  defp xml_refusal(text) do
+    case XmlSelector.compile(text, "check") do
+      {:ok, _compiled} -> nil
+      {:error, code} -> code
+    end
+  end
+
+  defp certificate_codes(definition) do
+    # The loader keeps a null entry of the list as nil.
+    if Enum.all?(definition.certificates, &(is_binary(&1) and Regex.match?(@thumbprint, &1))),
+      do: [],
+      else: [@certificate_code]
+  end
+
+  defp response?(%{paths: paths}, type),
+    do: Enum.any?(paths, &match?(%{response: %{type: ^type}}, &1))
 
   @doc false
   # The static patterns `check/2` reads, in walk order; public for its test.

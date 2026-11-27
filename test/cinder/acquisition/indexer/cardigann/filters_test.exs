@@ -13,12 +13,81 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
   defp run(input, filters, vars \\ %{}), do: Filters.apply(input, filters, vars, @now)
 
   describe "supported/0" do
-    test "lists the filters of #1670 and #1677" do
+    test "lists the filters of #1670, #1677 and #1678" do
       assert Filters.supported() ==
                ~w(append base64decode base64encode dateparse diacritics hexdump htmldecode
-                  htmlencode prepend querystring re_replace regexp reltime replace split strdump
+                  htmlencode jsonjoinarray prepend querystring re_replace regexp reltime replace split strdump
                   timeago timeparse tolower toupper trim urldecode urlencode validate
                   validfilename)
+    end
+  end
+
+  describe "jsonjoinarray" do
+    test "joins the texts of the array the path selects with the separator" do
+      json = ~S({"v": ["Action", 2, 2.5, true, null, {"k": "v"}], "n": {"genres": ["a", "b"]}})
+
+      assert run(json, [f("jsonjoinarray", ["$.v", ""])]) ==
+               {:ok, "Action22.5True" <> ~s({\n  "k": "v"\n})}
+
+      assert run(json, [f("jsonjoinarray", ["n.genres", ", "])]) == {:ok, "a, b"}
+      assert run(~S({"v": []}), [f("jsonjoinarray", ["$.v", ","])]) == {:ok, ""}
+    end
+
+    test "an object joins its properties as JSON, a scalar joins nothing" do
+      json = ~S({"o": {"a": 1, "b": [1]}, "s": "text"})
+
+      assert run(json, [f("jsonjoinarray", ["o", "|"])]) ==
+               {:ok, ~s("a": 1|"b": [\n  1\n])}
+
+      assert run(json, [f("jsonjoinarray", ["s", "|"])]) == {:ok, ""}
+    end
+
+    test "text that is not a JSON object, a bad path and a missing path fail the filter" do
+      failed = {:error, {:filter_failed, "jsonjoinarray"}}
+
+      assert run("not json", [f("jsonjoinarray", ["$.v", ","])]) == failed
+      assert run(~S(["a"]), [f("jsonjoinarray", ["$", ","])]) == failed
+      assert run(~S({"v": [1]}), [f("jsonjoinarray", ["$.w", ","])]) == failed
+      assert run(~S({"v": [1]}), [f("jsonjoinarray", ["v[*]", ","])]) == failed
+    end
+
+    test "a joined text past the chain's budget is the output cap, and one at it reads" do
+      # 65,536 bytes joined, the budget of `Template.output_cap/0`, then one byte more.
+      items = String.duplicate("0,", 32_766) <> "0"
+      assert {:ok, text} = run(~s({"v": [10,#{items}]}), [f("jsonjoinarray", ["$.v", ","])])
+      assert byte_size(text) == 65_536
+
+      assert run(~s({"v": [100,#{items}]}), [f("jsonjoinarray", ["$.v", ","])]) ==
+               {:error, :filter_output_cap}
+    end
+
+    # A million one-digit items 63 arrays deep: about 2 MB of JSON whose joined text is about
+    # 127 MB. With the chain's budget, the filter refuses it before building, within the cap
+    # below; building it is killed at this cap.
+    test "refuses a joined text past the budget without building it" do
+      items = String.duplicate("0,", 1_040_000) <> "0"
+      json = ~s({"v":[) <> String.duplicate("[", 62) <> items <> String.duplicate("]", 62) <> "]}"
+      parent = self()
+
+      pid =
+        start_supervised!(
+          {Task,
+           fn ->
+             Process.flag(:max_heap_size, %{size: 16_000_000, kill: true, error_logger: false})
+             send(parent, {:filtered, run(json, [f("jsonjoinarray", ["$.v", ","])])})
+           end},
+          id: make_ref()
+        )
+
+      ref = Process.monitor(pid)
+      assert_receive {:filtered, {:error, :filter_output_cap}}, 10_000
+      assert_receive {:DOWN, ^ref, :process, ^pid, reason}, 10_000
+      assert reason in [:normal, :noproc]
+    end
+
+    test "arguments of the wrong shape are an argument tag" do
+      assert run(~S({"v": [1]}), [f("jsonjoinarray", "$.v")]) ==
+               {:error, {:filter_args, "jsonjoinarray"}}
     end
   end
 
@@ -151,8 +220,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.FiltersTest do
     test "a filter the engine does not run is a not-supported tag" do
       assert run("x", [f("fuzzytime")]) == {:error, {:not_supported, {:filter, "fuzzytime"}}}
 
-      assert run("{}", [f("trim"), f("jsonjoinarray", ["$.a", ","])]) ==
-               {:error, {:not_supported, {:filter, "jsonjoinarray"}}}
+      assert run("{}", [f("trim"), f("rot13")]) ==
+               {:error, {:not_supported, {:filter, "rot13"}}}
 
       assert run("x", [f("nope")]) == {:error, {:not_supported, {:filter, "nope"}}}
     end

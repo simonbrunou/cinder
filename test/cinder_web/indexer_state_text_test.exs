@@ -42,6 +42,10 @@ defmodule CinderWeb.IndexerStateTextTest do
                :challenge => "Blocked by a challenge page",
                :crashed => "The search crashed",
                :limit => "Limit reached",
+               :invalid_json => "The answer is not valid JSON",
+               :invalid_xml => "The answer is not valid XML",
+               :xml_dtd => "The answer holds a DTD, which Cinder refuses",
+               :no_results_list => "The answer has no results list",
                {:http_status, 503} => "HTTP 503",
                {:indexer_error, 900} => "Indexer error 900",
                {:query_error, 201} => "Query refused (code 201)"
@@ -202,6 +206,23 @@ defmodule CinderWeb.IndexerStateTextTest do
       assert french ==
                "Movies : Pas encore vérifié : appuyez sur Tester dans les Paramètres ; " <>
                  "Shows : Clé API refusée : mettez-la à jour dans les Paramètres"
+    end
+
+    test "words the JSON and XML failure reasons on the French page" do
+      french =
+        Gettext.with_locale(CinderWeb.Gettext, "fr", fn ->
+          Map.new(
+            [:invalid_json, :invalid_xml, :xml_dtd, :no_results_list],
+            &{&1, IndexerStateText.cause(&1)}
+          )
+        end)
+
+      assert french == %{
+               invalid_json: "La réponse n'est pas du JSON valide",
+               invalid_xml: "La réponse n'est pas du XML valide",
+               xml_dtd: "La réponse contient une DTD, que Cinder refuse",
+               no_results_list: "La réponse n'a pas de liste de résultats"
+             }
     end
 
     test "words the source's own reasons and the credential counts" do

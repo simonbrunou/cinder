@@ -11,6 +11,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunnerTest do
   import Cinder.NewznabFixtures, only: [indexer!: 2]
   import Cinder.TestRunnerHelpers
 
+  import ExUnit.CaptureLog
+
+  alias Cinder.Acquisition.IndexerAdapterMock
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, TestRunner}
   alias Cinder.ConfigCase
@@ -44,6 +47,28 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunnerTest do
 
     assert_receive {TestRunner, :finished, ^id, {:ok, %{outcome: :success, at: @now}}}
     assert last_test(id) == %{outcome: :success, at: @now}
+  end
+
+  # A Cardigann JSON or XML Test parses its page in the task (#1678).
+  test "a Test whose heap grows past the search processes' cap is killed and reads as crashed" do
+    indexer = indexer!(:newznab, "nzb.example")
+    words = Native.max_heap_size().size
+
+    Mox.stub(IndexerAdapterMock, :test, fn _indexer, _context, record ->
+      # A list of n integers takes 2n words of heap.
+      grown = Enum.to_list(1..words)
+      {:ran, record.(if grown != [], do: :test_success)}
+    end)
+
+    # The kill's report goes to the log after the task is gone.
+    capture_log(fn ->
+      assert TestRunner.start(indexer.id) == :ok
+      assert_receive {TestRunner, :finished, id, {:error, :crashed}}, 10_000
+      assert id == indexer.id
+      Process.sleep(100)
+    end)
+
+    assert last_test(indexer.id) == nil
   end
 
   test "a second start while the Test runs starts nothing" do

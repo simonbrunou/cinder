@@ -8,6 +8,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
 
   This process holds the pending mark: each Test runs in a child of
   `Cinder.Acquisition.IndexerSource.Native.TestRunner.TaskSupervisor`, unlinked and monitored,
+  under the search processes' heap cap (`Native.max_heap_size/0`, #1678),
   and the mark of its indexer stays until the task answers or exits, a raise or a kill included.
   `start/1` while the mark is held starts nothing. Should this process itself die, its marks go
   with it. Its restart ends every task its supervisor still holds, so no Test runs without a
@@ -66,8 +67,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
     if id in Map.values(tasks) do
       {:reply, {:error, :running}, tasks}
     else
-      task =
-        Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn -> Native.test_indexer(id) end)
+      task = Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn -> test(id) end)
 
       broadcast({__MODULE__, :started, id})
       {:reply, :ok, Map.put(tasks, task.ref, id)}
@@ -86,6 +86,13 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
     do: {:noreply, finish(tasks, ref, {:error, :crashed})}
 
   def handle_info(_message, tasks), do: {:noreply, tasks}
+
+  # The Test parses its answer in this task, a Cardigann JSON or XML page included (#1678), so it
+  # runs under the search processes' heap cap: a kill reads as `{:error, :crashed}`.
+  defp test(id) do
+    Process.flag(:max_heap_size, Native.max_heap_size())
+    Native.test_indexer(id)
+  end
 
   # The mark clears before the finish goes out, so a subscriber that asks `running/0` on the
   # finish no longer finds the id.

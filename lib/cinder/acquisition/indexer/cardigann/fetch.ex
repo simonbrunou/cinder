@@ -7,7 +7,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   Before each request and each hop:
 
   1. the secret check: when the URL holds a secret value (raw, `application/x-www-form-urlencoded`
-     or percent-encoded, spaces as `+` or `%20`), or the definition's search templates reference
+     or percent-encoded, spaces as `+` or `%20`, each encoded from UTF-8 and from the request's
+     `charset`, the definition's, #1678), or the definition's search templates reference
      a secret setting (`secret_referenced?: true`), the URL's host must be in the copy's
      `credential_hosts`; otherwise nothing is sent and the answer is `:secret_host`. A secret is a
      declared setting's stored secret that is not blank and differs from the copy's default
@@ -15,6 +16,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   2. `HTTPPolicy.untrusted_request_target/2` pins a validated address: a forbidden address is
      `:forbidden_address`, a host that does not resolve `:dns`, any other refusal of a URL the
      definition built `:definition_error`, and of a `Location` the site sent `:bad_response`.
+
+  A request whose `certificate_pins` holds the definition's `certificates` (#1678) passes them
+  to `Cinder.HTTPPolicy.PinnedAdapter` on each HTTPS hop whose pinned target names the host it
+  verifies (`connect_options` with `:hostname`) and whose host, in lower case and without a
+  trailing dot, is the indexer's base URL host (`pin_options/2`), and on no other hop.
 
   Then `Cinder.Acquisition.Indexer.request/3` sends a GET with `accept-encoding: identity`, a 30 s
   timeout of its own, Req's redirects and retry off, and its one retry after a 502, 503, 504 or
@@ -41,6 +47,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   """
 
   alias Cinder.Acquisition.Indexer
+  alias Cinder.Acquisition.Indexer.Cardigann.Charset
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.HTTPPolicy
 
@@ -60,6 +67,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
           optional(:download_secret_referenced?) => boolean(),
           required(:credential_hosts) => MapSet.t(),
           required(:now) => DateTime.t(),
+          optional(:charset) => Cinder.Acquisition.Indexer.Cardigann.Charset.t(),
+          optional(:certificate_pins) => {String.t(), [<<_::160>>]} | nil,
           optional(:resolver) => HTTPPolicy.resolver() | nil,
           optional(:req_options) => keyword() | nil
         }
@@ -208,7 +217,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   """
   @spec secret_link?(String.t(), request()) :: boolean()
   def secret_link?(link, request) when is_binary(link) do
-    (request.link_secret_referenced? or holds_secret?(link, request.secrets)) and
+    (request.link_secret_referenced? or holds_secret?(link, request)) and
       not credential_url?(link, request.credential_hosts)
   end
 
@@ -225,7 +234,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   # --- the secret check ---
 
   defp secret_check(url, uri, request) do
-    if (request.secret_referenced? or holds_secret?(url, request.secrets)) and
+    if (request.secret_referenced? or holds_secret?(url, request)) and
          not credential_host?(uri, request.credential_hosts),
        do: {:error, :secret_host},
        else: :ok
@@ -233,23 +242,25 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
 
   # Each invalid sequence reads as U+FFFD first: `String.downcase/1` leaves the character after a
   # lone byte such as 0xC3 as it is, which hid a capitalised secret behind it (#1672).
-  defp holds_secret?(url, secrets) do
+  defp holds_secret?(url, request) do
     lowered = url |> String.replace_invalid() |> String.downcase()
+    charset = Map.get(request, :charset, :utf8)
 
-    Enum.any?(secrets, fn secret ->
-      Enum.any?(forms(secret), &String.contains?(lowered, String.downcase(&1)))
+    Enum.any?(request.secrets, fn secret ->
+      Enum.any?(forms(secret, charset), &String.contains?(lowered, String.downcase(&1)))
     end)
   end
 
-  defp forms(secret) do
-    www = URI.encode_www_form(secret)
+  # The secret as written, then percent-encoded from its UTF-8 bytes and from its bytes in the
+  # definition's charset, as `Query` writes a query string in it.
+  defp forms(secret, charset) do
+    encoded =
+      for bytes <- Enum.uniq([secret, Charset.encode(secret, charset)]) do
+        www = URI.encode_www_form(bytes)
+        [www, String.replace(www, "+", "%20"), URI.encode(bytes, &URI.char_unreserved?/1)]
+      end
 
-    Enum.uniq([
-      secret,
-      www,
-      String.replace(www, "+", "%20"),
-      URI.encode(secret, &URI.char_unreserved?/1)
-    ])
+    Enum.uniq([secret | List.flatten(encoded)])
   end
 
   @doc "Whether `uri`'s host, in lower case and without a trailing dot, is one of `hosts`."
@@ -274,12 +285,16 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   @spec send_get(HTTPPolicy.request_target(), request(), keyword()) ::
           {:ok, Req.Response.t()} | {:error, atom()}
   def send_get(target, request, opts \\ []) do
+    req_options = Map.get(request, :req_options) || req_options()
+    pins = pin_options(target, request)
+
     options =
       HTTPPolicy.request_options(
         target,
-        Keyword.merge(Map.get(request, :req_options) || req_options(),
+        Keyword.merge(req_options,
           method: :get,
-          headers: [{"accept-encoding", "identity"} | Keyword.get(opts, :headers, [])]
+          headers: [{"accept-encoding", "identity"} | Keyword.get(opts, :headers, [])],
+          connect_options: Keyword.merge(Keyword.get(req_options, :connect_options, []), pins)
         )
       )
 
@@ -291,6 +306,45 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
       retry: Keyword.get(opts, :retry, true)
     )
   end
+
+  @doc """
+  The `:certificate_pins` of a request for `definition` at `base_url`: its base URL host and the
+  20-byte SHA-1 each `certificates` entry names in hex digits of either case, or nil for a
+  definition with none or a base URL with no host. The load check refuses an entry that is not
+  40 hex digits (#1678), so none is dropped here.
+  """
+  @spec certificate_pins(map(), String.t() | nil) :: {String.t(), [binary()]} | nil
+  def certificate_pins(%{certificates: [_ | _] = certificates}, base_url) do
+    case URI.new(base_url || "") do
+      {:ok, %URI{host: host}} when is_binary(host) and host != "" ->
+        {host,
+         for(hex <- certificates, {:ok, sha} <- [Base.decode16(hex, case: :mixed)], do: sha)}
+
+      _no_host ->
+        nil
+    end
+  end
+
+  def certificate_pins(_definition, _base_url), do: nil
+
+  @doc """
+  The `connect_options` that carry `request`'s pinned certificates to `target`:
+  `[certificate_pins: {host, thumbprints}]` when `target` is a pinned HTTPS target whose host,
+  in lower case and without a trailing dot, is the pins' base URL host, else none.
+  """
+  @spec pin_options(HTTPPolicy.request_target(), request()) :: keyword()
+  def pin_options(target, request) do
+    with {host, [_ | _] = thumbprints} <- Map.get(request, :certificate_pins),
+         %URI{scheme: "https", host: target_host} when is_binary(target_host) <- target.uri,
+         true <- Keyword.has_key?(target.connect_options, :hostname),
+         true <- normalized(target_host) == normalized(host) do
+      [certificate_pins: {normalized(host), thumbprints}]
+    else
+      _no_pin -> []
+    end
+  end
+
+  defp normalized(host), do: host |> String.downcase() |> String.trim_trailing(".")
 
   defp answer(%Req.Response{status: status} = response, target, request) do
     cond do

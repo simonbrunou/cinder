@@ -132,7 +132,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert {:ok, %{unsupported: []}} = Loader.load(yaml(@base))
     end
 
-    test "the features on are the filters #1670 and #1677 built and what slice (a) builds" do
+    test "the features on are the filters, what slice (a) builds and what #1678 builds" do
       features = Loader.features()
       assert length(features) == 78
       assert length(Enum.uniq_by(features, &elem(&1, 0))) == 78
@@ -140,11 +140,13 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       filters =
         ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend append
            tolower toupper base64decode base64encode urldecode urlencode htmldecode htmlencode
-           timeago reltime validfilename diacritics hexdump strdump validate)
+           timeago reltime validfilename diacritics jsonjoinarray hexdump strdump validate)
 
       assert for({code, true} <- features, do: code) ==
                [
                  :html_search,
+                 :json_search,
+                 :xml_search,
                  :raw_search,
                  :keywords_filters,
                  :selector_case,
@@ -156,6 +158,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                    :download,
                    :request_delay,
                    :follow_redirect,
+                   :certificates,
                    :category_default,
                    {:setting, "info"},
                    {:setting, "text"},
@@ -174,9 +177,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
 
     # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck), revision 3
     # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671), revision
-    # 5 the grab's download block (#1672).
-    test "fingerprint/0 declares schema version 12 and revision 5" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 5}
+    # 5 the grab's download block (#1672), revision 6 the JSON and XML answers, the charsets and
+    # the pinned certificates (#1678).
+    test "fingerprint/0 declares schema version 12 and revision 6" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 6}
     end
 
     test "unknown values come first, then features in the list's order" do
@@ -184,7 +188,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         @base
         |> put_in(["search", "paths"], [%{"path" => "/", "response" => %{"type" => "csv"}}])
         |> put_in(["type"], "secret")
-        |> put_in(["certificates"], ["ab12"])
+        |> put_in(["encoding"], "koi8-r")
         |> put_in(["download"], %{"method" => "post", "headers" => %{"A" => ["b"]}})
 
       assert {:ok, %{unsupported: unsupported}} = Loader.load(yaml(definition))
@@ -194,7 +198,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                {:unknown_value, :response_type},
                :download_post,
                :download_headers,
-               :certificates
+               :encoding
              ]
     end
 
@@ -635,7 +639,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         {["search", "fields"], %{"title" => field(%{"filters" => [%{"args" => "x"}]})},
          [{:unknown_value, :filter}]},
         {["search", "keywordsfilters"], [filter("rot13")], [{:unknown_value, :filter}]},
-        {["search", "paths"], [%{"path" => "/", "response" => json}], [:json_search]}
+        {["search", "paths"], [%{"path" => "/", "response" => json}], []},
+        {["search", "paths"], [%{"path" => "/", "response" => %{"type" => "xml"}}], []}
       ]
 
       for {path, value, expected} <- cases do
@@ -699,7 +704,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                %{path: "/html", response: nil, inheritinputs: true, method: nil, inputs: []}
              ] = definition.search.paths
 
-      assert definition.unsupported == [:json_search, :search_path]
+      assert definition.unsupported == [:search_path]
     end
 
     test "search.path alone is the one search path" do
@@ -893,8 +898,28 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     @built_settings ~w(info text password checkbox select info_flaresolverr)
     @built_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                       append tolower toupper base64decode base64encode urldecode urlencode
-                      htmldecode htmlencode timeago reltime validfilename diacritics hexdump
-                      strdump validate)
+                      htmldecode htmlencode timeago reltime validfilename diacritics
+                      jsonjoinarray hexdump strdump validate)
+
+    # #1678 reads `rows.count` on a JSON page only.
+    test "rows.count adds no code on a search whose paths are all JSON, and its code otherwise" do
+      xml = %{"path" => "/x", "response" => %{"type" => "xml"}}
+
+      for {paths, expected} <- [
+            {[@path_json], []},
+            {[@path_json, Map.put(@path_json, "path", "/2")], []},
+            {[@path_json, %{"path" => "/h"}], [:rows_count]},
+            {[xml], [:rows_count]},
+            {[%{"path" => "/h"}], [:rows_count]}
+          ] do
+        search =
+          @base["search"]
+          |> Map.put("paths", paths)
+          |> put_in(["rows", "count"], %{"selector" => "total"})
+
+        assert {paths, unsupported(["search"], search)} == {paths, expected}
+      end
+    end
 
     test "each settings type adds its own code, or none once built" do
       for type <-
@@ -943,11 +968,11 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert unsupported(["search", "rows", "filters"], [filter("strdump")]) == []
 
       more = %{
-        "title" => field(%{"filters" => filters ++ [filter("jsonjoinarray"), filter("rot13")]})
+        "title" => field(%{"filters" => filters ++ [filter("fuzzytime"), filter("rot13")]})
       }
 
       assert unsupported(["search", "fields"], more) ==
-               [{:unknown_value, :filter}, {:filter, "jsonjoinarray"}]
+               [{:unknown_value, :filter}, {:filter, "fuzzytime"}]
 
       assert {:ok, definition} =
                Loader.load(
@@ -960,7 +985,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                  )
                )
 
-      assert definition.unsupported == [:encoding]
+      assert definition.unsupported == []
     end
   end
 
@@ -973,9 +998,16 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       {["followredirect"], false, []},
       {["testlinktorrent"], false, []},
       {["legacylinks"], ["https://old.invalid/"], []},
-      {["certificates"], ["ab12"], [:certificates]},
+      # #1678: `LoadCheck` checks each entry is 40 hex digits; the loader reports none.
+      {["certificates"], ["ab12"], []},
       {["certificates"], [], []},
-      {["encoding"], "windows-1251", [:encoding]},
+      # #1678: the nine legacy charsets and UTF-8 load, any other name does not.
+      {["encoding"], "windows-1251", []},
+      {["encoding"], "Windows-1252", []},
+      {["encoding"], "iso-8859-1", []},
+      {["encoding"], "tis-620", []},
+      {["encoding"], "koi8-r", [:encoding]},
+      {["encoding"], "utf-16", [:encoding]},
       {["encoding"], "utf-8", []},
       {["encoding"], "UTF8", []},
       {["language"], "fr-FR", []},
@@ -998,24 +1030,19 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       # search
       {["search", "path"], "/", [:search_path]},
       {["search", "paths"], [%{"path" => "/"}], []},
-      {["search", "paths"], [@path_json], [:json_search]},
+      {["search", "paths"], [@path_json], []},
       {["search", "paths"],
-       [%{"path" => "/", "response" => %{"type" => "xml", "noResultsMessage" => "none"}}],
-       [:xml_search]},
-      {["search", "paths"], [Map.put(@path_json, "method", "post")],
-       [:json_search, :search_post]},
-      {["search", "paths"], [Map.put(@path_json, "method", "get")], [:json_search]},
+       [%{"path" => "/", "response" => %{"type" => "xml", "noResultsMessage" => "none"}}], []},
+      {["search", "paths"], [Map.put(@path_json, "method", "post")], [:search_post]},
+      {["search", "paths"], [Map.put(@path_json, "method", "get")], []},
       {["search", "paths"], [Map.put(@path_json, "categories", ["1"])],
-       [:json_search, :search_path_categories]},
-      {["search", "paths"], [Map.put(@path_json, "queryseparator", ";")],
-       [:json_search, :query_separator]},
-      {["search", "paths"], [Map.put(@path_json, "inheritinputs", false)],
-       [:json_search, :no_inherit_inputs]},
+       [:search_path_categories]},
+      {["search", "paths"], [Map.put(@path_json, "queryseparator", ";")], [:query_separator]},
+      {["search", "paths"], [Map.put(@path_json, "inheritinputs", false)], [:no_inherit_inputs]},
       {["search", "paths"], [Map.put(@path_json, "followredirect", true)],
-       [:json_search, :path_follow_redirect]},
-      {["search", "paths"], [Map.put(@path_json, "inputs", %{"$raw" => "x"})],
-       [:json_search, :raw_input]},
-      {["search", "paths"], [Map.put(@path_json, "inputs", %{"q" => "x"})], [:json_search]},
+       [:path_follow_redirect]},
+      {["search", "paths"], [Map.put(@path_json, "inputs", %{"$raw" => "x"})], [:raw_input]},
+      {["search", "paths"], [Map.put(@path_json, "inputs", %{"q" => "x"})], []},
       {["search", "inputs"], %{"$raw" => "x"}, [:raw_input]},
       {["search", "inputs"], %{"q" => "x"}, []},
       {["search", "headers"], %{"Accept" => ["text/html"]}, [:search_headers]},
@@ -1075,9 +1102,8 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
            %{"selector" => "a", "attribute" => "href", "usebeforeresponse" => false}
          ]
        }, []},
-      {["download"],
-       %{"selectors" => [%{"selector" => "a", "filters" => [filter("jsonjoinarray")]}]},
-       [{:filter, "jsonjoinarray"}]},
+      {["download"], %{"selectors" => [%{"selector" => "a", "filters" => [filter("fuzzytime")]}]},
+       [{:filter, "fuzzytime"}]},
       # login
       {["login"], %{"method" => "form", "form" => "f", "submitpath" => "/s", "selectors" => true},
        [{:login, "form"}]},

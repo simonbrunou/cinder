@@ -35,7 +35,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     it is the last failure.
   - `:crashed`, a search process that died or raised (Native records it): a failure.
   - Cardigann's failures (#1671), `:parser_failed`, `:forbidden_address`, `:secret_host`,
-    `:too_many_redirects` and `:definition_error`: a failure.
+    `:too_many_redirects` and `:definition_error`, and those of its JSON and XML answers
+    (#1678), `:invalid_json`, `:invalid_xml`, `:xml_dtd` and `:no_results_list`: a failure.
   - `:regex_limit` and `:filter_output_cap`, a Cardigann query a limit failed (#1671): the
     partial kind and `now` become the last partial; no backoff starts or ends, and the level and
     the failure count stay.

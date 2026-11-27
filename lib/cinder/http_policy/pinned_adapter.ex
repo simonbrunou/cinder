@@ -13,30 +13,46 @@ defmodule Cinder.HTTPPolicy.PinnedAdapter do
   connection. Nothing outlives the call, and TLS verification is Mint's default
   (`:verify_peer` with hostname checking against `:hostname`).
 
-  Supported `connect_options`: `:hostname` (required), `:timeout` (connect timeout) and
-  `:transport_opts`. Anything else (e.g. `:proxy`) raises rather than being silently ignored,
-  because a pinned request must never be redirected through another route.
+  Supported `connect_options`: `:hostname` (required), `:timeout` (connect timeout),
+  `:transport_opts` and `:certificate_pins`. Anything else (e.g. `:proxy`) raises rather than
+  being silently ignored, because a pinned request must never be redirected through another
+  route.
+
+  ## Pinned certificates
+
+  `certificate_pins: {host, thumbprints}` (#1678), each thumbprint the 20-byte SHA-1 of a
+  certificate's DER bytes, is a Cardigann definition's `certificates` list, as Jackett reads it:
+  a server certificate whose SHA-1 is listed is accepted even when normal verification fails
+  (an unknown issuer, an expiry, another name). It applies only to an HTTPS request whose
+  `:hostname`, in lower case and without a trailing dot, is `host`; on any other it does
+  nothing, so a pin cannot follow a redirect to another host. The caller,
+  `Cinder.Acquisition.Indexer.Cardigann.Fetch`, sets it only for the indexer's base URL host.
+
+  Such a request first connects with `verify: :verify_none` and `reuse_sessions: false`, and
+  reads the peer certificate (`:ssl.peercert/1`) before it sends a byte of the request. A
+  listed thumbprint keeps the connection. Any other certificate, or a peer certificate that
+  cannot be read, closes it, and the request connects again with Mint's normal verification,
+  whose answer stands: an untrusted certificate fails there as it would with no pin. A first
+  connection that fails is the answer, as no certificate check failed it. TLS still checks that
+  the server holds the key of the certificate it sent, whatever `verify` says, and OTP caches a
+  session only after `:verify_peer`, so a pinned session is never resumed by a later request.
+  Verification never runs first: a failed handshake logs a TLS alert on every request.
   """
 
   @default_connect_timeout_ms 30_000
   @default_receive_timeout_ms 15_000
-  @connect_option_keys [:hostname, :timeout, :transport_opts]
+  @connect_option_keys [:hostname, :timeout, :transport_opts, :certificate_pins]
 
   @doc "Runs `request` over a one-shot Mint connection. See `Req.Request` for the adapter contract."
   @spec run(Req.Request.t()) :: {Req.Request.t(), Req.Response.t() | Exception.t()}
   def run(%Req.Request{} = request) do
     sink = sink!(request)
     body = body!(request)
-    {address, hostname, connect_options} = target!(request)
+    {address, hostname, connect_options, pins} = target!(request)
     scheme = scheme!(request.url)
     port = request.url.port || URI.default_port(request.url.scheme)
 
-    case Mint.HTTP.connect(scheme, address, port,
-           hostname: hostname,
-           protocols: [:http1],
-           mode: :passive,
-           transport_opts: connect_options
-         ) do
+    case connect(scheme, {address, port, hostname}, connect_options, pins) do
       {:ok, conn} ->
         try do
           exchange(conn, request, body, sink)
@@ -46,6 +62,38 @@ defmodule Cinder.HTTPPolicy.PinnedAdapter do
 
       {:error, error} ->
         {request, normalize_error(error)}
+    end
+  end
+
+  defp connect(:https, target, transport_opts, [_ | _] = pins) do
+    pinned_opts = Keyword.merge(transport_opts, verify: :verify_none, reuse_sessions: false)
+
+    with {:ok, conn} <- mint_connect(:https, target, pinned_opts) do
+      if pinned?(conn, pins) do
+        {:ok, conn}
+      else
+        Mint.HTTP.close(conn)
+        mint_connect(:https, target, transport_opts)
+      end
+    end
+  end
+
+  defp connect(scheme, target, transport_opts, _pins),
+    do: mint_connect(scheme, target, transport_opts)
+
+  defp mint_connect(scheme, {address, port, hostname}, transport_opts) do
+    Mint.HTTP.connect(scheme, address, port,
+      hostname: hostname,
+      protocols: [:http1],
+      mode: :passive,
+      transport_opts: transport_opts
+    )
+  end
+
+  defp pinned?(conn, pins) do
+    case :ssl.peercert(Mint.HTTP.get_socket(conn)) do
+      {:ok, der} -> :crypto.hash(:sha, der) in pins
+      {:error, _reason} -> false
     end
   end
 
@@ -182,8 +230,25 @@ defmodule Cinder.HTTPPolicy.PinnedAdapter do
         Keyword.get(connect_options, :transport_opts, [])
       )
 
-    {address, hostname, transport_opts}
+    {address, hostname, transport_opts,
+     pins(Keyword.get(connect_options, :certificate_pins), hostname)}
   end
+
+  # The thumbprints that apply to `hostname`, or none.
+  defp pins(nil, _hostname), do: []
+
+  defp pins({host, thumbprints}, hostname) when is_binary(host) and is_list(thumbprints) do
+    if normalized(host) == normalized(hostname),
+      do: Enum.filter(thumbprints, &(is_binary(&1) and byte_size(&1) == 20)),
+      else: []
+  end
+
+  defp pins(other, _hostname) do
+    raise ArgumentError,
+          "`certificate_pins` must be `{host, thumbprints}`, got: #{inspect(other)}"
+  end
+
+  defp normalized(host), do: host |> String.downcase() |> String.trim_trailing(".")
 
   defp request_path(%URI{path: path, query: nil}), do: path || "/"
   defp request_path(%URI{path: path, query: query}), do: (path || "/") <> "?" <> query

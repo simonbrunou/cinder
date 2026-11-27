@@ -164,7 +164,7 @@ defmodule Mix.Tasks.Cinder.Definitions.Canary do
     end
   end
 
-  defp first_page(definition, %{urls: [url | _]} = planned, now) do
+  defp first_page(definition, %{pages: [first | _]} = planned, now) do
     deadline_at = System.monotonic_time(:millisecond) + @deadline_ms
 
     request = %{
@@ -177,7 +177,7 @@ defmodule Mix.Tasks.Cinder.Definitions.Canary do
       now: now
     }
 
-    with {:ok, body, uri} <- Fetch.get(url, request),
+    with {:ok, body, uri} <- Fetch.get(first.url, request),
          {:ok, page} <-
            Rows.read(
              body,
@@ -186,7 +186,8 @@ defmodule Mix.Tasks.Cinder.Definitions.Canary do
              uri,
              planned.andmatch,
              deadline_at,
-             request
+             request,
+             first.response
            ) do
       rows_line(length(page.rows), page.missing)
     else
@@ -194,7 +195,7 @@ defmodule Mix.Tasks.Cinder.Definitions.Canary do
     end
   end
 
-  defp first_page(_definition, %{urls: []}, _now), do: "FAILED: no search path"
+  defp first_page(_definition, %{pages: []}, _now), do: "FAILED: no search path"
 
   defp rows_line(0, []), do: "FAILED: 0 rows"
   defp rows_line(count, []), do: "#{count} rows, every required field"

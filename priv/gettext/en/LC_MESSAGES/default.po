@@ -8687,3 +8687,23 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Enter each setting as plain text."
 msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer has no results list"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer holds a DTD, which Cinder refuses"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer is not valid JSON"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "The answer is not valid XML"
+msgstr ""

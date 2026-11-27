@@ -290,7 +290,14 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
                  ~w(comment escape structure template result_template refused crash timeout memory
                     output_too_large)a,
                  &{:selector, &1}
-               ) ++ [{:regex, :dotnet_only}, {:regex, :invalid}]
+               ) ++
+                 [
+                   {:regex, :dotnet_only},
+                   {:regex, :invalid},
+                   {:json, :path},
+                   {:xml_selector, :invalid},
+                   {:certificates, :malformed}
+                 ]
     end
 
     test "adds nothing to a copy whose selectors all pass" do
@@ -326,12 +333,12 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       copy =
         @base
         |> put_in(["search", "fields"], fields)
-        |> put_in(["certificates"], ["0000000000000000000000000000000000000000"])
+        |> put_in(["encoding"], "koi8-r")
 
       assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
 
       assert unsupported == [
-               :certificates,
+               :encoding,
                {:selector, :comment},
                {:selector, :escape},
                {:selector, :structure},
@@ -511,6 +518,283 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
 
       assert {:ok, %{unsupported: [:dateparse_layout, {:regex, :invalid}]}} =
                LoadCheck.check(yaml(put_in(@base, ["search", "fields"], fields)))
+    end
+  end
+
+  # #1678: the JSON paths, the XML selectors and the pinned certificates.
+  describe "the JSON, XML and certificate checks" do
+    defp json_copy(search_edit) do
+      search = %{
+        "paths" => [%{"path" => "/api", "response" => %{"type" => "json"}}],
+        "rows" => %{"selector" => "data:not(hidden)", "attribute" => "attributes"},
+        "fields" => %{"title" => %{"selector" => "name"}, "id" => %{"selector" => "..id"}}
+      }
+
+      Map.put(@base, "search", search_edit.(search))
+    end
+
+    defp xml_copy(search_edit) do
+      search = %{
+        "paths" => [%{"path" => "/rss", "response" => %{"type" => "xml"}}],
+        "rows" => %{"selector" => "rss > channel > item"},
+        "fields" => %{
+          "title" => %{"selector" => "title"},
+          "seeders" => %{"selector" => "[name=seeders]", "attribute" => "value"},
+          "free" => %{
+            "selector" => "description:contains(Only Upload)",
+            "case" => %{"*" => "1"}
+          }
+        }
+      }
+
+      Map.put(@base, "search", search_edit.(search))
+    end
+
+    defp check_codes(copy) do
+      assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
+      unsupported
+    end
+
+    test "a JSON copy whose paths and chains read adds no code" do
+      assert check_codes(json_copy(& &1)) == []
+
+      copy =
+        json_copy(fn search ->
+          search
+          |> put_in(["rows", "count"], %{"selector" => "$.total"})
+          |> put_in(["rows", "selector"], "{{ if .Keywords }}data{{ else }}$[0].data{{ end }}")
+          |> put_in(["fields", "tags"], %{
+            "selector" => "tags",
+            "filters" => [%{"name" => "jsonjoinarray", "args" => ["$.v", ", "]}]
+          })
+        end)
+
+      assert check_codes(copy) == []
+    end
+
+    test "copies using the features #1678 lifts, in windows-1251 and with certificates, read no code" do
+      json =
+        json_copy(fn search ->
+          put_in(search, ["fields", "tags"], %{
+            "selector" => "tags",
+            "filters" => [%{"name" => "jsonjoinarray", "args" => ["$.v", ","]}]
+          })
+        end)
+
+      copy =
+        json
+        |> Map.put("encoding", "windows-1251")
+        |> Map.put("certificates", [String.duplicate("aB", 20)])
+
+      assert check_codes(copy) == []
+      assert check_codes(Map.put(xml_copy(& &1), "encoding", "windows-1251")) == []
+
+      # One copy with a JSON path and an XML path: each selector reads as a JSON path and as an
+      # XML selector.
+      both = %{
+        "paths" => [
+          %{"path" => "/api", "response" => %{"type" => "json"}},
+          %{"path" => "/rss", "response" => %{"type" => "xml"}}
+        ],
+        "rows" => %{"selector" => "item"},
+        "fields" => %{
+          "title" => %{"selector" => "title"},
+          "tags" => %{
+            "selector" => "tags",
+            "filters" => [%{"name" => "jsonjoinarray", "args" => ["$.v", ","]}]
+          }
+        }
+      }
+
+      mixed =
+        @base
+        |> Map.put("search", both)
+        |> Map.put("encoding", "windows-1251")
+        |> Map.put("certificates", [String.duplicate("aB", 20)])
+
+      assert check_codes(mixed) == []
+    end
+
+    test "a JSON path or chain the walker does not read is {:json, :path}" do
+      for {where, edit} <- [
+            {"rows selector", &put_in(&1, ["rows", "selector"], "data[*]")},
+            {"rows filter", &put_in(&1, ["rows", "selector"], "data:first")},
+            {"rows attribute", &put_in(&1, ["rows", "attribute"], "a..b")},
+            {"rows count", &put_in(&1, ["rows", "count"], %{"selector" => "$..total"})},
+            {"field", &put_in(&1, ["fields", "title"], %{"selector" => "names[-1]"})},
+            {"field key", &put_in(&1, ["fields", "title"], %{"selector" => "a:has(b[*])"})},
+            {"rendered selector",
+             &put_in(&1, ["rows", "selector"], "{{ if .Keywords }}data[*]{{ else }}data{{ end }}")},
+            {"template that does not render", &put_in(&1, ["rows", "selector"], "{{ .Nope ")},
+            {"jsonjoinarray path",
+             &put_in(&1, ["fields", "tags"], %{
+               "selector" => "tags",
+               "filters" => [%{"name" => "jsonjoinarray", "args" => ["v[*]", ","]}]
+             })}
+          ] do
+        assert {where, check_codes(json_copy(edit))} == {where, [{:json, :path}]}
+      end
+    end
+
+    test "a jsonjoinarray path is checked in an HTML copy too, and its selectors are not paths" do
+      join = [%{"name" => "jsonjoinarray", "args" => ["v[*]", ","]}]
+      copy = put_in(@base, ["search", "fields", "title", "filters"], join)
+      assert check_codes(copy) == [{:json, :path}]
+
+      # `tr` is no JSON chain problem and `data[*]` no HTML one: each reader checks its own.
+      assert check_codes(put_in(@base, ["search", "rows", "selector"], "tr > td")) == []
+    end
+
+    test "an XML copy with v11's selector shapes adds no code" do
+      assert check_codes(xml_copy(& &1)) == []
+
+      rendered =
+        xml_copy(
+          &put_in(
+            &1,
+            ["rows", "selector"],
+            "{{ if .Keywords }}item{{ else }}channel > item{{ end }}"
+          )
+        )
+
+      assert check_codes(rendered) == []
+    end
+
+    test "an XML pseudo-class other than :contains names itself, and bad syntax is :invalid" do
+      for {edit, code} <- [
+            {&put_in(&1, ["rows", "selector"], "item:has(title)"), {:xml_selector, "has"}},
+            {&put_in(&1, ["fields", "title"], %{"selector" => "title:nth-child(2)"}),
+             {:xml_selector, "nth-child"}},
+            {&put_in(&1, ["fields", "free", "case"], %{"b:empty" => "1"}),
+             {:xml_selector, "empty"}},
+            {&put_in(&1, ["fields", "title"], %{"selector" => "a:not(:has(b))"}),
+             {:xml_selector, "not"}},
+            {&put_in(&1, ["fields", "title"], %{"selector" => "t|title"}),
+             {:xml_selector, :invalid}},
+            {&put_in(&1, ["fields", "title"], %{"selector" => ~S|t\:title|}),
+             {:xml_selector, :invalid}},
+            {&put_in(
+               &1,
+               ["rows", "selector"],
+               "{{ if .Keywords }}item:empty{{ else }}item{{ end }}"
+             ), {:xml_selector, "empty"}},
+            {&put_in(&1, ["rows", "selector"], "{{ .Nope "), {:xml_selector, :invalid}}
+          ] do
+        assert check_codes(xml_copy(edit)) == [code]
+      end
+    end
+
+    test "each selector adds its first refusal, each code once, in the order found" do
+      copy =
+        xml_copy(fn search ->
+          search
+          |> put_in(["rows", "selector"], "item:has(a)")
+          |> put_in(["fields", "title"], %{"selector" => "a:empty, c:has(d)"})
+          |> put_in(["fields", "size"], %{"selector" => "size:has(e)"})
+        end)
+
+      assert check_codes(copy) == [{:xml_selector, "has"}, {:xml_selector, "empty"}]
+    end
+
+    test "a certificates entry that is not 40 hex digits is {:certificates, :malformed}" do
+      good = ["0123456789abcdefABCDEF0123456789abcdef01"]
+      assert check_codes(put_in(@base, ["certificates"], good)) == []
+
+      for entry <- [
+            String.duplicate("a", 39),
+            String.duplicate("a", 41),
+            String.duplicate("g", 40),
+            "01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67",
+            "",
+            nil
+          ] do
+        assert {entry, check_codes(put_in(@base, ["certificates"], good ++ [entry]))} ==
+                 {entry, [{:certificates, :malformed}]}
+      end
+    end
+
+    test "the three checks add their codes in their order, after the others" do
+      copy =
+        json_copy(&put_in(&1, ["rows", "selector"], "data[*]"))
+        |> put_in(["certificates"], ["xx"])
+        |> put_in(["search", "paths"], [
+          %{"path" => "/api", "response" => %{"type" => "json"}},
+          %{"path" => "/rss", "response" => %{"type" => "xml"}}
+        ])
+
+      assert check_codes(copy) == [
+               {:json, :path},
+               {:xml_selector, :invalid},
+               {:certificates, :malformed}
+             ]
+    end
+
+    # docs/agents/testing.md: a reader of untrusted input never raises. A JSON copy and an XML
+    # copy fill every slot the three checks read (`rows.count` loads in a JSON-only copy alone),
+    # then each slot takes each of seven value shapes in turn.
+    test "raises on none of seven value shapes in any slot the three checks read" do
+      json =
+        @base
+        |> Map.put("certificates", [String.duplicate("aB", 20)])
+        |> Map.put("search", %{
+          "paths" => [
+            %{"path" => "/api", "response" => %{"type" => "json", "noResultsMessage" => "none"}}
+          ],
+          "rows" => %{
+            "selector" => "{{ if .Keywords }}data{{ else }}$[0].data{{ end }}",
+            "attribute" => "attributes",
+            "multiple" => true,
+            "missingAttributeEqualsNoResults" => true,
+            "count" => %{"selector" => "$.total", "filters" => [%{"name" => "trim"}]}
+          },
+          "fields" => %{
+            "title" => %{"selector" => "title"},
+            "tags" => %{
+              "selector" => "tags",
+              "filters" => [%{"name" => "jsonjoinarray", "args" => ["$.v", ","]}]
+            }
+          }
+        })
+
+      xml =
+        @base
+        |> Map.put("certificates", [String.duplicate("aB", 20)])
+        |> Map.put("search", %{
+          "paths" => [%{"path" => "/rss", "response" => %{"type" => "xml"}}],
+          "rows" => %{"selector" => "{{ if .Keywords }}item{{ else }}channel > item{{ end }}"},
+          "fields" => %{
+            "title" => %{"selector" => "title"},
+            "seeders" => %{"selector" => "[name=seeders]", "attribute" => "value"},
+            "free" => %{"selector" => "description:contains(Free)", "case" => %{"b" => "1"}}
+          }
+        })
+
+      assert {check_codes(json), check_codes(xml)} == {[], []}
+
+      problems =
+        for(
+          copy <- [json, xml],
+          path <- slot_paths(copy, []),
+          value <- [nil, "x", ["x"], [nil], [%{}], %{}, %{"a" => nil}],
+          do: {copy, path, value}
+        )
+        |> Task.async_stream(
+          fn {copy, path, value} ->
+            try do
+              case LoadCheck.check(yaml(put_in(copy, path, value))) do
+                {:ok, %{unsupported: codes}} when is_list(codes) -> nil
+                {:error, _reason} -> nil
+                other -> {path, value, other}
+              end
+            rescue
+              error -> {path, value, Exception.message(error)}
+            end
+          end,
+          timeout: 60_000
+        )
+        |> Enum.flat_map(fn {:ok, result} -> List.wrap(result) end)
+
+      assert problems == []
     end
   end
 end
