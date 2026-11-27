@@ -88,8 +88,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   """
   @behaviour Cinder.Acquisition.IndexerSource
 
+  alias Cinder.Acquisition.Indexer.Cardigann
   alias Cinder.Acquisition.IndexerSource
-  alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus}
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaptchas, IndexerState, IndexerStatus}
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Download.PollerProgress
   alias Cinder.Indexers
@@ -214,15 +215,23 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   - `{:error, :deadline}`: a request never left the slot queue inside the budget, and nothing
     was stored.
 
+  `opts` may hold `captcha: %{token: token, answer: answer}` (#1681): the token of a captcha
+  load (`load_captcha/1`) and a 0-arity function answering the admin's answer, so no inspected
+  term holds it. The Cardigann adapter then logs in with that load's form and the answer, and
+  a session gone or expired reads `:captcha_expired` with no request.
+
   `config :cinder, #{inspect(__MODULE__)}` may set `test_budget_ms` (a shorter budget for a
   test).
   """
-  @spec test_indexer(pos_integer()) :: {:ok, IndexerStatus.last_test()} | {:error, term()}
-  def test_indexer(id) do
-    context = %{
-      deadline_at: System.monotonic_time(:millisecond) + test_budget_ms(),
-      priority: :interactive
-    }
+  @spec test_indexer(pos_integer(), keyword()) ::
+          {:ok, IndexerStatus.last_test()} | {:error, term()}
+  def test_indexer(id, opts \\ []) do
+    context =
+      %{
+        deadline_at: System.monotonic_time(:millisecond) + test_budget_ms(),
+        priority: :interactive
+      }
+      |> with_captcha(Keyword.get(opts, :captcha))
 
     adapters = Application.fetch_env!(:cinder, :indexer_adapters)
 
@@ -237,6 +246,98 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
         {:not_run, _outcome} -> {:error, :deadline}
       end
     end
+  end
+
+  defp with_captcha(context, %{token: token, answer: answer} = captcha)
+       when is_binary(token) and is_function(answer, 0),
+       do: Map.put(context, :captcha, Map.take(captcha, [:token, :answer]))
+
+  defp with_captcha(context, nil), do: context
+
+  @doc """
+  Loads the image captcha of the Cardigann configured indexer `id` (#1681) for the admin to
+  solve: the adapter's `load_captcha/2` (`Cinder.Acquisition.Indexer.Cardigann.load_captcha/2`),
+  in the interactive class, under the Test's budget, then `IndexerCaptchas.store/3`, which
+  replaces any earlier load's session. It runs in its own process under `TaskSupervisor`,
+  unlinked from the caller and under the search processes' heap cap (`max_heap_size/0`), so a
+  load killed past the cap or past the budget answers `{:error, :crashed}` or `{:error,
+  :deadline}` and the caller lives on. It reads the indexer enabled or not, and records nothing
+  in `IndexerStatus`. Answers:
+
+  - `{:ok, %{token: token, mime: mime, image: base64}}`: the token the answer comes back with
+    (`test_indexer/2`), the image's type and its bytes in Base64;
+  - `{:error, :not_found}`, `{:error, :undecryptable_secrets}` or `{:error, {:not_supported,
+    feature}}` with no request, as `test_indexer/1` refuses, and `{:error, :no_captcha}` with no
+    request for an indexer whose adapter loads no captcha or whose login has none;
+  - `{:error, :not_found}` too when the indexer went while the load ran, and `{:error,
+    :not_written}` when the session's write failed;
+  - otherwise the adapter's error: `:captcha_not_found`, `{:captcha_image, :type}`,
+    `{:captcha_image, :too_large}`, `:deadline` or a failure class.
+  """
+  @spec load_captcha(pos_integer()) ::
+          {:ok, %{token: String.t(), mime: String.t(), image: String.t()}} | {:error, term()}
+  def load_captcha(id) when is_integer(id) do
+    task =
+      Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn ->
+        Process.flag(:max_heap_size, max_heap_size())
+        captcha(id)
+      end)
+
+    case Task.yield(task, test_budget_ms() + @kill_grace_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, answer} -> answer
+      {:exit, _reason} -> {:error, :crashed}
+      nil -> {:error, :deadline}
+    end
+  end
+
+  defp captcha(id) do
+    context = %{
+      deadline_at: System.monotonic_time(:millisecond) + test_budget_ms(),
+      priority: :interactive
+    }
+
+    adapters = Application.fetch_env!(:cinder, :indexer_adapters)
+
+    with {:ok, indexer} <- Indexers.fetch_with_secrets(id),
+         :ok <- supported(indexer, adapters),
+         {:ok, adapter} <- captcha_adapter(Map.fetch!(adapters, indexer.type)),
+         {:ok, loaded} <- adapter.load_captcha(indexer, context) do
+      session = Map.take(loaded, [:binding, :jar, :landing, :form])
+
+      case IndexerCaptchas.store(id, session, now()) do
+        {:ok, token} ->
+          {:ok, %{token: token, mime: loaded.mime, image: Base.encode64(loaded.image)}}
+
+        :refused ->
+          {:error, :not_found}
+
+        :not_written ->
+          {:error, :not_written}
+      end
+    end
+  end
+
+  @doc """
+  Whether the captcha session that the load `token` stored for the configured indexer `id` would
+  serve an answer now (`IndexerCaptchas.live?/4`), under the base URL and the running copy the
+  indexer has now (`Cinder.Acquisition.Indexer.Cardigann.captcha_binding/1`). False for an
+  indexer gone or unreadable, or one whose copy does not run. It writes nothing and sends no
+  request.
+  """
+  @spec captcha_live?(pos_integer(), String.t()) :: boolean()
+  def captcha_live?(id, token) when is_integer(id) and is_binary(token) do
+    with {:ok, indexer} <- Indexers.fetch_with_secrets(id),
+         {:ok, binding} <- Cardigann.captcha_binding(indexer) do
+      IndexerCaptchas.live?(id, token, binding, now())
+    else
+      _gone_or_not_running -> false
+    end
+  end
+
+  defp captcha_adapter(adapter) do
+    if Code.ensure_loaded?(adapter) and function_exported?(adapter, :load_captcha, 2),
+      do: {:ok, adapter},
+      else: {:error, :no_captcha}
   end
 
   @doc """

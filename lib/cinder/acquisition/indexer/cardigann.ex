@@ -73,7 +73,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Fetch, Query, Rows, Session, Variables}
+
+  alias Cinder.Acquisition.Indexer.Cardigann.{
+    Charset,
+    Fetch,
+    Login,
+    Query,
+    Rows,
+    Session,
+    Variables
+  }
+
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
@@ -121,12 +131,23 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   @spec copy(ConfiguredIndexer.t()) :: {:ok, map()} | {:not_supported, Report.feature()}
   def copy(%ConfiguredIndexer{} = indexer) do
     case Definitions.running_copy(indexer.id) do
-      {:ok, %{result: :loads, definition: definition}} -> {:ok, running(indexer, definition)}
-      {:ok, %{result: {:not_supported, [code | _]}}} -> {:not_supported, report_feature(code)}
-      {:ok, %{result: :unchecked}} -> {:not_supported, :definition_unchecked}
-      {:ok, %{result: _fails}} -> {:not_supported, :definition_fails}
-      {:error, :fails} -> {:not_supported, :definition_fails}
-      {:error, :no_pin} -> {:not_supported, :definition_missing}
+      {:ok, %{result: :loads, definition: definition, blob_sha: blob_sha}} ->
+        {:ok, Map.put(running(indexer, definition), :blob_sha, blob_sha)}
+
+      {:ok, %{result: {:not_supported, [code | _]}}} ->
+        {:not_supported, report_feature(code)}
+
+      {:ok, %{result: :unchecked}} ->
+        {:not_supported, :definition_unchecked}
+
+      {:ok, %{result: _fails}} ->
+        {:not_supported, :definition_fails}
+
+      {:error, :fails} ->
+        {:not_supported, :definition_fails}
+
+      {:error, :no_pin} ->
+        {:not_supported, :definition_missing}
     end
   end
 
@@ -410,16 +431,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
           {:ran, value} | {:not_run, Report.outcome()}
         when value: term()
   def test(%ConfiguredIndexer{} = indexer, context, record) do
+    {captcha, context} = Map.pop(context, :captcha)
+
     with {:ok, copy} <- copy(indexer),
          {:ok, page, _variables} <- Query.test_plan(copy.definition, copy.config, now()) do
-      test_page(indexer, copy, page, context, record, Session.start(copy))
+      test_page(indexer, copy, page, {context, captcha}, record, Session.start(copy))
     else
       {:not_supported, feature} -> {:not_run, {:not_asked, {:not_supported, feature}}}
       {:error, reason} -> {:ran, record.(reason)}
     end
   end
 
-  defp test_page(indexer, copy, page, context, record, nil) do
+  defp test_page(indexer, copy, page, {context, _captcha}, record, nil) do
     fun = fn ->
       request = copy.request.(context, now())
 
@@ -435,15 +458,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   end
 
   # A definition with a login: its session in the Test's slots, which no rejected credentials
-  # close, and the answer recorded once its last request answered.
-  defp test_page(indexer, copy, page, context, record, session) do
-    run = %{
-      indexer: indexer,
-      copy: copy,
-      context: context,
-      hold: &Indexer.leased(indexer, context, &1, gate: false, delay_ms: copy.delay_ms),
-      record?: false
-    }
+  # close, and the answer recorded once its last request answered. A Test that carries a
+  # captcha answer logs in with it (`Session.load/2`).
+  defp test_page(indexer, copy, page, {context, captcha}, record, session) do
+    run =
+      %{
+        indexer: indexer,
+        copy: copy,
+        context: context,
+        hold: &Indexer.leased(indexer, context, &1, gate: false, delay_ms: copy.delay_ms),
+        record?: false
+      }
+      |> then(&if(captcha, do: Map.put(&1, :captcha, captcha), else: &1))
 
     finish = fn answer, request, _now -> test_answer(answer, copy, page, context, request) end
 
@@ -453,6 +479,66 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
       {:not_run, outcome} -> {:not_run, outcome}
     end
   end
+
+  # --- the image captcha (#1681) ---
+
+  @doc """
+  Loads the image captcha of `indexer`'s `form` login (`Login.load_captcha/2`), each request in
+  the Test's slot, with no gate, so a load runs while the indexer's credentials read rejected.
+  Answers what `Login.load_captcha/2` loaded with the `binding` it ran under (the base URL and
+  the running copy's hash), `{:error, :no_captcha}` with no request for a running copy whose
+  login has no image captcha, `{:error, {:not_supported, feature}}` for a copy that does not
+  run, `{:error, :deadline}` when a request never left the slot queue, or the load's error.
+  Records nothing in `IndexerStatus`: a load is no login answer.
+  """
+  @impl Indexer
+  @spec load_captcha(ConfiguredIndexer.t(), Indexer.context()) :: {:ok, map()} | {:error, term()}
+  def load_captcha(%ConfiguredIndexer{} = indexer, context) do
+    with {:ok, copy} <- copy(indexer),
+         true <- image_captcha?(copy.definition) || {:error, :no_captcha} do
+      hold = &Indexer.leased(indexer, context, &1, gate: false, delay_ms: copy.delay_ms)
+
+      case Login.load_captcha(copy, %{context: context, hold: hold}) do
+        {:ok, loaded} -> {:ok, Map.put(loaded, :binding, Session.captcha_binding(copy))}
+        {:not_run, _outcome} -> {:error, :deadline}
+        {:unsent, class} -> {:error, class}
+        {:error, class} -> {:error, class}
+      end
+    else
+      {:not_supported, feature} -> {:error, {:not_supported, feature}}
+      {:error, :no_captcha} -> {:error, :no_captcha}
+    end
+  end
+
+  @doc """
+  The errors of a captcha load that are the captcha's own, besides a failure class, `:deadline`
+  and `{:not_supported, feature}`: as `load_captcha/2` and `Login.load_captcha/2` answer them.
+  """
+  @spec captcha_errors() :: [term()]
+  def captcha_errors,
+    do: [:no_captcha, :captcha_not_found, {:captcha_image, :type}, {:captcha_image, :too_large}]
+
+  @doc """
+  The binding a captcha session of `indexer` is taken under now (`Session.captcha_binding/1`):
+  its running copy's base URL and hash, or `:error` for a copy that does not run.
+  """
+  @spec captcha_binding(ConfiguredIndexer.t()) :: {:ok, map()} | :error
+  def captcha_binding(%ConfiguredIndexer{type: :cardigann} = indexer) do
+    case copy(indexer) do
+      {:ok, copy} -> {:ok, Session.captcha_binding(copy)}
+      {:not_supported, _feature} -> :error
+    end
+  end
+
+  def captcha_binding(_indexer), do: :error
+
+  @doc """
+  Whether `definition` logs in through a `form` login that shows an image captcha (#1681): the
+  one login whose captcha a load shows and an answer carries.
+  """
+  @spec image_captcha?(map() | nil) :: boolean()
+  def image_captcha?(%{login: %{method: "form", captcha: %{type: "image"}}}), do: true
+  def image_captcha?(_definition), do: false
 
   defp test_answer(answer, copy, test_page, context, request) do
     with {:ok, fetched} <- answer,

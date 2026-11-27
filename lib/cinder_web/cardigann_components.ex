@@ -11,7 +11,7 @@ defmodule CinderWeb.CardigannComponents do
   """
   use CinderWeb, :html
 
-  alias CinderWeb.{CardigannDialog, DefinitionText, LiveHelpers}
+  alias CinderWeb.{CardigannDialog, DefinitionText, IndexerCaptcha, LiveHelpers}
 
   @doc """
   The words of a time on the definitions line: "14:07", or "Nov 27 at 14:07" on another
@@ -248,6 +248,7 @@ defmodule CinderWeb.CardigannComponents do
   def host(host) when is_binary(host), do: host
 
   attr :dialog, :map, required: true
+  attr :captcha, :map, default: nil, doc: "the Edit dialog's captcha (`CinderWeb.IndexerCaptcha`)"
   attr :myself, :any, required: true
 
   @doc "The Cardigann form of the Add and Edit dialogs (`CinderWeb.CardigannDialog`)."
@@ -337,6 +338,20 @@ defmodule CinderWeb.CardigannComponents do
           control={control}
         />
 
+        <p
+          :if={@dialog.mode == :add and CardigannDialog.captcha?(@dialog)}
+          id="indexer-form-captcha-after-save"
+          class="mb-2 text-sm"
+        >
+          {gettext("Save this indexer first, then solve its captcha here.")}
+        </p>
+        <.captcha
+          :if={@dialog.mode == :edit and CardigannDialog.captcha?(@dialog)}
+          dialog={@dialog}
+          captcha={@captcha}
+          myself={@myself}
+        />
+
         <.input
           type="number"
           field={@form[:priority]}
@@ -385,6 +400,69 @@ defmodule CinderWeb.CardigannComponents do
         </div>
       </.form>
     </div>
+    """
+  end
+
+  attr :dialog, :map, required: true
+  attr :captcha, :map, default: nil
+  attr :myself, :any, required: true
+
+  # The Edit dialog's captcha (#1681). One button loads it and loads a new one; it is disabled
+  # while a load runs, and the load's end moves focus to the answer input or back to it. The
+  # answer input posts under `captcha`, which `config :phoenix, :filter_parameters` filters from
+  # the logs. Its id is new on each load (`CinderWeb.IndexerCaptcha`), and `phx-update="ignore"`
+  # keeps what the admin typed through every other patch of the dialog.
+  defp captcha(assigns) do
+    assigns =
+      assign(assigns,
+        loading?: IndexerCaptcha.loading?(assigns.captcha),
+        shown?: IndexerCaptcha.shown?(assigns.captcha),
+        message: assigns.captcha && assigns.captcha.message
+      )
+
+    ~H"""
+    <fieldset id="indexer-form-captcha" class="fieldset mb-2">
+      <legend class="fieldset-legend">{gettext("Captcha")}</legend>
+      <p class="text-sm text-base-content/70">
+        {gettext(
+          "The site asks for a captcha at login. Show it, type its answer, then save: Cinder logs in with the answer."
+        )}
+      </p>
+      <p :if={@message} id="indexer-form-captcha-message" role="alert" class="text-sm text-error">
+        {@message}
+      </p>
+      <img
+        :if={@shown?}
+        id="indexer-form-captcha-image"
+        src={@captcha.src}
+        alt={gettext("Captcha from %{name}", name: @dialog.values["name"])}
+        class="max-w-full rounded-box border border-base-content/20 bg-base-100"
+      />
+      <.input
+        :if={@shown?}
+        type="text"
+        id={IndexerCaptcha.answer_id(@captcha)}
+        name="captcha[answer]"
+        value={nil}
+        label={gettext("Captcha answer")}
+        autocomplete="off"
+        phx-update="ignore"
+      />
+      <div>
+        <.button
+          type="button"
+          variant="neutral"
+          size="sm"
+          id="indexer-form-captcha-load"
+          phx-click="load_captcha"
+          phx-target={@myself}
+          disabled={@loading?}
+        >
+          <span :if={@loading?} class="loading loading-spinner loading-xs" aria-hidden="true" />
+          {if @shown?, do: gettext("New captcha"), else: gettext("Show captcha")}
+        </.button>
+      </div>
+    </fieldset>
     """
   end
 

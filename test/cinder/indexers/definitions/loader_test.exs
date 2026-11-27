@@ -204,9 +204,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     # 5 the grab's download block (#1672), revision 6 the JSON and XML answers, the charsets and
     # the pinned certificates (#1678), revision 7 the remaining search and download keys (#1679),
     # revision 8 the post, get, form and cookie logins (#1680), revision 9 each copy's display name
-    # (#1676), revision 10 the fuzzytime filter and FromUnknown's date forms (#1802).
-    test "fingerprint/0 declares schema version 12 and revision 10" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 10}
+    # (#1676), revision 10 the fuzzytime filter and FromUnknown's date forms (#1802), revision 11
+    # the image captcha on a form login (#1681).
+    test "fingerprint/0 declares schema version 12 and revision 11" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 11}
     end
 
     # #1679's acceptance: every key the slice lifts, in one HTML definition, loads with no code,
@@ -772,7 +773,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       end
     end
 
-    test "the post, get, form and cookie logins load; oneurl and a captcha do not (#1680)" do
+    test "the post, get, form and cookie logins load; oneurl does not (#1680)" do
       for method <- ~w(post get form cookie) do
         assert {:ok, definition} = load_with(["login"], %{"method" => method, "path" => "/l"})
         assert {method, definition.login.method, definition.unsupported} == {method, method, []}
@@ -780,11 +781,27 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
 
       assert {:ok, %{unsupported: [{:login, "oneurl"}]}} =
                load_with(["login"], %{"method" => "oneurl"})
+    end
 
-      captcha = %{"type" => "image", "selector" => "img", "input" => "c"}
+    # #1681: the admin solves an image captcha in the indexer form, on a `form` login only, as
+    # Prowlarr reads `login.captcha` only on its landing page. Every v11 captcha is an image on a
+    # `form` login.
+    test "an image captcha on a form login loads; a text captcha or another method does not" do
+      image = %{"type" => "image", "selector" => "img", "input" => "c"}
+
+      assert {:ok, %{unsupported: [], login: %{captcha: %{type: "image", input: "c"}}}} =
+               load_with(["login"], %{"method" => "form", "captcha" => image})
 
       assert {:ok, %{unsupported: [:login_captcha]}} =
-               load_with(["login"], %{"method" => "form", "captcha" => captcha})
+               load_with(["login"], %{
+                 "method" => "form",
+                 "captcha" => %{image | "type" => "text"}
+               })
+
+      for method <- ~w(post get cookie) do
+        assert {:ok, definition} = load_with(["login"], %{"method" => method, "captcha" => image})
+        assert {method, definition.unsupported} == {method, [:login_captcha]}
+      end
     end
 
     test "a null login stays absent" do
@@ -1252,7 +1269,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
        %{
          "method" => "form",
          "captcha" => %{"type" => "image", "selector" => "img", "input" => "c"}
-       }, [:login_captcha]},
+       }, []},
       {["login"],
        %{"method" => "form", "captcha" => %{"type" => "text", "selector" => "p", "input" => "c"}},
        [:login_captcha]},

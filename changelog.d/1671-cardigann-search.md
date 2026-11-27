@@ -8,8 +8,8 @@
   reads at most 2 MiB, inflated when the site sends gzip. A secret setting that is not blank and
   differs from its default goes only to a host that the indexer's base URL, definition or
   settings name, and a row whose link holds it is dropped unless the link is a web address on
-  such a host. A definition with a feature Cinder does not run yet, such as a sign-in with a
-  captcha, reads "not supported" and gets no request.
+  such a host. A definition with a feature Cinder does not run yet, such as a `oneurl` sign-in,
+  reads "not supported" and gets no request.
 - `mix cinder.definitions.canary` also sends one fixed query through each of the Nyaa.si and
   Torrent9 definitions that loads, prints the feature of one that reads "not supported"
   instead, and fails when a fixed query fails, gives no row, or drops a row for a missing title

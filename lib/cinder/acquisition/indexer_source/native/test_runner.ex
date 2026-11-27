@@ -34,11 +34,13 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @doc """
-  Starts the Test of the configured indexer `id`: `:ok`, or `{:error, :running}` when a Test of
-  that indexer still runs, which starts nothing.
+  Starts the Test of the configured indexer `id`, with `opts` as `Native.test_indexer/2` takes
+  them (a captcha answer, #1681): `:ok`, or `{:error, :running}` when a Test of that indexer
+  still runs, which starts nothing.
   """
-  @spec start(pos_integer()) :: :ok | {:error, :running}
-  def start(id) when is_integer(id), do: GenServer.call(__MODULE__, {:start, id})
+  @spec start(pos_integer(), keyword()) :: :ok | {:error, :running}
+  def start(id, opts \\ []) when is_integer(id) and is_list(opts),
+    do: GenServer.call(__MODULE__, {:start, id, opts})
 
   @doc "The ids of the configured indexers whose Test runs now."
   @spec running() :: MapSet.t(pos_integer())
@@ -63,11 +65,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
 
   # The state maps each running task's monitor ref to its indexer id.
   @impl true
-  def handle_call({:start, id}, _from, tasks) do
+  def handle_call({:start, id, opts}, _from, tasks) do
     if id in Map.values(tasks) do
       {:reply, {:error, :running}, tasks}
     else
-      task = Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn -> test(id) end)
+      task = Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn -> test(id, opts) end)
 
       broadcast({__MODULE__, :started, id})
       {:reply, :ok, Map.put(tasks, task.ref, id)}
@@ -89,9 +91,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunner do
 
   # The Test parses its answer in this task, a Cardigann JSON or XML page included (#1678), so it
   # runs under the search processes' heap cap: a kill reads as `{:error, :crashed}`.
-  defp test(id) do
+  defp test(id, opts) do
     Process.flag(:max_heap_size, Native.max_heap_size())
-    Native.test_indexer(id)
+    Native.test_indexer(id, opts)
   end
 
   # The mark clears before the finish goes out, so a subscriber that asks `running/0` on the

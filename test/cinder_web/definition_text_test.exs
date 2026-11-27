@@ -56,11 +56,14 @@ defmodule CinderWeb.DefinitionTextTest do
     {:replaced_by, "newer.yml", @at}
   ]
 
-  # A refused Cardigann login (#1680): its state's detail and its Test outcome. The password
-  # methods share one text on purpose, as `IndexerStateText.detail/2` words them.
-  @login_states for method <- [:post, :get, :form, :cookie],
-                    do: {:credentials_rejected, {:login_rejected, method}}
-  @login_outcomes [:login_rejected, :cookie_rejected]
+  # A refused Cardigann login (#1680) and one that met its image captcha (#1681): its state's
+  # detail and its Test outcome. The password methods share one text on purpose, as
+  # `IndexerStateText.detail/2` words them.
+  @login_states for(
+                  method <- [:post, :get, :form, :cookie],
+                  do: {:credentials_rejected, {:login_rejected, method}}
+                ) ++ [{:credentials_rejected, :captcha_required}]
+  @login_outcomes [:login_rejected, :cookie_rejected, :captcha_required, :captcha_expired]
 
   # The Cardigann form's refusals, `{field, validation}` (`Cinder.Indexers`,
   # `Cinder.Indexers.CardigannSettings`).
@@ -98,7 +101,11 @@ defmodule CinderWeb.DefinitionTextTest do
       for(code <- hold_reasons(), do: {:hold_reason, code, DefinitionText.hold_reason(code)}) ++
       for(code <- fetch_errors(), do: {:fetch_error, code, DefinitionText.fetch_error(code)}) ++
       for(code <- run_outcomes(), do: {:run_outcome, code, DefinitionText.run_outcome(code)}) ++
-      for(tag <- Grab.failure_tags(), do: {:grab_failure, tag, DefinitionText.grab_failure(tag)})
+      for(tag <- Grab.failure_tags(), do: {:grab_failure, tag, DefinitionText.grab_failure(tag)}) ++
+      for(
+        code <- Cardigann.captcha_errors(),
+        do: {:captcha_error, code, DefinitionText.captcha_error(code)}
+      )
   end
 
   defp state_walk do

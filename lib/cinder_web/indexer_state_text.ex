@@ -78,6 +78,10 @@ defmodule CinderWeb.IndexerStateText do
   def detail({:credentials_rejected, {:login_rejected, _method}}, _now),
     do: gettext("Login rejected: check the username and password in Settings")
 
+  # A Cardigann login that met its image captcha with no answer (#1681).
+  def detail({:credentials_rejected, :captcha_required}, _now),
+    do: gettext("Login needs a captcha: solve it in Settings")
+
   def detail({:credentials_rejected, _by}, _now),
     do: gettext("API key rejected: update it in Settings")
 

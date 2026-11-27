@@ -106,7 +106,16 @@ defmodule Cinder.Acquisition.Indexer do
   @callback fetch_download(ConfiguredIndexer.t(), url :: String.t(), opts :: keyword()) ::
               {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
 
-  @optional_callbacks fetch_download: 3
+  @doc """
+  Loads the image captcha of one configured indexer's login for the admin to solve (#1681), in
+  `context`'s class, with no backoff gate. Answers what a captcha session stores (`binding`,
+  `jar`, `landing`, `form`) beside the image's bytes and type (`image`, `mime`), or `{:error,
+  reason}`. An adapter without it loads none
+  (`Cinder.Acquisition.IndexerSource.Native.load_captcha/1`).
+  """
+  @callback load_captcha(ConfiguredIndexer.t(), context()) :: {:ok, map()} | {:error, term()}
+
+  @optional_callbacks fetch_download: 3, load_captcha: 2
 
   # Newznab and Torznab give each request 30 s of its own.
   @request_timeout_ms 30_000

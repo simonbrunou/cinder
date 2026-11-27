@@ -28,9 +28,11 @@ defmodule Cinder.Acquisition.IndexerSourceTest do
     assert Code.ensure_loaded?(IndexerSource.Prowlarr)
 
     assert Enum.sort(@old_behaviour.behaviour_info(:callbacks)) ==
-             [fetch_download: 3, search: 3, test: 3]
+             [fetch_download: 3, load_captcha: 2, search: 3, test: 3]
 
-    assert @old_behaviour.behaviour_info(:optional_callbacks) == [fetch_download: 3]
+    assert Enum.sort(@old_behaviour.behaviour_info(:optional_callbacks)) ==
+             [fetch_download: 3, load_captcha: 2]
+
     refute Code.ensure_loaded?(@old_prowlarr)
   end
 

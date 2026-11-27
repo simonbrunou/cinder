@@ -107,6 +107,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
   - #1680: the `post`, `get`, `form` and `cookie` logins (`{:login, method}`) with every login
     key but `captcha`, and the `info_cookie` setting type, a text the settings form shows,
     which every v11 `cookie` login declares.
+  - #1681: a `login.captcha` of `type: image` on a `form` login, which the admin solves in the
+    indexer form. Another type, or a captcha on another method, reads `login_captcha`.
 
   Every other flag is off: `{:login, "oneurl"}` and `login_captcha` among them. Some codes that
   are off are reported only for some uses:
@@ -145,7 +147,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
   #    boot re-check fills in for every stored copy.
   # 10: the `fuzzytime` filter loads, and a `date` field reads more of the dates Prowlarr's
   #     `FromUnknown` reads (#1802).
-  @revision 10
+  # 11: an image captcha on a `form` login loads (#1681).
+  @revision 11
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -843,12 +846,14 @@ defmodule Cinder.Indexers.Definitions.Loader do
         do: {:login, login.method},
         else: {:unknown_value, :login_method}
 
-    [method | captcha_uses(login.captcha)]
+    [method | captcha_uses(login.captcha, login.method)]
   end
 
-  defp captcha_uses(nil), do: []
-  defp captcha_uses(%{type: type}) when type in @captcha_types, do: [:login_captcha]
-  defp captcha_uses(_captcha), do: [:login_captcha, {:unknown_value, :captcha_type}]
+  # #1681 solves an image captcha on a `form` login, where Prowlarr reads it on the landing page.
+  defp captcha_uses(nil, _method), do: []
+  defp captcha_uses(%{type: "image"}, "form"), do: []
+  defp captcha_uses(%{type: type}, _method) when type in @captcha_types, do: [:login_captcha]
+  defp captcha_uses(_captcha, _method), do: [:login_captcha, {:unknown_value, :captcha_type}]
 
   defp search_uses(search) do
     [

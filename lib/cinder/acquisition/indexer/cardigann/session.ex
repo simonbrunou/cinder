@@ -31,7 +31,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
   alias Cinder.Acquisition.Indexer.Cardigann.{Fetch, Login}
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
-  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCookies, IndexerStatus}
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaptchas, IndexerCookies, IndexerStatus}
 
   @type t :: %{
           jar: Cinder.Acquisition.Indexer.Cardigann.Jar.t(),
@@ -53,6 +53,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
           optional(:request) => map()
         }
 
+  @doc """
+  The binding a captcha session of `copy` is stored and taken under (#1681): the base URL the
+  copy runs under and the running copy's hash.
+  """
+  @spec captcha_binding(map()) :: IndexerCaptchas.binding()
+  def captcha_binding(copy),
+    do: %{address: copy.config.base_url, blob_sha: Map.get(copy, :blob_sha)}
+
   @doc "The session a request chain of `copy` starts with: nil for a definition with no login."
   @spec start(map()) :: :unloaded | nil
   def start(%{definition: %{login: %{}}}), do: :unloaded
@@ -63,6 +71,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
   login when it reads none. Answers `{:ok, session}`, `{:error, class}` or `{:not_run, outcome}`.
   """
   @spec load(run(), :unloaded | t()) :: {:ok, t()} | {:error, term()} | {:not_run, term()}
+  # A run that carries a captcha answer logs in with it, whatever row is stored.
+  def load(%{captcha: %{}} = run, :unloaded), do: login(run, nil)
+
   def load(run, :unloaded) do
     case IndexerCookies.read(run.indexer, now()) do
       {:ok, stored} -> {:ok, Map.put(stored, :logged_in?, false)}
@@ -108,16 +119,29 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
       request: Map.get(run, :request, %{})
     }
 
-    login_answer(run, Login.run(run.copy, opts))
+    login_answer(run, Login.run(run.copy, with_captcha(opts, run)))
   end
+
+  # The captcha answer's login (#1681): the load's session, taken inside the hold of the
+  # login's first request, and the answer.
+  defp with_captcha(opts, %{captcha: %{token: token, answer: answer}} = run) do
+    take = fn -> IndexerCaptchas.take(run.indexer.id, token, captcha_binding(run.copy), now()) end
+    Map.put(opts, :captcha, %{take: take, answer: answer})
+  end
+
+  defp with_captcha(opts, _run), do: opts
 
   defp login_answer(_run, {:logged_in, session}), do: {:ok, session}
   defp login_answer(_run, {:fresh, stored}), do: {:ok, Map.put(stored, :logged_in?, true)}
   defp login_answer(_run, {:rejected, method}), do: {:error, rejected(method)}
   defp login_answer(_run, {:error, class}), do: {:error, class}
   defp login_answer(_run, {:not_run, outcome}), do: {:not_run, outcome}
-  # A login that failed before its first request, so no hold recorded it.
-  defp login_answer(run, {:unsent, class}), do: {:error, record(run, class, now())}
+  # A login that failed before its first request, so no hold recorded it; a captcha session it
+  # never took is discarded, since its answer is gone with this run.
+  defp login_answer(run, {:unsent, class}) do
+    if Map.has_key?(run, :captcha), do: IndexerCaptchas.delete(run.indexer.id)
+    {:error, record(run, class, now())}
+  end
 
   # `Login.run/2`'s `fresh`: the stored row when it holds a login other than the one this
   # session already used.
@@ -146,6 +170,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
     record(run, rejected(method), now())
     done
   end
+
+  defp held_login(run, {:done, :captcha_required}),
+    do: {:done, {:error, record(run, captcha_required(), now())}}
+
+  defp held_login(run, {:done, :captcha_expired}),
+    do: {:done, {:error, record(run, :captcha_expired, now())}}
 
   defp held_login(run, {:done, {:error, class}}), do: {:done, {:error, record(run, class, now())}}
   defp held_login(_run, step), do: step
@@ -206,6 +236,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Session do
   end
 
   defp rejected(method), do: {:rejected_credentials, {:login_rejected, method}}
+
+  # A `form` login whose landing page shows the definition's image captcha, with no answer from
+  # the admin (#1681): rejected credentials, so no request goes out until an edit or a Test.
+  defp captcha_required, do: {:rejected_credentials, :captcha_required}
 
   # Records `class` when the run records, and answers it with a limit's wait ended as the
   # status ends it, as a search page's answer is recorded.

@@ -71,6 +71,21 @@ defmodule Cinder.Acquisition.IndexerSource.Native.TestRunnerTest do
     assert last_test(indexer.id) == nil
   end
 
+  # #1681: the answer of a captcha load reaches the adapter in the Test's context, as a function.
+  test "a start that carries a captcha answer hands it to the adapter's Test" do
+    indexer = indexer!(:newznab, "nzb.example")
+    test_pid = self()
+
+    Mox.stub(IndexerAdapterMock, :test, fn _indexer, context, record ->
+      send(test_pid, {:captcha, context.captcha.token, context.captcha.answer.()})
+      {:ran, record.(:test_success)}
+    end)
+
+    assert TestRunner.start(indexer.id, captcha: %{token: "t0k", answer: fn -> "XyZ" end}) == :ok
+    assert_receive {:captcha, "t0k", "XyZ"}
+    assert_receive {TestRunner, :finished, _id, {:ok, %{outcome: :success}}}
+  end
+
   test "a second start while the Test runs starts nothing" do
     indexer = indexer!(:newznab, "nzb.example")
 

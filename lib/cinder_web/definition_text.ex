@@ -15,12 +15,15 @@ defmodule CinderWeb.DefinitionText do
   - `fetch_error/1`: the last error of the update job.
   - `run_outcome/1`: how an update run ended.
   - `grab_failure/1`: the tag of a `{:cardigann_grab, tag}` grab error.
+  - `captcha_error/1`: an error of a captcha load (#1681), nil for one that is no captcha's own.
 
   Each function's last clause is its fallback, a text that names no code, and `fallback?/2` says
   whether a text is that fallback. Definition text (a filter or login name, a version number) is
   shown as it is and never passes through gettext.
   """
   use Gettext, backend: CinderWeb.Gettext
+
+  alias Cinder.Acquisition.Indexer.Cardigann.Login
 
   @doc "The words for a feature code."
   @spec feature(term()) :: String.t()
@@ -177,7 +180,35 @@ defmodule CinderWeb.DefinitionText do
 
   def failure(:too_many_redirects), do: gettext("Too many redirects")
   def failure(:definition_error), do: gettext("The definition's templates failed")
+
+  # The Test outcomes of a login that met its image captcha (#1681).
+  def failure(:captcha_required), do: gettext("Login needs a captcha")
+  def failure(:captcha_expired), do: gettext("The captcha expired: show a new one")
   def failure(_reason), do: nil
+
+  @doc """
+  The words for an error of a captcha load (#1681) that is the captcha's own
+  (`Cinder.Acquisition.Indexer.Cardigann.captcha_errors/0`), or an HTTP status the image or the
+  login page answered; nil for any other reason, which `CinderWeb.IndexerStateText.cause/1`
+  words.
+  """
+  @spec captcha_error(term()) :: String.t() | nil
+  def captcha_error(:no_captcha), do: gettext("This indexer's login asks for no captcha.")
+  def captcha_error(:captcha_not_found), do: gettext("The site sent no captcha image.")
+
+  def captcha_error({:captcha_image, :type}),
+    do: gettext("The captcha image could not be shown: it is no PNG, JPEG, GIF or WebP image.")
+
+  def captcha_error({:captcha_image, :too_large}),
+    do:
+      gettext("The captcha image could not be shown: it is larger than %{size} MiB.",
+        size: div(Login.max_image_bytes(), 1_048_576)
+      )
+
+  def captcha_error({:http_status, status}) when is_integer(status),
+    do: gettext("The site answered HTTP %{status} for the captcha.", status: status)
+
+  def captcha_error(_reason), do: nil
 
   @doc """
   The words for the tag of a `{:cardigann_grab, tag}` grab error
@@ -255,6 +286,6 @@ defmodule CinderWeb.DefinitionText do
 
   @doc "Whether `text` is the fallback of `function` (`:feature`, `:hold_reason`, ...)."
   @spec fallback?(atom(), String.t() | nil) :: boolean()
-  def fallback?(:failure, text), do: text == nil
+  def fallback?(function, text) when function in [:failure, :captcha_error], do: text == nil
   def fallback?(function, text), do: text == apply(__MODULE__, function, [:__no_such_code__])
 end

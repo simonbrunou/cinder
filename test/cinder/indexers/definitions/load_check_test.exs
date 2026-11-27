@@ -35,7 +35,11 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       "path" => "/l",
       "form" => "login-form",
       "test" => %{"path" => "/t", "selector" => "login-test"},
-      "captcha" => %{"type" => "image", "selector" => "login-captcha", "input" => "c"},
+      "captcha" => %{
+        "type" => "image",
+        "selector" => "login-captcha",
+        "input" => "login-captcha-input"
+      },
       "selectors" => true,
       "inputs" => %{"login-key" => "{{ .Config.username }}"},
       "error" => [%{"selector" => "login-error", "message" => %{"selector" => "login-message"}}],
@@ -91,8 +95,8 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
 
   defp slot_paths(_value, _path), do: []
 
-  @login_and_download ~w(login-form login-test login-captcha login-key login-error login-message
-                         login-input login-get dl-one dl-two dl-before dl-hash dl-title
+  @login_and_download ~w(login-form login-test login-captcha login-key login-captcha-input
+                         login-error login-message login-input login-get dl-one dl-two dl-before dl-hash dl-title
                          dl-one-x dl-hash-x)
 
   describe "selectors/1" do
@@ -111,14 +115,15 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       assert Enum.take(search, -2) == ~w(s-error s-message)
     end
 
-    test "a login.inputs key is a selector only with login.selectors on" do
+    test "a login.inputs key and captcha.input are selectors only with login.selectors on" do
       copy = put_in(every_place_copy([%{"path" => "/"}]), ["login", "selectors"], false)
       {:ok, definition} = Loader.load(yaml(copy))
       off = LoadCheck.selectors(definition)
       on = LoadCheck.selectors(every_place([%{"path" => "/"}]))
 
       assert "login-key" in on
-      assert List.delete(on, "login-key") == off
+      assert "login-captcha-input" in on
+      assert on -- ["login-key", "login-captcha-input"] == off
     end
 
     test "skips the search places when every path answers JSON or XML" do

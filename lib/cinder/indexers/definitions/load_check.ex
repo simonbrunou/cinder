@@ -13,9 +13,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     those of `dateheaders`; `count` is read on a JSON page only), each `search.fields` entry's
     `selector`, `remove` and `case` keys, and each `search.error` entry's `selector` and `message` selector. A JSON or XML
     copy's selectors there are paths for another reader (#1678);
-  - `login`: `form`, `test.selector`, `captcha.selector`, each `inputs` key when `selectors` is
-    on (#1680), each `error` entry's `selector` and `message` selector, and every
-    `selectorinputs` and `getselectorinputs` selector;
+  - `login`: `form`, `test.selector`, `captcha.selector`, each `inputs` key and `captcha.input`
+    when `selectors` is on (#1680, #1681), each `error` entry's `selector` and `message`
+    selector, and every `selectorinputs` and `getselectorinputs` selector;
   - `download`: each `selectors` entry, `before.pathselector` and `infohash`'s `hash` and
     `title`, then the `remove` of each `selectors` entry and of `hash` and `title` (#1679).
 
@@ -437,12 +437,16 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   defp login_selectors(nil), do: []
 
   # With `login.selectors` on, each `login.inputs` key is a selector the form login reads its
-  # input's name with (#1680).
+  # input's name with (#1680), and so is `captcha.input` (#1681).
   defp login_selectors(login) do
     input_keys = if login.selectors, do: for({key, _value} <- login.inputs, do: key), else: []
 
+    captcha_input =
+      if login.selectors and login.captcha, do: [login.captcha.input], else: []
+
     [login.form, login.test && login.test.selector, login.captcha && login.captcha.selector] ++
       input_keys ++
+      captcha_input ++
       Enum.flat_map(login.error, &error_selectors/1) ++
       Enum.flat_map(login.selectorinputs ++ login.getselectorinputs, fn {_name, input} ->
         block(input)

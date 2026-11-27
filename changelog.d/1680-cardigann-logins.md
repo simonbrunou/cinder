@@ -20,4 +20,6 @@
   otherwise records that failure, or the indexer's limit, as a search does. The login inputs,
   the cookies and the login headers go only to the indexer's own hosts, and no login request
   is retried. The loader loads these logins and the `info_cookie` setting type, and raised its
-  revision to 8. A login with a `captcha` block and a `oneurl` login still read as not supported.
+  revision to 8. A `oneurl` login still reads as not supported, and so does a login with a
+  `captcha` block, except an image captcha on a `form` login: when the login page shows it,
+  #1681 stops the login before it sends the form and lets you solve the captcha in Settings.

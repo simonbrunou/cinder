@@ -71,6 +71,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
   @worker_ms 30_000
   @methods %{"post" => :post, "get" => :get, "form" => :form, "cookie" => :cookie}
   @captcha_path "simpleCaptcha.php?numImages=1"
+  @max_image_bytes 1_048_576
 
   @type method :: :post | :get | :form | :cookie
   @type answer :: {:ok, Jar.t()} | {:rejected, method()} | {:error, term()}
@@ -128,8 +129,19 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
   @spec run(map(), map()) ::
           answer() | {:fresh, term()} | {:not_run, term()} | {:unsent, term()} | term()
   def run(copy, opts) do
-    method = method(copy.definition)
+    case start(copy, opts) do
+      {:ok, state} -> steps(state, plan(method(copy.definition), copy, opts), opts)
+      {:error, class} -> {:unsent, class}
+    end
+  end
 
+  # A `form` login that carries the admin's captcha answer (#1681) sends no landing page and
+  # reads no fresh row: the load's session gives the page, taken inside the hold of the first
+  # request, the `simpleCaptcha` GET or the submit.
+  defp plan(:form, copy, %{captcha: captcha}),
+    do: [&resumed(&1, copy, captcha), &submit_form(&1, copy)]
+
+  defp plan(method, copy, opts) do
     first = fn state ->
       case opts.fresh.() do
         {:use, session} -> {:done, {:fresh, session}}
@@ -137,10 +149,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
       end
     end
 
-    case start(copy, opts) do
-      {:ok, state} -> steps(state, [first | later_steps(method, copy)], opts)
-      {:error, class} -> {:unsent, class}
-    end
+    [first | later_steps(method, copy)]
   end
 
   defp steps(state, [step | rest], opts) do
@@ -312,6 +321,19 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
   # --- form ---
 
   defp landing(copy, state) do
+    with {:ok, page, form, state} <- landed(copy, state),
+         :no_captcha <- form.image_captcha,
+         {:ok, pairs} <- form_pairs(form, copy.definition.login, state) do
+      {:next, Map.merge(state, %{landing: page.uri, form: Map.put(form, :pairs, pairs)})}
+    else
+      {:error, class} -> {:done, {:error, class}}
+      # Prowlarr's "Found captcha during automatic login, aborting" (#1681).
+      %{} -> {:done, :captcha_required}
+    end
+  end
+
+  # The landing page fetched and its form read, its `Set-Cookie` in the state's jar.
+  defp landed(copy, state) do
     login = copy.definition.login
 
     with {:ok, uri} <- Query.resolve(copy.config.base_url, login.path || ""),
@@ -323,15 +345,16 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
            ),
          state = %{state | jar: jar},
          {:ok, form} <- read_form(page, copy, state) do
-      {:next, Map.merge(state, %{landing: page.uri, form: form})}
+      {:ok, page, form, state}
     else
-      {{:error, class}, _jar} -> {:done, {:error, class}}
-      {:error, class} -> {:done, {:error, class}}
+      {{:error, class}, _jar} -> {:error, class}
+      {:error, class} -> {:error, class}
     end
   end
 
   # The landing page read once: the html row first, then each form row and its inputs, in
-  # document order.
+  # document order. The answer holds only what the page gives (`page_form`); the settings join
+  # it in `form_pairs/3`.
   defp read_form(page, copy, state) do
     login = copy.definition.login
     form = String.trim(login.form || "") |> then(&if(&1 == "", do: "form", else: &1))
@@ -340,23 +363,55 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
          {:ok, rows} <- rows(page.body, form_plan(form, keyed), state),
          [html | rest] <- rows,
          html = Map.new(html),
-         {:ok, form_row, inputs} <- first_form(rest),
-         {:ok, pairs} <- form_pairs(inputs, login, keyed, html, state) do
-      {:ok,
-       %{
-         action: Map.get(form_row, "action"),
-         multipart?:
-           String.downcase(String.trim(Map.get(form_row, "enctype") || "")) ==
-             "multipart/form-data",
-         captcha?: Map.get(html, "captcha") != nil,
-         pairs: pairs,
-         query: keyed.get_values |> values_of(html, state)
-       }}
+         {:ok, form_row, inputs} <- first_form(rest) do
+      {:ok, page_form(form_row, inputs, keyed, html, state)}
     else
       [] -> {:error, :parser_failed}
       {:error, class} -> {:error, class}
     end
   end
+
+  # What the landing page gives the form: its action and enctype, its inputs the browser would
+  # send, the names the `login.selectors` keys select, the `selectorinputs` values and the
+  # `getselectorinputs` query, each value read now and each failure kept for the step that
+  # needs it. `page` holds the page's parts these are read from, as strings, which a captcha
+  # session stores so the answered login reads the same form again (`resumed_form/3`).
+  defp page_form(form_row, inputs, keyed, html, state) do
+    %{
+      action: Map.get(form_row, "action"),
+      multipart?:
+        String.downcase(String.trim(Map.get(form_row, "enctype") || "")) ==
+          "multipart/form-data",
+      captcha?: Map.get(html, "captcha") != nil,
+      kept:
+        Enum.reduce(inputs, [], fn input, acc ->
+          if sent_input?(input), do: put_pair(acc, input["name"], input["value"] || ""), else: acc
+        end),
+      names: for({field, _selector} <- keyed.keys, do: html[field]),
+      set: values_of(keyed.set_values, html, state),
+      query: values_of(keyed.get_values, html, state),
+      image_captcha: image_captcha(keyed.captcha, html),
+      page: %{
+        "form_row" => Map.take(form_row, ["action", "enctype"]),
+        "inputs" => Enum.map(inputs, &Map.take(&1, ~w(name type value checked disabled))),
+        "html" => Map.take(html, ["captcha" | Enum.map(keyed.fields, & &1.name)])
+      }
+    }
+  end
+
+  # The element `login.captcha.selector` matches (#1681): `:no_captcha` when the definition has
+  # no captcha or the page shows none, else its `src` and the name its answer goes under, nil
+  # when the page gives none.
+  defp image_captcha(nil, _html), do: :no_captcha
+
+  defp image_captcha(captcha, html) do
+    if html["captcha_seen"] == nil,
+      do: :no_captcha,
+      else: %{src: html["captcha_src"], input: captcha_input(captcha, html)}
+  end
+
+  defp captcha_input(%{selectors?: true}, html), do: html["captcha_input"]
+  defp captcha_input(%{input: input}, _html), do: input
 
   defp form_plan(form, keyed) do
     fields =
@@ -384,18 +439,47 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
         else: []
 
     with {:ok, set} <- selector_fields(login.selectorinputs || [], "set", state),
-         {:ok, get} <- selector_fields(login.getselectorinputs || [], "get", state) do
+         {:ok, get} <- selector_fields(login.getselectorinputs || [], "get", state),
+         {:ok, captcha, captcha_fields} <- captcha_fields(login) do
       {:ok,
        %{
          keys: selector_keys,
          set_values: set,
          get_values: get,
+         captcha: captcha,
          fields:
            for({name, key} <- selector_keys, do: field(name, key, "name")) ++
-             Enum.map(set ++ get, & &1.field)
+             Enum.map(set ++ get, & &1.field) ++ captcha_fields
        }}
     end
   end
+
+  # The image captcha's element, read for its presence and its `src`, and with
+  # `login.selectors` on the element `captcha.input` selects, read for its `name`, as Prowlarr's
+  # `DoLogin` reads it (#1681).
+  defp captcha_fields(%{captcha: %{type: "image", selector: selector} = captcha} = login)
+       when is_binary(selector) do
+    selectors? = login.selectors == true
+    input = captcha.input
+
+    cond do
+      not compiles?(selector) or not is_binary(input) or String.trim(input) == "" ->
+        {:error, :definition_error}
+
+      selectors? and not compiles?(input) ->
+        {:error, :definition_error}
+
+      true ->
+        fields =
+          [field("captcha_seen", selector, nil), field("captcha_src", selector, "src")] ++
+            if(selectors?, do: [field("captcha_input", input, "name")], else: [])
+
+        {:ok, %{input: input, selectors?: selectors?}, fields}
+    end
+  end
+
+  defp captcha_fields(%{captcha: nil}), do: {:ok, nil, []}
+  defp captcha_fields(_login), do: {:error, :definition_error}
 
   defp selector_fields(blocks, prefix, state) do
     blocks
@@ -447,17 +531,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
 
   defp form_row?(row), do: List.keyfind(row, "form", 0) not in [nil, {"form", nil}]
 
-  defp form_pairs(inputs, login, keyed, html, state) do
-    kept =
-      Enum.reduce(inputs, [], fn input, acc ->
-        if sent_input?(input), do: put_pair(acc, input["name"], input["value"] || ""), else: acc
-      end)
-
+  # The pairs the form posts: the page's kept inputs, then `login.inputs` rendered with the
+  # stored settings now, under the names the page gave their keys, then the `selectorinputs`.
+  defp form_pairs(form, login, state) do
     with {:ok, rendered} <- inputs(login.inputs || [], state),
-         {:ok, named} <- input_names(rendered, keyed.keys, html, login.selectors),
-         {:ok, set} <- values_of(keyed.set_values, html, state) do
+         {:ok, named} <- input_names(rendered, form.names, login.selectors),
+         {:ok, set} <- form.set do
       {:ok,
-       Enum.reduce(named ++ set, kept, fn {key, value}, acc -> put_pair(acc, key, value) end)}
+       Enum.reduce(named ++ set, form.kept, fn {key, value}, acc -> put_pair(acc, key, value) end)}
     end
   end
 
@@ -471,12 +552,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
 
   # With `login.selectors` on, each input key is a selector whose element's `name` the value
   # goes under.
-  defp input_names(rendered, _keys, _html, false), do: {:ok, rendered}
+  defp input_names(rendered, _names, false), do: {:ok, rendered}
 
-  defp input_names(rendered, keys, html, true) do
-    Enum.zip(rendered, keys)
-    |> Enum.reduce_while({:ok, []}, fn {{_key, value}, {field, _selector}}, {:ok, acc} ->
-      case html[field] do
+  defp input_names(rendered, names, true) do
+    Enum.zip(rendered, names)
+    |> Enum.reduce_while({:ok, []}, fn {{_key, value}, name}, {:ok, acc} ->
+      case name do
         name when is_binary(name) and name != "" -> {:cont, {:ok, [{name, value} | acc]}}
         _none -> {:halt, {:error, :bad_response}}
       end
@@ -618,6 +699,144 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
       "\n" -> "%0A"
     end)
   end
+
+  # --- the image captcha (#1681) ---
+
+  @doc """
+  Loads the image captcha of `copy`'s `form` login, each request in one call of `opts.hold`
+  (`opts` as `run/2` takes it, with no `fresh`): the landing page, then the image its
+  `login.captcha.selector` element's `src` names, resolved against the landing page's URL. The
+  image goes out with the landing page's cookies and the definition's headers, and the landing
+  page as its `Referer`, each only to a credential host.
+
+  Answers `{:ok, loaded}`, where `loaded` holds the jar after the image's answer, the landing
+  page's URL, the page parts its form was read from (`form`), the image's bytes and its type;
+  `{:error, :captcha_not_found}` when the landing page shows no such element or the element
+  gives no `src` that resolves to an `http` or `https` URL; `{:error, {:captcha_image, :type}}`
+  for an answer whose first bytes are no PNG, JPEG, GIF or WebP, whatever its `content-type`
+  says; `{:error, {:captcha_image, :too_large}}` past `max_image_bytes/0`; otherwise a failure
+  class, `{:not_run, outcome}` or `{:unsent, class}` as `run/2` answers them.
+  """
+  @spec load_captcha(map(), map()) ::
+          {:ok, map()} | {:error, term()} | {:not_run, term()} | {:unsent, term()}
+  def load_captcha(copy, opts) do
+    case start(copy, opts) do
+      {:ok, state} -> steps(state, [&captcha_page(&1, copy), &captcha_image/1], opts)
+      {:error, class} -> {:unsent, class}
+    end
+  end
+
+  @doc "The largest captcha image a load takes, in bytes: 1 MiB."
+  @spec max_image_bytes() :: pos_integer()
+  def max_image_bytes, do: @max_image_bytes
+
+  defp captcha_page(state, copy) do
+    with {:ok, page, form, state} <- landed(copy, state),
+         {:ok, url} <- image_url(form.image_captcha, page.uri) do
+      {:next, Map.merge(state, %{landing: page.uri, form: form, image: url})}
+    else
+      :none -> {:done, {:error, :captcha_not_found}}
+      {:error, class} -> {:done, {:error, class}}
+    end
+  end
+
+  defp image_url(%{src: src}, base) when is_binary(src) do
+    case String.trim(src) do
+      "" -> :none
+      src -> with({:error, _class} <- merged(base, src), do: :none)
+    end
+  end
+
+  defp image_url(_no_captcha, _base), do: :none
+
+  defp captcha_image(state) do
+    outgoing = %{
+      url: URI.to_string(state.image),
+      site_headers: with_headers(state.headers, referer(state.landing)),
+      retry: false
+    }
+
+    case Fetch.send_session(outgoing, state.request, state.jar) do
+      {{:ok, %{body: body}}, jar} when byte_size(body) <= @max_image_bytes ->
+        {:done, image(state, jar, body)}
+
+      {{:ok, _page}, _jar} ->
+        {:done, {:error, {:captcha_image, :too_large}}}
+
+      {{:error, :too_large}, _jar} ->
+        {:done, {:error, {:captcha_image, :too_large}}}
+
+      {{:error, class}, _jar} ->
+        {:done, {:error, class}}
+    end
+  end
+
+  # The load's answer for an image `body` within the cap: the session and the image, when its
+  # first bytes name a type the dialog shows.
+  defp image(state, jar, body) do
+    case image_type(body) do
+      {:ok, mime} ->
+        {:ok,
+         %{
+           jar: jar,
+           landing: URI.to_string(state.landing),
+           form: state.form.page,
+           image: body,
+           mime: mime
+         }}
+
+      :error ->
+        {:error, {:captcha_image, :type}}
+    end
+  end
+
+  # The answered login's first step: the session taken, its form read again with the settings
+  # rendered now and the answer under the captcha's input, then the step's one request.
+  defp resumed(state, copy, captcha) do
+    login = copy.definition.login
+
+    with {:ok, session} <- taken(captcha.take.()),
+         state = %{state | jar: session.jar},
+         {:ok, form} <- resumed_form(session.form, copy, state),
+         {:ok, pairs} <- form_pairs(form, login, state),
+         {:ok, pairs} <- with_answer(pairs, form.image_captcha, captcha.answer) do
+      state =
+        Map.merge(state, %{
+          landing: URI.parse(session.landing),
+          form: Map.put(form, :pairs, pairs)
+        })
+
+      if form.captcha?, do: captcha(state, copy), else: submit_form(state, copy)
+    else
+      :miss -> {:done, :captcha_expired}
+      {:error, class} -> {:done, {:error, class}}
+    end
+  end
+
+  defp taken({:ok, session}), do: {:ok, session}
+  defp taken(:miss), do: :miss
+
+  defp resumed_form(%{"form_row" => row, "inputs" => inputs, "html" => html}, copy, state)
+       when is_map(row) and is_list(inputs) and is_map(html) do
+    with {:ok, keyed} <- keyed_fields(copy.definition.login, state),
+         do: {:ok, page_form(row, inputs, keyed, html, state)}
+  end
+
+  defp resumed_form(_page, _copy, _state), do: {:error, :bad_response}
+
+  defp with_answer(pairs, %{input: input}, answer) when is_binary(input) and input != "",
+    do: {:ok, put_pair(pairs, input, String.trim(answer.()))}
+
+  defp with_answer(_pairs, _captcha, _answer), do: {:error, :bad_response}
+
+  defp image_type(<<0x89, "PNG\r\n", 0x1A, "\n", _rest::binary>>), do: {:ok, "image/png"}
+  defp image_type(<<0xFF, 0xD8, 0xFF, _rest::binary>>), do: {:ok, "image/jpeg"}
+  defp image_type(<<"GIF8", v, "a", _rest::binary>>) when v in [?7, ?9], do: {:ok, "image/gif"}
+
+  defp image_type(<<"RIFF", _size::binary-size(4), "WEBP", _rest::binary>>),
+    do: {:ok, "image/webp"}
+
+  defp image_type(_bytes), do: :error
 
   # --- the login sign ---
 

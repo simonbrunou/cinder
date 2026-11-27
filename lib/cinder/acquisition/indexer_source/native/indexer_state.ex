@@ -19,7 +19,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
      to load on this build.
   5. `{:credentials_rejected, by}`: an answer rejected its credentials; `by` is `{:code, code}`,
      `{:http_status, 401}`, `{:login_rejected, method}` for a refused Cardigann login (#1680),
-     or nil for a rejection with no code.
+     `:captcha_required` for a Cardigann login that met its image captcha with no answer from
+     the admin (#1681), or nil for a rejection with no code.
   6. `{:limit_backoff, until}`: a limit backoff runs until `until`.
   7. `{:failure_backoff, until, last_failure, failures_in_row}`: a failure backoff runs until
      `until`.
@@ -57,6 +58,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
           | {:credentials_rejected,
              {:code | :http_status, integer()}
              | {:login_rejected, :post | :get | :form | :cookie}
+             | :captcha_required
              | nil}
           | {:limit_backoff, DateTime.t()}
           | {:failure_backoff, DateTime.t(), term(), pos_integer()}
@@ -267,6 +269,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
 
   defp rejected_by(%IndexerStatus{credentials_rejected_by: :login_cookie}),
     do: {:login_rejected, :cookie}
+
+  defp rejected_by(%IndexerStatus{credentials_rejected_by: :captcha}), do: :captcha_required
 
   defp rejected_by(%IndexerStatus{credentials_rejected_by: by, credentials_rejected_code: code}),
     do: {by, code}

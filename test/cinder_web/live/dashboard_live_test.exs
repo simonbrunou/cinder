@@ -1085,6 +1085,12 @@ defmodule CinderWeb.DashboardLiveTest do
       :written =
         IndexerStatus.record(unauthorized, {:rejected_credentials, {:http_status, 401}}, @now)
 
+      # A Cardigann login that met its image captcha records this (#1681).
+      captcha = indexer!("Captcha")
+
+      :written =
+        IndexerStatus.record(captcha, {:rejected_credentials, :captcha_required}, @now)
+
       flare = indexer!("Flare", %{flaresolverr: true})
       locked = indexer!("Locked")
       :ok = Cinder.NewznabFixtures.undecryptable!(locked)
@@ -1101,6 +1107,7 @@ defmodule CinderWeb.DashboardLiveTest do
              "Limit reached: searching again on Nov 27 at 09:00 (in 12 h)"},
             {rejected, "text-error", "API key rejected (code 101): update it in Settings"},
             {unauthorized, "text-error", "API key rejected (HTTP 401): update it in Settings"},
+            {captcha, "text-error", "Login needs a captcha: solve it in Settings"},
             {flare, "text-error", "Not supported: FlareSolverr"},
             {locked, "text-error", "Credentials can't be decrypted: re-enter them"}
           ] do
@@ -1114,7 +1121,7 @@ defmodule CinderWeb.DashboardLiveTest do
       for indexer <- [fresh, failing, limited, tomorrow],
           do: assert(has_element?(lv, "#dash-health-status-indexer-#{indexer.id}.badge-warning"))
 
-      for indexer <- [rejected, unauthorized, flare, locked],
+      for indexer <- [rejected, unauthorized, captcha, flare, locked],
           do: assert(has_element?(lv, "#dash-health-status-indexer-#{indexer.id}.badge-error"))
     end
 

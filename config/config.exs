@@ -235,6 +235,8 @@ config :logger, :default_formatter,
 # depth, so the entries name the leaf keys: "indexer", the form's own key, would filter the whole
 # form, its name and priority included. No other param key named in lib/cinder_web, and no
 # Cinder.Settings.Registry key, contains one of these names.
+# "captcha": a Cardigann Edit dialog posts the admin's captcha answer under a "captcha" key
+# (#1681), filtered as a whole map. No other param key named in lib/cinder_web contains it.
 config :phoenix, :filter_parameters, [
   "password",
   "email",
@@ -243,7 +245,8 @@ config :phoenix, :filter_parameters, [
   "secrets",
   "base_url",
   "api_path",
-  "additional_parameters"
+  "additional_parameters",
+  "captcha"
 ]
 
 # i18n: English + French. The active locale is resolved per request/socket by

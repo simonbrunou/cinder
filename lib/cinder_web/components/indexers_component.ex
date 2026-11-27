@@ -35,6 +35,16 @@ defmodule CinderWeb.IndexersComponent do
   gives focus back to the row's Edit. Test is disabled for a row whose running copy reads not
   supported or no longer loads. The parts render through `CinderWeb.CardigannComponents`.
 
+  A Cardigann Edit whose `form` login shows an image captcha (#1681) holds the `captcha` assign,
+  a `CinderWeb.IndexerCaptcha`. Show captcha runs `Native.load_captcha/1` in `start_async`, and
+  the page drops an answer that comes after its dialog closed. A save that carries the typed
+  answer passes `IndexerCaptcha.check/3`, then starts the Test that carries it through
+  `TestRunner.start/2`, enabled or not, in place of the Test a save starts. While another Test
+  of that indexer runs, the dialog stays open on the saved row. The answer input posts under
+  `captcha[answer]`, filtered from the logs like the secrets, and its value goes from the
+  save's params to the Test, never into an assign. An Add of such a site opens the new row's
+  Edit once saved and loads its captcha.
+
   The definitions line under the table shows the set state (`Definitions.set_state/1`), the last
   check and Update now, which calls `Definitions.Updater.update_now/1` and is disabled with a
   spinner while a run is in progress (`Updater.running?/1`). The host subscribes to
@@ -97,7 +107,15 @@ defmodule CinderWeb.IndexersComponent do
   alias Cinder.Indexers
   alias Cinder.Indexers.Definitions
   alias Cinder.Indexers.Definitions.{Hold, Updater}
-  alias CinderWeb.{CardigannDialog, DefinitionText, IndexerDialog, IndexerStateText}
+
+  alias CinderWeb.{
+    CardigannDialog,
+    DefinitionText,
+    IndexerCaptcha,
+    IndexerDialog,
+    IndexerStateText
+  }
+
   alias CinderWeb.ProwlarrImportDialog
 
   import CinderWeb.CardigannComponents,
@@ -136,7 +154,13 @@ defmodule CinderWeb.IndexersComponent do
       else:
         {:ok,
          socket
-         |> assign(notice: nil, dialog: nil, opener: nil, testing: TestRunner.running())
+         |> assign(
+           notice: nil,
+           dialog: nil,
+           captcha: nil,
+           opener: nil,
+           testing: TestRunner.running()
+         )
          |> load_definitions(nil)
          |> load_rows()}
   end
@@ -404,7 +428,11 @@ defmodule CinderWeb.IndexersComponent do
     case find_row(socket, raw) do
       %{type: :cardigann} = row ->
         {:noreply,
-         assign(socket, dialog: CardigannDialog.edit(row.id), opener: "indexer-#{row.id}-edit")}
+         assign(socket,
+           dialog: CardigannDialog.edit(row.id),
+           captcha: nil,
+           opener: "indexer-#{row.id}-edit"
+         )}
 
       %{type: type} = row when type in @kinds ->
         {:noreply,
@@ -447,6 +475,21 @@ defmodule CinderWeb.IndexersComponent do
   def handle_event("change", params, %{assigns: %{dialog: %{step: :form}}} = socket),
     do: {:noreply, assign(socket, dialog: IndexerDialog.change(socket.assigns.dialog, params))}
 
+  # The indexer id comes from the open dialog, never from the page: only an Edit of a site whose
+  # login shows an image captcha loads one, and one load at a time.
+  def handle_event(
+        "load_captcha",
+        _params,
+        %{assigns: %{dialog: %{step: :form, type: :cardigann, mode: :edit, deleted?: false}}} =
+          socket
+      ) do
+    dialog = socket.assigns.dialog
+
+    if CardigannDialog.captcha?(dialog) and not IndexerCaptcha.loading?(socket.assigns.captcha),
+      do: {:noreply, load_captcha(socket, dialog.id)},
+      else: {:noreply, socket}
+  end
+
   # The dialog's form always posts both maps: a save that lacks either changes nothing.
   def handle_event(
         "save",
@@ -456,6 +499,47 @@ defmodule CinderWeb.IndexersComponent do
       do: save(socket, params)
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # A load's answer counts only while the page still waits for it: one that ends after its
+  # dialog closed changes nothing, and LiveView drops the answer of a load a newer one replaced.
+  # The image goes with the dialog (`close_dialog/2`).
+  @impl true
+  def handle_async(:captcha, {:ok, result}, socket) do
+    case socket.assigns.captcha do
+      %{state: :loading} = captcha -> {:noreply, loaded(socket, captcha, result)}
+      _closed -> {:noreply, socket}
+    end
+  end
+
+  def handle_async(:captcha, {:exit, _reason}, socket) do
+    case socket.assigns.captcha do
+      %{state: :loading} = captcha -> {:noreply, loaded(socket, captcha, {:error, :crashed})}
+      _other -> {:noreply, socket}
+    end
+  end
+
+  # `Native.load_captcha/1` runs its load in a process of its own, unlinked, so a load killed
+  # past its heap cap answers here and the page lives on.
+  defp load_captcha(socket, id) do
+    captcha = IndexerCaptcha.loading(id)
+
+    socket
+    |> assign(captcha: captcha)
+    |> start_async(:captcha, fn -> Native.load_captcha(id) end)
+  end
+
+  # Focus goes to the answer input, or after a failed load back to the load button, which the
+  # load disabled while it had focus, so the browser had moved focus to the page's body.
+  defp loaded(socket, captcha, result) do
+    captcha = IndexerCaptcha.loaded(captcha, result, socket.assigns.dialog.values["name"])
+
+    focus =
+      if IndexerCaptcha.shown?(captcha),
+        do: IndexerCaptcha.answer_id(captcha),
+        else: "indexer-form-captcha-load"
+
+    socket |> assign(captcha: captcha) |> push_event("focus-invalid", %{id: focus})
+  end
 
   # The dialog goes, and keyboard focus goes back to the button that opened it, or to "Add
   # indexer" when that button's row is gone: `phx:focus-invalid` (`assets/js/app.js`) focuses an
@@ -468,7 +552,7 @@ defmodule CinderWeb.IndexersComponent do
          do: opener,
          else: "indexers-add"
 
-    socket |> assign(dialog: nil) |> push_event("focus-invalid", %{id: opener})
+    socket |> assign(dialog: nil, captcha: nil) |> push_event("focus-invalid", %{id: opener})
   end
 
   # A refused save sends focus to the first field it refused, in the form's order, as a refused
@@ -483,30 +567,90 @@ defmodule CinderWeb.IndexersComponent do
   # The secret input goes from `params` to the store and is never assigned. A save of an enabled
   # indexer tries to start its Test after a create, and after an edit that raised
   # `config_version`: `start_test/1` says when it starts none.
+  #
+  # A save that carries a captcha answer (#1681) passes `IndexerCaptcha.check/3` first, and once
+  # saved starts the Test that carries the answer in place of the one a save starts, enabled or
+  # not.
   defp save(socket, params) do
     dialog = socket.assigns.dialog
     form = form_module(dialog)
 
-    case form.save(dialog, socket.assigns.actor, params) do
-      {:ok, row} ->
-        if row.enabled and form.test_on_save?(dialog, row), do: start_test(row.id)
-
-        notice =
-          if dialog.mode == :add,
-            do: gettext("%{name} added.", name: row.name),
-            else: gettext("%{name} saved.", name: row.name)
-
+    case IndexerCaptcha.check(socket.assigns.captcha, dialog, params) do
+      {:refused, captcha} ->
         {:noreply,
          socket
-         |> assign(notice: notice)
-         |> close_dialog(socket.assigns.opener)
-         |> load_rows()
-         |> notify_host()}
+         |> assign(captcha: captcha)
+         |> push_event("focus-invalid", %{id: "indexer-form-captcha-load"})}
+
+      answer ->
+        save_form(socket, dialog, form, params, answer)
+    end
+  end
+
+  defp save_form(socket, dialog, form, params, answer) do
+    case form.save(dialog, socket.assigns.actor, params) do
+      {:ok, row} ->
+        saved(socket, dialog, form, row, answer)
 
       {:error, dialog} ->
         {:noreply, socket |> assign(dialog: dialog) |> focus_refusal(dialog)}
     end
   end
+
+  # `{:error, :running}`: a Test of that indexer started before the save still runs, so the
+  # answer waits. The dialog opens again on the saved row, its new versions with it, and keeps
+  # the image and the answer input, whose id holds what the admin typed.
+  defp saved(socket, _dialog, _form, row, {:answer, token, answer}) do
+    case TestRunner.start(row.id, captcha: %{token: token, answer: answer}) do
+      :ok ->
+        notice = gettext("%{name} saved: logging in with the captcha answer.", name: row.name)
+        {:noreply, socket |> assign(notice: notice) |> close_saved()}
+
+      {:error, :running} ->
+        message =
+          gettext("A Test of %{name} is running: save again once it ends.", name: row.name)
+
+        {:noreply,
+         socket
+         |> assign(
+           dialog: CardigannDialog.edit(row.id),
+           captcha: IndexerCaptcha.say(socket.assigns.captcha, message)
+         )
+         |> load_rows()
+         |> notify_host()}
+    end
+  end
+
+  # An added site whose login shows an image captcha opens as the new row's Edit and loads its
+  # captcha, enabled or not.
+  defp saved(socket, dialog, form, row, nil) do
+    if row.enabled and form.test_on_save?(dialog, row), do: start_test(row.id)
+
+    cond do
+      dialog.mode == :add and form == CardigannDialog and CardigannDialog.captcha?(dialog) ->
+        {:noreply,
+         socket
+         |> assign(
+           notice: gettext("%{name} added.", name: row.name),
+           dialog: CardigannDialog.edit(row.id),
+           opener: "indexer-#{row.id}-edit"
+         )
+         |> load_captcha(row.id)
+         |> load_rows()
+         |> notify_host()}
+
+      dialog.mode == :add ->
+        {:noreply,
+         socket |> assign(notice: gettext("%{name} added.", name: row.name)) |> close_saved()}
+
+      true ->
+        {:noreply,
+         socket |> assign(notice: gettext("%{name} saved.", name: row.name)) |> close_saved()}
+    end
+  end
+
+  defp close_saved(socket),
+    do: socket |> close_dialog(socket.assigns.opener) |> load_rows() |> notify_host()
 
   # The typed keys go from `params` to the commit and are never assigned. Once the import
   # committed, the rows are read again, the Tests it started mark their rows as the runner's
@@ -969,7 +1113,12 @@ defmodule CinderWeb.IndexersComponent do
             <.import_step :if={@dialog.step == :import} dialog={@dialog} myself={@myself} />
             <.pick_step :if={@dialog.step == :pick} dialog={@dialog} myself={@myself} />
             <.accept_step :if={@dialog.step == :accept} dialog={@dialog} myself={@myself} />
-            <.form_step :if={@dialog.step == :form} dialog={@dialog} myself={@myself} />
+            <.form_step
+              :if={@dialog.step == :form}
+              dialog={@dialog}
+              captcha={@captcha}
+              myself={@myself}
+            />
           </.focus_wrap>
         </div>
       </.portal>
@@ -1046,6 +1195,7 @@ defmodule CinderWeb.IndexersComponent do
   end
 
   attr :dialog, :map, required: true
+  attr :captcha, :map, default: nil, doc: "the Edit dialog's captcha (`CinderWeb.IndexerCaptcha`)"
   attr :myself, :any, required: true
 
   defp form_step(%{dialog: %{deleted?: true}} = assigns) do
@@ -1064,7 +1214,7 @@ defmodule CinderWeb.IndexersComponent do
 
   defp form_step(%{dialog: %{type: :cardigann}} = assigns) do
     ~H"""
-    <.cardigann_form dialog={@dialog} myself={@myself} />
+    <.cardigann_form dialog={@dialog} captcha={@captcha} myself={@myself} />
     """
   end
 

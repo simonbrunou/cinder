@@ -25,6 +25,7 @@ defmodule CinderWeb.CardigannDialog do
     `errors`, and the `stale?` and `deleted?` flags a refused save sets.
   """
 
+  alias Cinder.Acquisition.Indexer.Cardigann
   alias Cinder.Indexers
   alias Cinder.Indexers.{CardigannSettings, Definitions}
   alias CinderWeb.IndexerFormText
@@ -354,6 +355,14 @@ defmodule CinderWeb.CardigannDialog do
     stored = dialog.stored_base_url
     if stored in [nil, ""] or stored in links, do: links, else: [stored | links]
   end
+
+  @doc """
+  Whether the dialog's copy logs in through a `form` login that shows an image captcha (#1681),
+  which the admin solves in the Edit dialog.
+  """
+  @spec captcha?(map()) :: boolean()
+  def captcha?(%{copy: copy}), do: Cardigann.image_captcha?(copy)
+  def captcha?(_dialog), do: false
 
   @doc "Each field a refusal moves focus to, in the form's order, with its input's id."
   @spec field_ids(map()) :: [{atom(), String.t()}]

@@ -31,7 +31,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     and the failure count stay; the limit is the last failure.
   - `{:rejected_credentials, by}`: credentials rejected by `by`, `{:code, code}`,
     `{:http_status, 401}` or a refused Cardigann login `{:login_rejected, method}` (#1680,
-    `method` one of `:post`, `:get`, `:form` and `:cookie`); `:rejected_credentials` and a grab's
+    `method` one of `:post`, `:get`, `:form` and `:cookie`), or `:captcha_required`, a `form`
+    login whose landing page showed its image captcha with no answer (#1681);
+    `:rejected_credentials` and a grab's
     `:indexer_auth_failed` (#1659) reject them with no code. No backoff starts or ends; the
     level and the failure count stay; it is the last failure.
   - `:crashed`, a search process that died or raised (Native records it): a failure.
@@ -43,7 +45,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     the failure count stay.
   - `:no_rows`, a Cardigann Test whose page gave no row (#1671): a success, as the page answered;
     the last Test stores `:no_rows`.
-  - `{:query_error, code}` and `:deadline`: no change.
+  - `{:query_error, code}`, `:deadline` and `:captcha_expired` (a Test whose captcha answer
+    found no live captcha session, #1681): no change.
 
   A limit replaces any backoff that runs. A failure replaces a failure backoff. During a limit
   backoff that has not ended, a failure keeps the limit and its end, and still climbs the level
@@ -90,11 +93,28 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
 
   # The last Test's outcome: a pass, a query error, a Cardigann page with no row, or a failure
   # reason the report can carry.
-  @test_tags [:success, :query_error, :no_rows, :login_rejected, :cookie_rejected | @failure_tags]
+  @test_tags [
+    :success,
+    :query_error,
+    :no_rows,
+    :login_rejected,
+    :cookie_rejected,
+    :captcha_required,
+    :captcha_expired | @failure_tags
+  ]
   @partial_kinds [:regex_limit, :filter_output_cap]
   # A refused Cardigann login, by its method (#1680).
   @login_methods [:post, :get, :form, :cookie]
-  @rejected_by [:code, :http_status, :login_post, :login_get, :login_form, :login_cookie]
+  # A refused Cardigann login, by its method (#1680), and a login that met a captcha (#1681).
+  @rejected_by [
+    :code,
+    :http_status,
+    :login_post,
+    :login_get,
+    :login_form,
+    :login_cookie,
+    :captcha
+  ]
   @test_fields [:last_test, :last_test_code, :last_test_at]
 
   @fields [
@@ -206,6 +226,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
 
   defp step(status, {:query_error, _code}, _now), do: status
   defp step(status, :deadline, _now), do: status
+  defp step(status, :captcha_expired, _now), do: status
 
   defp step(status, kind, now) when kind in @partial_kinds,
     do: struct!(status, last_partial: kind, last_partial_at: now)
@@ -241,6 +262,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   defp step(status, {:rejected_credentials, {:login_rejected, method}}, now)
        when method in @login_methods,
        do: reject(status, login_by(method), nil, now)
+
+  defp step(status, {:rejected_credentials, :captcha_required}, now),
+    do: reject(status, :captcha, nil, now)
 
   defp step(status, tag, now) when tag in [:rejected_credentials, :indexer_auth_failed],
     do: reject(status, nil, nil, now)
@@ -386,6 +410,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   defp test_outcome({:query_error, code}), do: {:query_error, code}
   defp test_outcome({:limit, _wait}), do: :limit
   defp test_outcome({:rejected_credentials, {:login_rejected, :cookie}}), do: :cookie_rejected
+  defp test_outcome({:rejected_credentials, :captcha_required}), do: :captcha_required
+  defp test_outcome(:captcha_expired), do: :captcha_expired
 
   defp test_outcome({:rejected_credentials, {:login_rejected, method}})
        when method in @login_methods,

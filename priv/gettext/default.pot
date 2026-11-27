@@ -8159,6 +8159,7 @@ msgid "Testing %{name}…"
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/indexer_captcha.ex
 #, elixir-autogen, elixir-format
 msgid "%{name} no longer exists."
 msgstr ""
@@ -9605,4 +9606,119 @@ msgstr ""
 #: lib/cinder_web/cardigann_components.ex
 #, elixir-autogen, elixir-format
 msgid "Log in to the site in your browser, open its developer tools (F12), reload a page of the site in the Network tab, and copy the value of that request's Cookie header, everything after \"Cookie: \", into the cookie field."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name} saved: logging in with the captcha answer."
+msgstr ""
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "A Test of %{name} is running: save again once it ends."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Captcha"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Captcha answer"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Captcha from %{name}"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login needs a captcha"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login needs a captcha: solve it in Settings"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "New captcha"
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "Save the new base URL first, then show a new captcha."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Save this indexer first, then solve its captcha here."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Show captcha"
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha could not be kept. Try again."
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha could not be loaded. Try again."
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha could not be loaded: %{cause}."
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha could not be loaded: the site did not answer in time."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha expired: show a new one"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha image could not be shown: it is no PNG, JPEG, GIF or WebP image."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The site answered HTTP %{status} for the captcha."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "The site asks for a captcha at login. Show it, type its answer, then save: Cinder logs in with the answer."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The site sent no captcha image."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "This indexer's login asks for no captcha."
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The captcha image could not be shown: it is larger than %{size} MiB."
+msgstr ""
+
+#: lib/cinder_web/indexer_captcha.ex
+#, elixir-autogen, elixir-format
+msgid "This captcha expired: show a new one."
 msgstr ""
