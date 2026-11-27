@@ -61,6 +61,20 @@
   9 × 4 hold table never stored a key without its declaration, and the 72 mutants, every one
   killed but an equivalent one, never needed such a test: a Standards review found the crash,
   and a re-check the held hosts.
+- A page that shows what a save will do before it runs, such as the credential hosts a confirm
+  lists, reads the values the save will store, as the save's own function builds them, and shows
+  each secret as its template. When the page compares with what runs today, as a list of new hosts
+  does, it compares those values with the ones the running code sends today and applies the
+  templates to the result only; a secret not typed yet is a template already. Test it on a table of
+  each source a value can come from (a carried value, the new declaration's default, a typed one,
+  and a stored value the new declaration refuses), each declaration that names the key (the running
+  one only, the new one only, both), and each state of the stored values that changes what the save
+  reads, such as secrets that do or do not decrypt. The test goes red when the page leaves out a
+  host or value the save sends that the running code does not send today. On #1676 the Switch form's
+  host list read the stored values for both copies, while the save stored the new copy's defaults,
+  carried values and typed values. A re-check found the list empty for a row whose secrets do not
+  decrypt, the next hunk check found two more cases it missed, and the one after found that the
+  second fix hid a host the first had listed, so the branch stopped without merging (#1876).
 - A fix that keeps a behaviour across an Elixir or OTP upgrade answers like the old version on
   every input class, not only on the cases the issue names. Before review, run one table of
   inputs through the changed module's public functions, a row per input class that the changed
