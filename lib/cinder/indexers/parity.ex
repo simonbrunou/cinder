@@ -525,8 +525,8 @@ defmodule Cinder.Indexers.Parity do
             Rows.native_count_keys(Rows.only_cid(rows_n, :native, cid, ctx.map), cid_rows_p),
           count_p != count_n,
           do:
-            {:rows, i, p.callback, cid, multiset_minus(count_p, count_n),
-             multiset_minus(count_n, count_p)}
+            {:rows, i, p.callback, cid, {total(count_p), total(count_n)},
+             multiset_minus(count_p, count_n), multiset_minus(count_n, count_p)}
 
     pick_gaps =
       for cid <- covered,
@@ -639,6 +639,8 @@ defmodule Cinder.Indexers.Parity do
 
   defp cut_rows(rows, nil), do: rows
   defp cut_rows(rows, cut), do: Rows.cut(rows, cut)
+
+  defp total(counts), do: counts |> Map.values() |> Enum.sum()
 
   defp multiset_minus(a, b) do
     for {key, count} <- a, left = count - Map.get(b, key, 0), left > 0, do: {key, left}

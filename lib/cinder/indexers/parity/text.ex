@@ -1,4 +1,7 @@
 defmodule Cinder.Indexers.Parity.Text do
+  # #1916: a row difference line held over 8,800 characters on #1690's run 2.
+  @max_entries 10
+
   @moduledoc """
   The parity check's report (`Cinder.Indexers.Parity`), plain text for `bin/cinder rpc` (#1624
   point 16): the seed, the window, a line per kind the run could not draw
@@ -6,6 +9,12 @@ defmodule Cinder.Indexers.Parity.Text do
   cell, the evidence per indexer, each search's tries with their history counts, differences,
   explained gaps and inconclusive reasons, the searches to run again, and the known differences
   the check cannot apply.
+
+  A row difference (#1916) prints each side's row count of that indexer in that call: the rows
+  left after the timing cut, as `Rows.count_keys/1` and `Rows.native_count_keys/2` count them.
+  So a side with no row left to compare reads apart from a short one. Then each side's rows the
+  other lacks, one entry per title and size with its row count: at most #{@max_entries} entries,
+  sorted by title and size, then how many more entries and how many such rows in all.
 
   From the input it prints the seed, search labels, indexer names, titles, sizes, counts, ids,
   times (the window, a wait's end) and closed tags only, beside its own fixed text such as the
@@ -178,9 +187,9 @@ defmodule Cinder.Indexers.Parity.Text do
     [status | history ++ statuses ++ gaps ++ explained]
   end
 
-  defp gap({:rows, i, callback, cid, p_only, n_only}, ctx),
+  defp gap({:rows, i, callback, cid, {rows_p, rows_n}, p_only, n_only}, ctx),
     do:
-      "rows of #{name(ctx, cid)} in call #{i + 1} (#{safe(callback)}): Prowlarr only #{rows(p_only)}; Native only #{rows(n_only)}"
+      "rows of #{name(ctx, cid)} in call #{i + 1} (#{safe(callback)}): Prowlarr #{count(rows_p, "row")}, Native #{count(rows_n, "row")}; Prowlarr only #{rows(p_only)}; Native only #{rows(n_only)}"
 
   defp gap({:pick, cid, p, n}, ctx),
     do: "pick of #{name(ctx, cid)} alone: Prowlarr #{pick(p)}; Native #{pick(n)}"
@@ -189,11 +198,22 @@ defmodule Cinder.Indexers.Parity.Text do
 
   defp rows([]), do: "none"
 
-  defp rows(rows),
+  defp rows(rows) do
+    {listed, rest} = rows |> Enum.sort() |> Enum.split(@max_entries)
+
+    Enum.map_join(listed, ", ", fn {{title, size}, count} ->
+      "#{count} x \"#{safe(title)}\" (#{safe(size)})"
+    end) <> more(rest, rows)
+  end
+
+  defp more([], _rows), do: ""
+
+  defp more(rest, rows),
     do:
-      Enum.map_join(rows, ", ", fn {{title, size}, count} ->
-        "#{count} x \"#{safe(title)}\" (#{safe(size)})"
-      end)
+      ", and #{length(rest)} more #{if length(rest) == 1, do: "entry", else: "entries"} (#{count(Enum.sum_by(rows, &elem(&1, 1)), "row")} in all)"
+
+  defp count(1, noun), do: "1 #{noun}"
+  defp count(n, noun), do: "#{n} #{noun}s"
 
   defp pick({:release, release}), do: release_text(release)
 

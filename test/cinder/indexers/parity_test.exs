@@ -371,7 +371,96 @@ defmodule Cinder.Indexers.ParityTest do
 
       assert_line(
         result.report,
-        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr only 1 x "Dune.2021.1080p.WEB-DL-AAA" (4000000000); Native only none|
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 2 rows, Native 1 row; Prowlarr only 1 x "Dune.2021.1080p.WEB-DL-AAA" (4000000000); Native only none|
+      )
+    end
+
+    # #1916: an empty Native answer reads apart from a short one. Bravo's matching row on both
+    # sides stays out of Alpha's counts.
+    test "a row difference prints the rows of each side in that call and indexer" do
+      aaa = "Dune.2021.1080p.WEB-DL-AAA"
+      ccc = "Dune.2021.2160p.WEB-DL-CCC"
+      bbb = "Dune.2021.720p.WEB-DL-BBB"
+
+      p_rows = [
+        row(aaa, :prowlarr, @alpha),
+        row(aaa, :prowlarr, @alpha, download_url: "https://prowlarr.example/copy2"),
+        row(ccc, :prowlarr, @alpha),
+        row(bbb, :prowlarr, @bravo)
+      ]
+
+      bravo = row(bbb, :native, @bravo)
+      empty = Parity.compare(run([movie_search("Dune", [movie_try(p_rows, [bravo])])]))
+
+      assert_line(
+        empty.report,
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 3 rows, Native 0 rows; Prowlarr only 2 x "#{aaa}" (4000000000), 1 x "#{ccc}" (4000000000); Native only none|
+      )
+
+      short_try = movie_try(p_rows, [row(aaa, :native, @alpha), bravo])
+      short = Parity.compare(run([movie_search("Dune", [short_try])]))
+
+      assert_line(
+        short.report,
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 3 rows, Native 1 row; Prowlarr only 1 x "#{aaa}" (4000000000), 1 x "#{ccc}" (4000000000); Native only none|
+      )
+    end
+
+    # #1916: a line held over 8,800 characters on #1690's run 2. Past 32 keys a map no longer
+    # iterates in key order, so 40 titles also show the list sorted by title. An entry is one
+    # title at one size, so one title at 11 sizes is 11 entries.
+    test "a row difference lists at most 10 entries of a side and counts the rest" do
+      titles =
+        for n <- 40..1//-1, do: "Dune.2021.1080p.WEB-DL-R" <> String.pad_leading("#{n}", 2, "0")
+
+      bravo = [row("Dune.2021.720p.WEB-DL-BBB", :prowlarr, @bravo)]
+      n_bravo = [row("Dune.2021.720p.WEB-DL-BBB", :native, @bravo)]
+
+      p_rows =
+        Enum.map(titles, &row(&1, :prowlarr, @alpha)) ++
+          [
+            row("Dune.2021.1080p.WEB-DL-R40", :prowlarr, @alpha,
+              download_url: "https://p.example/2"
+            )
+          ] ++
+          bravo
+
+      listed =
+        Enum.map_join(1..10, ", ", fn n ->
+          ~s|1 x "Dune.2021.1080p.WEB-DL-R#{String.pad_leading("#{n}", 2, "0")}" (4000000000)|
+        end)
+
+      result = Parity.compare(run([movie_search("Dune", [movie_try(p_rows, n_bravo)])]))
+
+      assert_line(
+        result.report,
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 41 rows, Native 0 rows; Prowlarr only #{listed}, and 30 more entries (41 rows in all); Native only none|
+      )
+
+      ten = Enum.filter(titles, &(&1 <= "Dune.2021.1080p.WEB-DL-R10"))
+      p_ten = Enum.map(ten, &row(&1, :prowlarr, @alpha)) ++ bravo
+      result = Parity.compare(run([movie_search("Dune", [movie_try(p_ten, n_bravo)])]))
+
+      assert_line(
+        result.report,
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 10 rows, Native 0 rows; Prowlarr only #{listed}; Native only none|
+      )
+
+      p_eleven = [row("Dune.2021.1080p.WEB-DL-R11", :prowlarr, @alpha) | p_ten]
+      result = Parity.compare(run([movie_search("Dune", [movie_try(p_eleven, n_bravo)])]))
+
+      assert_line(
+        result.report,
+        ~s|Prowlarr 11 rows, Native 0 rows; Prowlarr only #{listed}, and 1 more entry (11 rows in all); Native only none|
+      )
+
+      one = "Dune.2021.1080p.WEB-DL-ONE"
+      p_sizes = for n <- 1..11, do: row(one, :prowlarr, @alpha, size: n * @gb)
+      result = Parity.compare(run([movie_search("Dune", [movie_try(p_sizes ++ bravo, n_bravo)])]))
+
+      assert_line(
+        result.report,
+        ~s|(10000000000), and 1 more entry (11 rows in all); Native only none|
       )
     end
 
@@ -442,7 +531,7 @@ defmodule Cinder.Indexers.ParityTest do
 
       assert_line(
         result.report,
-        ~s|difference: rows of Alpha (#1) in call 1 (search_tv): Prowlarr only none; Native only 1 x "The.Office.S01.1080p.WEB-DL-GRP" (4000000000)|
+        ~s|difference: rows of Alpha (#1) in call 1 (search_tv): Prowlarr 1 row, Native 2 rows; Prowlarr only none; Native only 1 x "The.Office.S01.1080p.WEB-DL-GRP" (4000000000)|
       )
     end
 
@@ -476,13 +565,19 @@ defmodule Cinder.Indexers.ParityTest do
           [
             row("Dune.2021.1080p.WEB-DL-AAA", :native, @alpha),
             row("Dune.2021.480p.WEB-DL-OLD", :native, @alpha, published_at: nil),
+            row("Dune.2021.2160p.WEB-DL-NEW", :native, @alpha, published_at: late),
             row("Dune.2021.720p.WEB-DL-BBB", :native, @bravo)
           ]
         )
 
       result = Parity.compare(run([movie_search("Dune", [undated])]))
       assert result.retry == [0]
-      assert_line(result.report, ~s|Native only 1 x "Dune.2021.480p.WEB-DL-OLD"|)
+
+      # The row counts leave out the row after the cut too (#1916).
+      assert_line(
+        result.report,
+        ~s|Prowlarr 1 row, Native 2 rows; Prowlarr only none; Native only 1 x "Dune.2021.480p.WEB-DL-OLD"|
+      )
     end
 
     test "the cut is the start of the pair's first query, whichever side went first" do
@@ -783,7 +878,7 @@ defmodule Cinder.Indexers.ParityTest do
 
       assert_line(
         result.report,
-        ~s|confirmed difference: rows of Alpha (#1) in call 1 (search_movie): Prowlarr only none; Native only 1 x "Dune.2021.720p.WEB-DL-TXT"|
+        ~s|confirmed difference: rows of Alpha (#1) in call 1 (search_movie): Prowlarr 1 row, Native 2 rows; Prowlarr only none; Native only 1 x "Dune.2021.720p.WEB-DL-TXT"|
       )
     end
 
@@ -977,7 +1072,7 @@ defmodule Cinder.Indexers.ParityTest do
 
       assert_line(
         result.report,
-        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr only 1 x "Dune.2021.1080p.WEB-DL-AAA"|
+        ~s|difference: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 1 row, Native 0 rows; Prowlarr only 1 x "Dune.2021.1080p.WEB-DL-AAA"|
       )
 
       refute_line(result.report, "confirmed difference")
@@ -1212,7 +1307,7 @@ defmodule Cinder.Indexers.ParityTest do
 
       assert_line(
         result.report,
-        ~s|confirmed difference: rows of Bravo (#2) in call 1 (search_movie_query): Prowlarr only none; Native only 1 x "Dune.2021.480p.WEB-DL-XTR"|
+        ~s|confirmed difference: rows of Bravo (#2) in call 1 (search_movie_query): Prowlarr 1 row, Native 2 rows; Prowlarr only none; Native only 1 x "Dune.2021.480p.WEB-DL-XTR"|
       )
     end
 
