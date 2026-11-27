@@ -21,8 +21,8 @@ defmodule Cinder.Indexers.ParityRun do
     counted: 200 by default (#1624 point 7).
   - `counts:`, a map of kind to searches, in place of `Corpus.planned_counts/1`'s plan for the
     budget. A kind it leaves out has no search.
-  - `deadline_s:`, the run's total deadline: 2,700 s by default. A search or retry not started by
-    then has no try, and the engine reads it inconclusive.
+  - `deadline_s:`, the indexer requests' deadline: 2,700 s by default. A search or retry not
+    started by then has no try, and the engine reads it inconclusive.
   - `retry_spacing_s:`, how long after a search's first try ended its retry may start: 660 s by
     default. At Prowlarr `b0b5774` only two indexer definitions answer a query from a cache,
     AnimeBytes for 3 minutes and Rarbg for 10 (`_queryResultCache.Set` in their `FetchPage`),
@@ -290,7 +290,7 @@ defmodule Cinder.Indexers.ParityRun do
 
   defp first_ended_ms(%{ended_ms: ended_ms}), do: ended_ms
 
-  # Waits for `at` (monotonic ms), never past the run's deadline.
+  # Waits for `at` (monotonic ms), never past the deadline.
   defp wait_until(at, ctx) do
     left = min(at, ctx.deadline_at) - mono()
     if left > 0, do: Process.sleep(left)
