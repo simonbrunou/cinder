@@ -75,6 +75,19 @@ site:
 ## Secrets
 
 - Secret rows are Cloak-encrypted at rest, with a key derived from `SECRET_KEY_BASE`.
+- A stored Vault ciphertext names the row it belongs to only for a configured indexer's secrets,
+  whose scope and id `Cinder.Indexers.Secrets.open/1` checks. So with database write access, a
+  secret setting's value, a configured indexer's `secrets_ciphertext` or a user's `plex_token`
+  copied into a secret setting decodes there, and `Settings.undecryptable_secret_keys/0` does not
+  list it. Copied into `prowlarr_api_key`, with `prowlarr_url` pointed at another host, the decoded
+  text goes to that host as the Prowlarr adapter's `x-api-key` header. Cinder accepts this (#1702).
+  The same write access sends the stored `prowlarr_api_key` to another host by rewriting
+  `prowlarr_url` alone, so the copy adds only reach from one secret to another. For a configured
+  indexer's secrets it adds nothing: the Newznab and Torznab adapters send `apikey` to the row's
+  plaintext `base_url`, `Cinder.Indexers.Definitions.CredentialHosts.hosts/2` lets a Cardigann
+  indexer send its credentials to that `base_url`'s host, and that write access rewrites `base_url`
+  too. A scope on every stored secret would take a migration that re-seals each secret setting, Plex
+  token and download intent's link (`download_url_ciphertext`), which rewrites stored data.
 - A secret never appears in a form value, a socket assign or a log line.
 - A passkey's credential id, public key, challenge and user handle are logged nowhere: the
   WebAuthn fields travel under a `passkey` key, which `config :phoenix, :filter_parameters`
