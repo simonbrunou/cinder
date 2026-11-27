@@ -719,6 +719,87 @@ defmodule Cinder.Indexers.ParityTest do
     end
   end
 
+  # #1915: a kind the run planned but drew no search of, since the library holds no candidate.
+  describe "a kind the library cannot draw" do
+    @alpha_tv [
+      %{id: @alpha, name: "Alpha", kinds: [:movie_title, :season_zero], link_check: :passed},
+      %{id: @bravo, name: "Bravo", kinds: [:movie_title], link_check: :passed}
+    ]
+
+    test "is not asked, names its kind in the header and keeps no verdict from pass" do
+      result =
+        Parity.compare(
+          run([movie_search("Dune", [matching_try()])],
+            indexers: @alpha_tv,
+            planned: [:movie_title, :season_zero]
+          )
+        )
+
+      assert result.verdict == :pass, result.report
+      assert result.reasons == []
+      assert "Verdict: pass" in lines(result.report)
+      assert "not drawn: season_zero (no candidate in the library)" in lines(result.report)
+
+      assert "  Alpha (#1) season_zero: not asked (no candidate in the library)" in lines(
+               result.report
+             )
+
+      assert "  Alpha (#1) movie_title: covered" in lines(result.report)
+      refute_line(result.report, "Bravo (#2) season_zero")
+    end
+
+    test "a kind the run did not plan still reads uncovered with no search" do
+      result =
+        Parity.compare(
+          run([movie_search("Dune", [matching_try()])],
+            indexers: @alpha_tv,
+            planned: [:movie_title]
+          )
+        )
+
+      assert result.verdict == :inconclusive
+      assert result.reasons == [{:cell_uncovered, @alpha, :season_zero, :no_search}]
+      assert "  Alpha (#1) season_zero: uncovered no_search" in lines(result.report)
+      refute_line(result.report, "not drawn")
+    end
+
+    test "a drawn kind whose search did not run still keeps the verdict from pass" do
+      result = Parity.compare(run([movie_search("Dune", [])], planned: [:movie_title]))
+
+      assert result.verdict == :inconclusive
+      assert {:cell_inconclusive, @alpha, :movie_title, :no_try} in result.reasons
+      assert {:search_inconclusive, 0, :no_try} in result.reasons
+      refute_line(result.report, "not drawn")
+      refute_line(result.report, "no candidate")
+    end
+
+    test "a drawn kind that did not cover an indexer still keeps the verdict from pass" do
+      # Prowlarr's history holds no query for Alpha (Prowlarr's 11).
+      result =
+        Parity.compare(
+          run([movie_search("Dune", [matching_try()])],
+            history: history([12]),
+            planned: [:movie_title]
+          )
+        )
+
+      assert result.verdict == :inconclusive
+      assert {:cell_uncovered, @alpha, :movie_title, :prowlarr_not_asked} in result.reasons
+      assert "  Alpha (#1) movie_title: uncovered prowlarr_not_asked" in lines(result.report)
+      refute_line(result.report, "not drawn")
+    end
+
+    test "a run that drew nothing stays inconclusive" do
+      result =
+        Parity.compare(run([], indexers: @alpha_tv, planned: Picks.kinds()))
+
+      assert result.verdict == :inconclusive
+      assert :no_search in result.reasons
+      assert {:no_evidence, @alpha} in result.reasons
+      assert "not drawn: movie_title (no candidate in the library)" in lines(result.report)
+    end
+  end
+
   describe "stops" do
     test "an exhausted budget and a 429 stop leave that indexer's later searches inconclusive" do
       stopped =

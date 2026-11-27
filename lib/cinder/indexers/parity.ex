@@ -22,6 +22,10 @@ defmodule Cinder.Indexers.Parity do
   - `prowlarr_map`: `%{prowlarr_id => configured_id}` (`configured_indexers.prowlarr_indexer_id`).
   - `history` and `statuses`: `ProwlarrReads.history/3` and `status/1` answers for the window;
     `statuses` may hold several reads (before and after the run).
+  - `planned`, optional, `[]` by default: the corpus kinds the run planned a search of. A
+    planned kind with no search in `searches` is undrawn: the library holds no candidate (#1915),
+    as `Cinder.Indexers.ParityRun.Corpus` reads one, such as a standard series' season 0 with an
+    episode a manual search may act on.
   - `searches`, in run order: `%{label, kind, first, target, opts, tries}`. `target` holds the
     caller's arguments (`Picks`), `opts` the household opts with `now:` set, the same for both
     sides. `first` names the side that ran first. `tries` is one try, or two when #1684 ran a
@@ -58,7 +62,9 @@ defmodule Cinder.Indexers.Parity do
     kind in `kinds`, and for a kind where the indexer left evidence it was asked (a history
     entry, or a Native outcome other than `{:not_asked, :caps}`; for `:movie_imdb` an id-scoped
     Native row). It is covered when at least one search of its kind ran and the indexer was
-    covered in each. Every other indexer and kind is listed apart, not asked.
+    covered in each. A cell whose kind has no search is uncovered, unless the kind is undrawn:
+    it is then not asked, for no candidate in the library, and keeps no verdict from pass.
+    Every other indexer and kind is listed apart, not asked.
   - **Stops** (point 7). A budget or 429 stop in any try of a search makes that indexer
     inconclusive in that search and every later one.
   - **Rows** (point 11). Per aligned seam call and covered indexer, the multisets of
@@ -150,10 +156,13 @@ defmodule Cinder.Indexers.Parity do
     pids_by_cid =
       Enum.reduce(map, %{}, fn {pid, cid}, acc -> Map.update(acc, cid, [pid], &[pid | &1]) end)
 
+    searched = MapSet.new(run.searches, & &1.kind)
+
     %{
       run: run,
       map: map,
       cids: cids,
+      undrawn: run |> Map.get(:planned, []) |> Enum.uniq() |> Enum.reject(&(&1 in searched)),
       indexers: Map.new(run.indexers, &{&1.id, &1}),
       pids_by_cid: Map.new(pids_by_cid, fn {cid, pids} -> {cid, Enum.sort(pids)} end),
       stops: first_stops(run.searches),
@@ -430,7 +439,13 @@ defmodule Cinder.Indexers.Parity do
         kind in Picks.kinds(),
         into: %{} do
       of_kind = Enum.filter(searches, &(&1.search.kind == kind))
-      {{cid, kind}, cell_status(cid, kind, indexer, of_kind)}
+
+      status =
+        if kind in ctx.undrawn,
+          do: {:not_asked, :no_candidate},
+          else: cell_status(cid, kind, indexer, of_kind)
+
+      {{cid, kind}, status}
     end
   end
 

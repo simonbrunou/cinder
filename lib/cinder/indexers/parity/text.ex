@@ -1,10 +1,11 @@
 defmodule Cinder.Indexers.Parity.Text do
   @moduledoc """
   The parity check's report (`Cinder.Indexers.Parity`), plain text for `bin/cinder rpc` (#1624
-  point 16): the seed, the window, the verdict and its reasons, a line per cell, the evidence per
-  indexer, each search's tries with their history counts, differences, explained gaps and
-  inconclusive reasons, the searches to run again, and the known differences the check cannot
-  apply.
+  point 16): the seed, the window, a line per kind the run could not draw
+  (`not drawn: <kind> (no candidate in the library)`), the verdict and its reasons, a line per
+  cell, the evidence per indexer, each search's tries with their history counts, differences,
+  explained gaps and inconclusive reasons, the searches to run again, and the known differences
+  the check cannot apply.
 
   From the input it prints the seed, search labels, indexer names, titles, sizes, counts, ids,
   times (the window, a wait's end) and closed tags only, beside its own fixed text such as the
@@ -13,6 +14,7 @@ defmodule Cinder.Indexers.Parity.Text do
   """
 
   @max_text 200
+  @no_candidate "(no candidate in the library)"
 
   # #1624 point 12: known differences the check lists but cannot apply.
   @listed_differences [
@@ -56,6 +58,7 @@ defmodule Cinder.Indexers.Parity.Text do
     [
       "Parity check, seed #{safe(run.seed)}",
       "Window: #{DateTime.to_iso8601(from)} to #{DateTime.to_iso8601(to)}",
+      Enum.map(ctx.undrawn, &"not drawn: #{safe(&1)} #{@no_candidate}"),
       "Verdict: #{result.verdict}",
       "",
       section("Reasons", Enum.map(result.reasons, &reason(&1, ctx, run))),
@@ -122,8 +125,11 @@ defmodule Cinder.Indexers.Parity.Text do
 
   defp cells(cells, ctx) do
     for {{cid, kind}, status} <- Enum.sort(cells),
-        do: "#{name(ctx, cid)} #{safe(kind)}: #{tag(status)}"
+        do: "#{name(ctx, cid)} #{safe(kind)}: #{cell_text(status)}"
   end
+
+  defp cell_text({:not_asked, :no_candidate}), do: "not asked #{@no_candidate}"
+  defp cell_text(status), do: tag(status)
 
   defp evidence(evidence, ctx) do
     for {cid, e} <- Enum.sort(evidence),

@@ -43,7 +43,9 @@ defmodule Cinder.Indexers.ParityRun do
      secrets that do not decrypt (`:undecryptable_indexer`), or when Prowlarr's indexer status
      cannot be read (`:prowlarr_status`).
   2. Reads Prowlarr's indexer status, draws the corpus and prints the seed, the set, the run's
-     limits and the planned counts.
+     limits and the planned counts. The kinds with a planned count above 0 go to the engine as
+     `planned` (#1915): one whose draw gave no search, since the library holds no candidate,
+     has its cells read not asked. A kind planned at 0 keeps its cells uncovered.
   3. Runs each search once through both sides (`Cinder.Indexers.ParityRun.Recorder`), the side
      that goes first alternating per search from a first side the seed picks. Both sides get the
      same opts: the household policy (`HouseholdPolicy.for_target/2`, or the book panel's opts),
@@ -184,7 +186,8 @@ defmodule Cinder.Indexers.ParityRun do
 
       searches = Corpus.draw(seed, counts)
       print_header(ctx, seed, counts, searches)
-      compare_and_print(ctx, seed, searches)
+      planned = for kind <- Corpus.kinds(), Map.get(counts, kind, 0) > 0, do: kind
+      compare_and_print(Map.put(ctx, :planned, planned), seed, searches)
     end
   end
 
@@ -501,6 +504,7 @@ defmodule Cinder.Indexers.ParityRun do
          window: window,
          indexers: engine_indexers,
          prowlarr_map: ctx.map,
+         planned: ctx.planned,
          history: history,
          statuses: ctx.statuses,
          searches: Enum.map(searches, &engine_search/1)

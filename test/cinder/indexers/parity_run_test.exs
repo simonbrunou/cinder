@@ -450,6 +450,74 @@ defmodule Cinder.Indexers.ParityRunTest do
     refute report =~ "fail"
   end
 
+  # --- a kind the library cannot draw (#1915) ---
+
+  # A standard series with season 1 alone, and an indexer whose TV caps take `:season`,
+  # `:season_zero` and `:anime_episodes`. The library holds no season 0 and no anime series.
+  defp season_one_world(history, statuses) do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    series = series_fixture(%{title: "The Office", year: nil, tvdb_id: 73_244})
+    season = season_fixture(series, %{season_number: 1})
+    episode_fixture(season, %{episode_number: 1})
+    episode_fixture(season, %{episode_number: 2})
+
+    world(
+      %{
+        "nzb.example" =>
+          7
+          |> nzb(same("The.Office.S01.1080p.WEB-DL-OK", 1_500_000_000))
+          |> Map.merge(%{
+            category: 5040,
+            caps:
+              caps(
+                modes: %{"tv-search" => ~s(available="yes" supportedParams="q,season,ep,tvdbid")},
+                categories: [5000, 5040]
+              )
+          })
+      },
+      history
+    )
+
+    prowlarr_api(history, statuses)
+    indexer
+  end
+
+  test "a planned kind the library has no candidate for is not asked, and the run passes",
+       %{history: history, statuses: statuses} do
+    indexer = season_one_world(history, statuses)
+
+    report =
+      run!(counts: %{season: 1, season_zero: 1, anime_episodes: 1}, indexers: [indexer.id])
+
+    lines = String.split(report, "\n")
+    assert_received {:result, :ok}
+    assert report =~ "season 1, season_zero 1, anime_episodes 1, ebook 0, audiobook 0; drawn: 1\n"
+    assert "Verdict: pass" in lines
+    assert "not drawn: season_zero (no candidate in the library)" in lines
+    assert "not drawn: anime_episodes (no candidate in the library)" in lines
+    name = "#{indexer.name} (##{indexer.id})"
+    assert "  #{name} season: covered" in lines
+    assert "  #{name} season_zero: not asked (no candidate in the library)" in lines
+    assert "  #{name} anime_episodes: not asked (no candidate in the library)" in lines
+  end
+
+  test "a kind the counts leave out is not planned and still reads uncovered",
+       %{history: history, statuses: statuses} do
+    indexer = season_one_world(history, statuses)
+
+    report = run!(counts: %{season: 1, season_zero: 0}, indexers: [indexer.id])
+
+    lines = String.split(report, "\n")
+    assert_received {:result, :ok}
+    assert "Verdict: inconclusive" in lines
+    name = "#{indexer.name} (##{indexer.id})"
+    assert "  #{name} season: covered" in lines
+    assert "  #{name} season_zero: uncovered (no_search)" in lines
+    assert "  #{name} anime_episodes: uncovered (no_search)" in lines
+    refute report =~ "not drawn"
+    refute report =~ "no candidate"
+  end
+
   # --- the seed ---
 
   test "the same seed draws the same corpus and side order, another seed another order" do
