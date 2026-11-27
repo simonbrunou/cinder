@@ -685,6 +685,60 @@ defmodule Cinder.Library.AnimePreflightTest do
     end
   end
 
+  # The frozen context can keep an arc alias whose scene scope it dropped, so a file named
+  # `<alias> S01 01-02` must not read as season 1's episodes there (#1951).
+  test "frozen replay leaves a range after an S01 token unread" do
+    fixture = %{
+      "snapshot_version" => 3,
+      "parser_context" => %{
+        "title" => "Show",
+        "aliases" => [],
+        "blocked_titles" => [],
+        "allow_unscoped_standard" => false,
+        "year" => 2020
+      },
+      "mappings" =>
+        for {code, id} <- [{"S01E01", 11}, {"S01E02", 12}] do
+          %{
+            "identity" => %{
+              "source" => "cinder",
+              "scheme" => "standard",
+              "namespace" => "canonical",
+              "canonical_value" => code
+            },
+            "precedence" => "curated",
+            "episode_ids" => [id],
+            "evidence" => nil
+          }
+        end,
+      "reserved_episode_ids" => [11, 12],
+      "inventory" => [
+        %{
+          "relative_path" => "Show S01 01-02.mkv",
+          "size" => 1000,
+          "major_device" => 1,
+          "inode" => 201,
+          "mtime" => 100
+        }
+      ],
+      "episodes" => [
+        %{"id" => 11, "season_number" => 1, "episode_number" => 1},
+        %{"id" => 12, "season_number" => 1, "episode_number" => 2}
+      ]
+    }
+
+    assert {:needs_mapping, result} = run_fixture(fixture)
+    assert result.issue["reason"] == "unresolved_file"
+
+    control = put_in(fixture, ["inventory", Access.at(0), "relative_path"], "Show S01E01-E02.mkv")
+
+    assert {:ok, control_result} = run_fixture(control)
+
+    assert control_result.assignments == [
+             %{relative_path: "Show S01E01-E02.mkv", episode_ids: [11, 12]}
+           ]
+  end
+
   test "frozen replay applies longer blocked titles before standard coordinates" do
     fixture = %{
       "snapshot_version" => 3,

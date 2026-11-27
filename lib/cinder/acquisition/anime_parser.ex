@@ -276,21 +276,23 @@ defmodule Cinder.Acquisition.AnimeParser do
     generic_match = title_remainder(title, Map.get(context, :titles, []))
     scene_match = scene_title_remainder(title, Map.get(context, :scene_titles, []))
 
-    {remainder, matched_title} =
+    {remainder, matched_title, scene_title_won?} =
       cond do
         prefer_scene_match?(scene_match, generic_match) ->
-          {elem(scene_match, 0), elem(scene_match, 2)}
+          {elem(scene_match, 0), elem(scene_match, 2), true}
 
         generic_match ->
-          generic_match
+          {elem(generic_match, 0), elem(generic_match, 1), false}
 
         true ->
-          {nil, nil}
+          {nil, nil, false}
       end
 
     direct_only? = not is_nil(matched_title) and blocked_title?(matched_title, context)
 
-    coordinates = standard_coordinates_for_match(title, remainder, direct_only?, context)
+    coordinates =
+      standard_coordinates_for_match(title, remainder, direct_only?, context) ||
+        season_one_range_coordinates(remainder, scene_title_won?, context)
 
     if direct_only? and is_nil(coordinates) and standard_coordinates(remainder, context, false),
       do: :blocked,
@@ -312,6 +314,46 @@ defmodule Cinder.Acquisition.AnimeParser do
   defp maybe_unscoped_standard_coordinates(title, context) do
     if Map.get(context, :allow_unscoped_standard, false),
       do: unscoped_standard_coordinates(title, context)
+  end
+
+  # Nyaa.si's definition can insert ` S01 ` after the title of a batch name, so
+  # "Show - 01 ~ 26" can arrive as "Show S01  - 01 ~ 26" (#1951). This fallback reads such a
+  # range as season 1's standard episodes, as #1951's triage decided: "Show S01 - 01 ~ 26" and
+  # "Show S01 01-26" give S01E01 to S01E26. It reads only a range right after the `S01` that
+  # follows a title which is no scene title, with bounds of one to three digits, ascending and
+  # at most 100 wide, and with no later coordinate, season token or typed special after it
+  # ("+ S02", "Recap"). It reads no `S02` or later range, which can continue season 1's
+  # numbering. Only a context with `read_season_one_range: true` reads it: the search's release
+  # titles do, and the import preflight's frozen context does not, since it can keep an alias
+  # whose scene scope it dropped.
+  defp season_one_range_coordinates(
+         remainder,
+         false = _scene_title_won?,
+         %{read_season_one_range: true} = context
+       )
+       when is_binary(remainder) do
+    case Regex.run(
+           ~r/^[\s._\-–—]*S01\s+(?:[-–—]\s+)?(\d{1,3})\s*[-–—~〜～]\s*(\d{1,3})(?![\p{L}\p{N}])/iu,
+           remainder
+         ) do
+      [matched, first, last] ->
+        unless malformed_coordinate_tail?(remainder, matched, context) or
+                 season_one_range_tail_refused?(remainder, matched),
+               do: same_season_coordinates("1", first, last)
+
+      nil ->
+        nil
+    end
+  end
+
+  defp season_one_range_coordinates(_remainder, _scene_title_won?, _context), do: nil
+
+  defp season_one_range_tail_refused?(remainder, matched) do
+    tail_start = byte_size(matched)
+    tail = binary_part(remainder, tail_start, byte_size(remainder) - tail_start)
+
+    Regex.match?(~r/(?<![\p{L}\p{N}])S\d{1,3}(?![\p{L}\p{N}])/iu, tail) or
+      typed_special(tail) != nil
   end
 
   defp unscoped_standard_coordinates(title, context) do

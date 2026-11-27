@@ -306,7 +306,10 @@ defmodule Cinder.Acquisition.Anime do
       blocked_titles: parser_blocked_titles(context),
       allow_unscoped_standard: allow_unscoped_standard?(release, context),
       year: context.year,
-      scene_titles: parser_scene_titles(context)
+      scene_titles: parser_scene_titles(context),
+      # A release title gets the `S01 01-26` reading Nyaa.si's inserted `S01` needs (#1951).
+      # The mapping snapshot leaves it out, so the import preflight never reads it.
+      read_season_one_range: true
     }
 
     parsed = AnimeParser.parse(release.title, parser_context)

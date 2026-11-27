@@ -191,6 +191,22 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     end
   end
 
+  test "a batch named with Nyaa.si's inserted S01 before its range resolves to season 1 (#1951)" do
+    context = %{
+      simple_standard_context()
+      | episodes: [episode(11, 1, 1), episode(12, 1, 2)],
+        mappings: [
+          mapping("cinder", "standard", "canonical", "S01E01", [11]),
+          mapping("cinder", "standard", "canonical", "S01E02", [12])
+        ]
+    }
+
+    release = Release.new(raw("[Erai-raws] Show S01  - 01 ~ 02 [1080p][BATCH]", "batch"))
+
+    assert [%Release{role: :story, resolved_episode_ids: [11, 12]}] =
+             Anime.episode_candidates([release], context, [11, 12])
+  end
+
   test "automatic and manual selection reject malformed coordinates before typed specials" do
     context = %{
       kind: :series,

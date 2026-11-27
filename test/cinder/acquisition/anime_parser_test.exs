@@ -622,6 +622,144 @@ defmodule Cinder.Acquisition.AnimeParserTest do
              AnimeParser.parse("[Group] Show S01E01-12 [1080p]", context)
   end
 
+  # Nyaa.si's definition can insert ` S01 ` after the title of a batch name, so
+  # "Cowboy Bebop - 01 ~ 26" reached prod's search as "Cowboy Bebop S01  - 01 ~ 26" (#1951).
+  describe "a range after an S01 token" do
+    setup do
+      %{
+        bebop: %{
+          kind: :series,
+          titles: ["Cowboy Bebop"],
+          year: 1998,
+          allow_unscoped_standard: true,
+          read_season_one_range: true
+        }
+      }
+    end
+
+    test "reads `S01 - 01 ~ 26` as season 1 episodes 1 to 26", %{bebop: context} do
+      expected = Enum.map(1..26, &"S01E#{String.pad_leading(Integer.to_string(&1), 2, "0")}")
+
+      assert %{
+               coordinates: [%{scheme: "standard", values: ^expected}],
+               role: :story,
+               group: "Erai-raws"
+             } =
+               AnimeParser.parse(
+                 "[Erai-raws] Cowboy Bebop S01  - 01 ~ 26 [1080p][BATCH][Multiple Subtitle]",
+                 context
+               )
+    end
+
+    test "reads `S01 01-26` as season 1 episodes 1 to 26", %{bebop: context} do
+      expected = Enum.map(1..26, &"S01E#{String.pad_leading(Integer.to_string(&1), 2, "0")}")
+
+      assert %{coordinates: [%{scheme: "standard", values: ^expected}], role: :story} =
+               AnimeParser.parse("[Judas] Cowboy Bebop S01 01-26 [BD 1080p]", context)
+    end
+
+    test "keeps a range after S02 unread", %{bebop: context} do
+      assert AnimeParser.parse("[Erai-raws] Cowboy Bebop S02 - 13 ~ 24 [1080p][BATCH]", context) ==
+               %{group: "Erai-raws", role: :unknown, coordinates: [], invalid_coordinate: true}
+
+      assert AnimeParser.parse("[Erai-raws] Cowboy Bebop S02 13-24 [1080p]", context) ==
+               %{group: "Erai-raws", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a bare S01 with no range unread", %{bebop: context} do
+      assert AnimeParser.parse("[Polarwindz] Cowboy Bebop S01 (BD 1080p HEVC Opus)", context) ==
+               %{group: "Polarwindz", role: :unknown, coordinates: []}
+
+      assert AnimeParser.parse("[Erai-raws] Cowboy Bebop S01 [1080p][BATCH]", context) ==
+               %{group: "Erai-raws", role: :unknown, coordinates: []}
+    end
+
+    test "keeps a range wider than 100 episodes unread" do
+      context = %{
+        kind: :series,
+        titles: ["Bleach"],
+        year: 2004,
+        allow_unscoped_standard: true,
+        read_season_one_range: true
+      }
+
+      for {title, group} <- [
+            {"[Erai-raws] Bleach S01  - 001 ~ 366 [1080p DSNP WEB-DL AVC AAC][MultiSub] [BATCH]",
+             "Erai-raws"},
+            {"[lost108] BLEACH S01  - 215-366 - VOSTFR - 1080p - x265 - JAP BDRIP", "lost108"}
+          ] do
+        assert AnimeParser.parse(title, context) ==
+                 %{group: group, role: :unknown, coordinates: [], invalid_coordinate: true},
+               title
+      end
+    end
+
+    test "keeps a range unread when another coordinate follows it", %{bebop: context} do
+      assert AnimeParser.parse("[X] Cowboy Bebop S01 - 01 ~ 13 - 14 ~ 26 [1080p]", context) ==
+               %{group: "X", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a four-digit year range unread", %{bebop: context} do
+      assert AnimeParser.parse("[X] Cowboy Bebop S01 2019-2020 [1080p]", context) ==
+               %{group: "X", role: :unknown, coordinates: []}
+    end
+
+    test "keeps a range with a four-digit bound unread", %{bebop: context} do
+      for title <- [
+            "[X] Cowboy Bebop S01 0001-26 [1080p]",
+            "[X] Cowboy Bebop S01 01-0026 [1080p]"
+          ] do
+        assert AnimeParser.parse(title, context) ==
+                 %{group: "X", role: :unknown, coordinates: [], invalid_coordinate: true},
+               title
+      end
+    end
+
+    test "keeps a range unread when a word sits between the title and S01" do
+      context = %{
+        kind: :series,
+        titles: ["Show"],
+        year: 2020,
+        allow_unscoped_standard: false,
+        read_season_one_range: true
+      }
+
+      assert AnimeParser.parse("[Group] Show Arc S01 - 01 ~ 12 [1080p]", context) ==
+               %{group: "Group", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a range unread after a scene title scoped to a later season" do
+      context = %{
+        kind: :series,
+        titles: ["Show", "Show Arc"],
+        year: 2020,
+        allow_unscoped_standard: false,
+        read_season_one_range: true,
+        scene_titles: [%{title: "Show Arc", season: 2, source: "tvdb", namespace: "default"}]
+      }
+
+      assert AnimeParser.parse("[Group] Show Arc S01 - 01 ~ 12 [1080p]", context) ==
+               %{group: "Group", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a range unread when another season token follows it", %{bebop: context} do
+      assert AnimeParser.parse("[X] Cowboy Bebop S01 01-26 + S02 [1080p]", context) ==
+               %{group: "X", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a range unread when a typed special follows it", %{bebop: context} do
+      assert AnimeParser.parse("[X] Cowboy Bebop S01 01-26 Recap [1080p]", context) ==
+               %{group: "X", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+
+    test "keeps a range unread in a context without read_season_one_range", %{bebop: context} do
+      context = Map.delete(context, :read_season_one_range)
+
+      assert AnimeParser.parse("[Judas] Cowboy Bebop S01 01-26 [BD 1080p]", context) ==
+               %{group: "Judas", role: :unknown, coordinates: [], invalid_coordinate: true}
+    end
+  end
+
   test "expands a fully qualified ascending same-season range" do
     context = %{kind: :series, titles: ["Show"], year: 2020}
 
