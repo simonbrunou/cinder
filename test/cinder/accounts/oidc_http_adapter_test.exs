@@ -3,6 +3,7 @@ defmodule Cinder.Accounts.OIDC.HTTPAdapterTest do
 
   alias Assent.HTTPAdapter.HTTPResponse
   alias Cinder.Accounts.OIDC.HTTPAdapter
+  alias Cinder.Test.BoundedRequestWait
 
   test "normalizes a bounded JSON response for Assent" do
     Req.Test.stub(Cinder.OIDCStub, fn conn ->
@@ -15,14 +16,25 @@ defmodule Cinder.Accounts.OIDC.HTTPAdapterTest do
       |> Req.Test.json(%{"access_token" => "token"})
     end)
 
-    assert {:ok, %HTTPResponse{} = response} =
-             HTTPAdapter.request(
-               :post,
-               "https://id.example.com/token",
-               "code=abc",
-               [{"content-type", "application/x-www-form-urlencoded"}],
-               plug: {Req.Test, Cinder.OIDCStub}
-             )
+    # The adapter's own deadline is 20 s, and no option shortens it. A loaded host stalled this
+    # stubbed call past it twice (#1730), so the call runs in a task the test waits 15 s for.
+    # Past 15 s, with the request task still alive, the wait's failure says where the task and
+    # its request task stood. The caller task holds no access to the stub to grant, so the
+    # request task reaches the stub through `$callers`.
+    watch = BoundedRequestWait.watch()
+
+    task =
+      Task.async(fn ->
+        HTTPAdapter.request(
+          :post,
+          "https://id.example.com/token",
+          "code=abc",
+          [{"content-type", "application/x-www-form-urlencoded"}],
+          plug: {Req.Test, Cinder.OIDCStub}
+        )
+      end)
+
+    assert {:ok, %HTTPResponse{} = response} = BoundedRequestWait.await(watch, task, 15_000)
 
     assert response.status == 200
     assert {"content-type", "application/json; charset=utf-8"} in response.headers
