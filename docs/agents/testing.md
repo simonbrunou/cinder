@@ -301,11 +301,17 @@
 - A mutation check proves only the code it ran on. After a later edit to a mutated file,
   such as a Credo fix or a review fix, run its mutant list again before a PR body, a brief or
   a report quotes its kills. Rewrite each mutant whose `old` the edit removed or duplicated
-  against the new text, and add one for each clause the edit added. The script runs none of
-  the list and exits 2 on such an `old`, but an edit that leaves every `old` in place passes
-  that check while the list still misses the new code. On #1915 (PR #1922) a Credo complexity
-  fix moved the engine clause after its mutants had run, and the PR body's first draft quoted
-  those kills and counted 8 mutants in `parity.ex`, where 4 had run.
+  against the new text, and add one for each step the edit added: each stage of a pipeline such
+  as `|> Enum.filter(...)`, a stage that shares a line with another included, and each other line
+  that computes a value or tests a condition. A line that only opens or closes a block, names a
+  binding or holds a `@spec` needs none. The script runs none of the list and exits 2 on such an
+  `old`, but an edit that leaves every `old` in place passes that check while the list still
+  misses the new code. On #1915 (PR #1922) a Credo complexity fix moved the engine clause after
+  its mutants had run, and the PR body's first draft quoted those kills and counted 8 mutants in
+  `parity.ex`, where 4 had run. On #1914 (PR #1930) a review fix added a function whose list held
+  no mutant for 5 of the steps it added, its `Enum.filter(&(&1 > 1))` stage among them. The
+  re-check found the `filter` mutant surviving, which took a test commit and another mutation
+  run.
 - Select each test a mutant must kill by name: after the test file, give one
   `--only "test:test <name>"` per test. `<name>` is what a `--trace` run prints after `* test `:
   the test's name, prefixed by its `describe` block's name and a space when it sits in one. Put
