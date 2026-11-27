@@ -24,14 +24,14 @@ defmodule Cinder.Acquisition.Anime do
   `Report.combine/1` picks when no query answered.
   """
   def search_movie(indexer, imdb_id, context, _opts),
-    do: indexer |> movie_search(imdb_id, context) |> with_incomplete_flag()
+    do: indexer |> movie_search(imdb_id, with_titles(context)) |> with_incomplete_flag()
 
   @doc """
   Runs the anime episode queries for `wanted_ids` through `indexer`, in `search_movie/4`'s
   shape.
   """
   def search_episodes(indexer, context, wanted_ids, _opts),
-    do: indexer |> episode_search(context, wanted_ids) |> with_incomplete_flag()
+    do: indexer |> episode_search(with_titles(context), wanted_ids) |> with_incomplete_flag()
 
   defp with_incomplete_flag({:ok, releases, report}),
     do: {:ok, releases, Report.incomplete?(report)}
@@ -73,6 +73,8 @@ defmodule Cinder.Acquisition.Anime do
   query answered.
   """
   def judge_movie(indexer, imdb_id, context, opts) do
+    context = with_titles(context)
+
     with {:ok, releases, report} <- movie_search(indexer, imdb_id, context),
          do: judged(releases, {:anime_movie, context}, opts, report)
   end
@@ -90,6 +92,8 @@ defmodule Cinder.Acquisition.Anime do
   Returns `judge_movie/4`'s shape.
   """
   def judge_episodes(indexer, context, wanted_ids, opts) do
+    context = with_titles(context)
+
     with {:ok, releases, report} <- episode_search(indexer, context, wanted_ids),
          do: judged(releases, {:anime_episodes, context, wanted_ids}, opts, report)
   end
@@ -227,18 +231,20 @@ defmodule Cinder.Acquisition.Anime do
   manual-search panel alike, and a manual grab re-checks its release through it.
   """
   def episode_candidates(releases, context, wanted_ids) do
-    Enum.map(releases, fn release ->
-      parsed = parse_anime_release(release, context)
+    titles = titles(context)
 
-      case resolve_release(parsed, context, wanted_ids) do
-        [resolved] -> freeze_mapping(parsed, resolved, context)
+    Enum.map(releases, fn release ->
+      parsed = parse_anime_release(release, context, titles)
+
+      case resolve_release(parsed, context, wanted_ids, titles) do
+        [resolved] -> freeze_mapping(parsed, resolved, context, titles)
         [] -> parsed
       end
     end)
   end
 
-  defp freeze_mapping(parsed, resolved, context) do
-    snapshot = build_mapping_snapshot(resolved, resolved.resolved_episode_ids, context)
+  defp freeze_mapping(parsed, resolved, context, titles) do
+    snapshot = mapping_snapshot(resolved, resolved.resolved_episode_ids, context, titles)
 
     if is_map(snapshot) and
          Intent.valid_mapping_snapshot?(snapshot, :episode, resolved.resolved_episode_ids),
@@ -246,10 +252,16 @@ defmodule Cinder.Acquisition.Anime do
        else: parsed
   end
 
-  def build_mapping_snapshot(%Release{} = release, reserved_ids, context) do
-    case parser_snapshot_titles(context, parser_alias_titles(context)) do
-      [] -> nil
-      parser_titles -> do_build_mapping_snapshot(release, reserved_ids, context, parser_titles)
+  def build_mapping_snapshot(%Release{} = release, reserved_ids, context),
+    do: mapping_snapshot(release, reserved_ids, context, titles(context))
+
+  defp mapping_snapshot(release, reserved_ids, context, titles) do
+    case titles.parser_titles do
+      [] ->
+        nil
+
+      parser_titles ->
+        do_build_mapping_snapshot(release, reserved_ids, context, parser_titles, titles)
     end
   end
 
@@ -257,7 +269,8 @@ defmodule Cinder.Acquisition.Anime do
          release,
          reserved_ids,
          context,
-         [parser_title | parser_aliases]
+         [parser_title | parser_aliases],
+         titles
        ) do
     reserved = MapSet.new(reserved_ids)
 
@@ -265,19 +278,19 @@ defmodule Cinder.Acquisition.Anime do
       context.mappings
       |> Enum.filter(fn mapping ->
         not MapSet.disjoint?(MapSet.new(mapping.episode_ids), reserved) and
-          snapshot_mapping_safe?(mapping)
+          snapshot_mapping_safe?(mapping, titles)
       end)
-      |> Enum.map(&snapshot_mapping/1)
+      |> Enum.map(&snapshot_mapping(&1, titles))
 
     parser_context =
       %{
         "title" => parser_title,
         "aliases" => parser_aliases,
-        "blocked_titles" => parser_blocked_titles(context),
+        "blocked_titles" => titles.blocked_titles,
         "allow_unscoped_standard" => allow_unscoped_standard?(release, context),
         "year" => context.year
       }
-      |> put_scene_titles(parser_scene_titles(context, reserved_ids))
+      |> put_scene_titles(parser_scene_titles(context, reserved_ids, titles), titles)
 
     %{
       "version" => 3,
@@ -285,7 +298,7 @@ defmodule Cinder.Acquisition.Anime do
       "reserved_episode_ids" => reserved_ids,
       "release" => %{
         "title" => release.title,
-        "coordinates" => Enum.map(release.coordinates || [], &snapshot_coordinate/1),
+        "coordinates" => Enum.map(release.coordinates || [], &snapshot_coordinate(&1, titles)),
         "group" => release.group,
         "category_ids" => release.category_ids || [],
         "indexer_id" => release.indexer_id,
@@ -294,19 +307,19 @@ defmodule Cinder.Acquisition.Anime do
       "mappings" => mappings,
       "selected_resolution" => %{
         "episode_ids" => reserved_ids,
-        "values" => Enum.map(release.resolution_evidence || [], &snapshot_resolution/1)
+        "values" => Enum.map(release.resolution_evidence || [], &snapshot_resolution(&1, titles))
       }
     }
   end
 
-  defp parse_anime_release(release, context) do
+  defp parse_anime_release(release, context, titles) do
     parser_context = %{
       kind: :series,
-      titles: parser_snapshot_titles(context, parser_alias_titles(context)),
-      blocked_titles: parser_blocked_titles(context),
+      titles: titles.parser_titles,
+      blocked_titles: titles.blocked_titles,
       allow_unscoped_standard: allow_unscoped_standard?(release, context),
       year: context.year,
-      scene_titles: parser_scene_titles(context),
+      scene_titles: titles.scene_titles,
       # A release title gets the `S01 01-26` reading Nyaa.si's inserted `S01` needs (#1951).
       # The mapping snapshot leaves it out, so the import preflight never reads it.
       read_season_one_range: true
@@ -325,17 +338,104 @@ defmodule Cinder.Acquisition.Anime do
     }
   end
 
-  defp parser_alias_titles(context) do
-    retained_aliases = context |> eligible_alias_titles() |> Enum.take(@max_aliases)
-    omitted_aliases = omitted_parser_alias_titles(context, retained_aliases)
+  # The search's titles and the lists it derives from them, built once per search and carried in
+  # the context (#1968). Each release used to derive them again, normalizing every known alias
+  # several times over, and a parity compare replays the search over its recorded rows many times
+  # per try. The searches and judges put them in the context (`with_titles/1`), so the judge's
+  # calls back into this module (`episode_candidates/3`, `names_series?/2`, `names_movie?/2`) read
+  # them. They hold the title, aliases, scene titles and mappings they were built from, and
+  # `titles/1` and `guard/1` build new ones for a context whose own differ.
+  #
+  # - `normalized`: each of those strings normalized (`TitleAlias.normalize/1`), read through
+  #   `normalized/2`.
+  # - `parser_aliases`: the aliases the parser and the free-text queries read.
+  # - `parser_titles`: the title and those aliases, as the parser and its snapshot take them.
+  # - `blocked_titles`: the parser's negative evidence.
+  # - `scene_candidates`: the scene titles of `parser_aliases`, which `parser_scene_titles/3`
+  #   checks against a snapshot's reserved episodes.
+  # - `scene_titles`: the first `@max_aliases` of `scene_candidates`, as the parse reads them.
+  # - `guard`: the guard's titles (`known_title_match?/2`).
+  @titles_key :anime_titles
 
-    Enum.reject(retained_aliases, &title_blocked_by_omitted_alias?(&1, omitted_aliases))
+  defp with_titles(context) do
+    titles = titles(context)
+
+    if Map.get(context, @titles_key) === titles,
+      do: context,
+      else: Map.put(context, @titles_key, titles)
   end
 
-  defp parser_snapshot_titles(context, aliases) do
+  defp titles(context) do
+    inputs = title_inputs(context)
+
+    case Map.get(context, @titles_key) do
+      %{inputs: ^inputs} = titles -> titles
+      _missing_or_stale -> build_titles(context, inputs)
+    end
+  end
+
+  defp title_inputs(context) do
+    {context.title, context.aliases, Map.get(context, :scene_titles, []),
+     Map.get(context, :mappings, [])}
+  end
+
+  defp build_titles(context, inputs) do
+    normalized = normalized_strings(context)
+    titles = %{inputs: inputs, normalized: normalized}
+    norm = &normalized(titles, &1)
+
+    known_aliases = known_alias_titles(context, norm)
+
+    retained_aliases =
+      known_aliases
+      |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
+      |> Enum.take(@max_aliases)
+
+    omitted_aliases =
+      context
+      |> omitted_parser_alias_titles(retained_aliases, known_aliases, norm)
+      |> Enum.map(norm)
+
+    blocked? = &title_blocked_by_omitted_alias?(norm.(&1), omitted_aliases)
+    parser_aliases = Enum.reject(retained_aliases, blocked?)
+    scene_candidates = scene_candidates(context, parser_aliases, norm)
+
+    Map.merge(titles, %{
+      parser_aliases: parser_aliases,
+      parser_titles: parser_snapshot_titles(context, parser_aliases, norm),
+      blocked_titles: parser_blocked_titles(context, retained_aliases, blocked?, norm),
+      scene_candidates: scene_candidates,
+      scene_titles: Enum.take(scene_candidates, @max_aliases),
+      guard: guard_titles(context, norm)
+    })
+  end
+
+  # Every string of the context the search normalizes: its title, each alias, each scene title and
+  # each mapping's scope title.
+  defp normalized_strings(context) do
+    scene_titles =
+      for scene_title <- Map.get(context, :scene_titles, []),
+          do: scene_title_field(scene_title, :title)
+
+    scope_titles =
+      for mapping <- Map.get(context, :mappings, []), do: Map.get(mapping, :scope_title)
+
+    alias_titles = Enum.map(context.aliases, &Map.get(&1, :title))
+
+    [context.title | alias_titles ++ scene_titles ++ scope_titles]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+    |> Map.new(&{&1, normalize_title(&1)})
+  end
+
+  # `TitleAlias.normalize/1` of `value`, read from `titles` when it is one of the context's strings.
+  defp normalized(titles, value),
+    do: Map.get_lazy(titles.normalized, value, fn -> normalize_title(value) end)
+
+  defp parser_snapshot_titles(context, aliases, norm) do
     [context.title | aliases]
     |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
-    |> Enum.uniq_by(&normalize_title/1)
+    |> Enum.uniq_by(norm)
   end
 
   defp allow_unscoped_standard?(release, context) do
@@ -343,87 +443,71 @@ defmodule Cinder.Acquisition.Anime do
       :id_scoped in (release.query_origins || [])
   end
 
-  defp eligible_alias_titles(context) do
-    context
-    |> known_alias_titles()
-    |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
-  end
-
   # Negative prefix evidence must include every persisted nonblank alias. The parser/search length
   # limit bounds positive use only; dropping an over-limit longer alias from the safety set would
   # let its retained prefix consume a numeric title continuation.
-  defp known_alias_titles(context) do
-    canonical_normalized = normalize_title(context.title)
+  defp known_alias_titles(context, norm) do
+    canonical_normalized = norm.(context.title)
 
     context.aliases
     |> Enum.filter(&known_alias?/1)
-    |> Enum.sort_by(&alias_sort_key/1)
-    |> Enum.uniq_by(&normalize_title(&1.title))
-    |> Enum.reject(&(normalize_title(&1.title) == canonical_normalized))
+    |> Enum.sort_by(&alias_sort_key(&1, norm))
+    |> Enum.uniq_by(&norm.(&1.title))
+    |> Enum.reject(&(norm.(&1.title) == canonical_normalized))
     |> Enum.map(& &1.title)
   end
 
-  defp omitted_parser_alias_titles(context, retained_aliases) do
+  defp omitted_parser_alias_titles(context, retained_aliases, known_aliases, norm) do
     retained =
       context
-      |> parser_snapshot_titles(retained_aliases)
-      |> MapSet.new(&normalize_title/1)
+      |> parser_snapshot_titles(retained_aliases, norm)
+      |> MapSet.new(norm)
 
-    [context.title | known_alias_titles(context)]
-    |> Enum.reject(&MapSet.member?(retained, normalize_title(&1)))
+    Enum.reject([context.title | known_aliases], &MapSet.member?(retained, norm.(&1)))
   end
 
-  defp parser_scene_titles(context, reserved_ids \\ nil) do
-    retained_aliases = parser_alias_titles(context)
-
+  # The scene titles of the parser's aliases that `parser_scene_titles/3` may keep, before its
+  # scope check and its count bound.
+  defp scene_candidates(context, parser_aliases, norm) do
     scene_titles_by_normalized_title =
       context
       |> Map.get(:scene_titles, [])
       |> Map.new(fn scene_title ->
         title = Map.get(scene_title, :title) || Map.get(scene_title, "title")
-        {normalize_title(title), scene_title}
+        {norm.(title), scene_title}
       end)
 
     if within_codepoint_limit?(context.title, @max_title_codepoints) do
-      retained_aliases
-      |> Enum.map(&Map.get(scene_titles_by_normalized_title, normalize_title(&1)))
+      parser_aliases
+      |> Enum.map(&Map.get(scene_titles_by_normalized_title, norm.(&1)))
       |> Enum.reject(&is_nil/1)
       |> Enum.filter(fn scene_title ->
-        normalized = scene_title |> scene_title_field(:title) |> normalize_title()
-
-        scene_title_applies?(scene_title, context, reserved_ids) and
-          within_codepoint_limit?(normalized, @max_title_codepoints)
+        normalized = scene_title |> scene_title_field(:title) |> norm.()
+        within_codepoint_limit?(normalized, @max_title_codepoints)
       end)
-      |> Enum.take(@max_aliases)
     else
       []
     end
+  end
+
+  defp parser_scene_titles(context, reserved_ids, titles) do
+    titles.scene_candidates
+    |> Enum.filter(&scene_title_applies?(&1, context, reserved_ids, titles))
+    |> Enum.take(@max_aliases)
   end
 
   # The parser snapshot is intentionally bounded. Neither the canonical title nor a retained alias
   # may outlive a longer known alias omitted from positive parsing by either the count or codepoint
   # bound. Persist every rejected retained title as negative evidence so frozen replay cannot infer
   # through the exact title the live parser removed.
-  defp parser_blocked_titles(context) do
-    retained_aliases = context |> eligible_alias_titles() |> Enum.take(@max_aliases)
-    omitted_aliases = omitted_parser_alias_titles(context, retained_aliases)
-
+  defp parser_blocked_titles(context, retained_aliases, blocked?, norm) do
     [context.title | retained_aliases]
-    |> Enum.filter(fn title ->
-      title_blocked_by_omitted_alias?(title, omitted_aliases) and
-        within_codepoint_limit?(title, @max_title_codepoints)
-    end)
-    |> Enum.uniq_by(&normalize_title/1)
+    |> Enum.filter(&(blocked?.(&1) and within_codepoint_limit?(&1, @max_title_codepoints)))
+    |> Enum.uniq_by(norm)
   end
 
-  defp title_blocked_by_omitted_alias?(title, omitted_aliases) do
-    title = normalize_title(title)
-
-    Enum.any?(omitted_aliases, fn omitted_alias ->
-      omitted_alias = normalize_title(omitted_alias)
-      longer_title_extension?(title, omitted_alias)
-    end)
-  end
+  defp title_blocked_by_omitted_alias?(normalized_title, normalized_omitted_aliases),
+    do: Enum.any?(normalized_omitted_aliases, &longer_title_extension?(normalized_title, &1))
 
   defp longer_title_extension?(shorter, longer) do
     if String.length(longer) > String.length(shorter) and String.starts_with?(longer, shorter) do
@@ -434,9 +518,7 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  defp scene_title_applies?(_scene_title, _context, nil), do: true
-
-  defp scene_title_applies?(scene_title, context, reserved_ids) do
+  defp scene_title_applies?(scene_title, context, reserved_ids, titles) do
     scope = %{
       title: scene_title_field(scene_title, :title),
       season: scene_title_field(scene_title, :season),
@@ -445,27 +527,27 @@ defmodule Cinder.Acquisition.Anime do
     }
 
     reserved = MapSet.new(reserved_ids)
-    Enum.any?(context.mappings, &scene_mapping_applies?(&1, scope, reserved))
+    Enum.any?(context.mappings, &scene_mapping_applies?(&1, scope, reserved, titles))
   end
 
   defp scene_title_field(scene_title, key),
     do: Map.get(scene_title, key) || Map.get(scene_title, Atom.to_string(key))
 
-  defp scene_mapping_applies?(mapping, scope, reserved) do
+  defp scene_mapping_applies?(mapping, scope, reserved, titles) do
     identity = mapping.identity
 
     identity.source == scope.source and identity.scheme == "scene" and
       identity.namespace == scope.namespace and
       scene_value_in_season?(identity.canonical_value, scope.season) and
-      matching_scope_title?(Map.get(mapping, :scope_title), scope.title) and
+      matching_scope_title?(Map.get(mapping, :scope_title), scope.title, titles) and
       not MapSet.disjoint?(MapSet.new(mapping.episode_ids), reserved)
   end
 
-  defp matching_scope_title?(mapping_title, title)
+  defp matching_scope_title?(mapping_title, title, titles)
        when is_binary(mapping_title) and is_binary(title),
-       do: normalize_title(mapping_title) == normalize_title(title)
+       do: normalized(titles, mapping_title) == normalized(titles, title)
 
-  defp matching_scope_title?(_mapping_title, _title), do: false
+  defp matching_scope_title?(_mapping_title, _title, _titles), do: false
 
   defp scene_value_in_season?(value, season) when is_binary(value) and is_integer(season) do
     case Regex.run(~r/^S(\d{2,3})E\d{2,4}$/u, value, capture: :all_but_first) do
@@ -476,14 +558,14 @@ defmodule Cinder.Acquisition.Anime do
 
   defp scene_value_in_season?(_value, _season), do: false
 
-  defp put_scene_titles(parser_context, []), do: parser_context
+  defp put_scene_titles(parser_context, [], _titles), do: parser_context
 
-  defp put_scene_titles(parser_context, scene_titles) do
+  defp put_scene_titles(parser_context, scene_titles, titles) do
     serialized =
       Enum.map(scene_titles, fn scene_title ->
         %{
           "title" =>
-            normalize_title(Map.get(scene_title, :title) || Map.get(scene_title, "title")),
+            normalized(titles, Map.get(scene_title, :title) || Map.get(scene_title, "title")),
           "season" => Map.get(scene_title, :season) || Map.get(scene_title, "season"),
           "source" => Map.get(scene_title, :source) || Map.get(scene_title, "source"),
           "namespace" => Map.get(scene_title, :namespace) || Map.get(scene_title, "namespace")
@@ -500,7 +582,7 @@ defmodule Cinder.Acquisition.Anime do
 
   defp fill_movie_group(release), do: release
 
-  defp resolve_release(%Release{coordinates: coordinates} = release, context, wanted_ids)
+  defp resolve_release(%Release{coordinates: coordinates} = release, context, wanted_ids, titles)
        when coordinates != [] do
     values =
       for coordinate <- coordinates, value <- coordinate.values do
@@ -513,7 +595,7 @@ defmodule Cinder.Acquisition.Anime do
         }
       end
 
-    case resolve_values(values, context.mappings, []) do
+    case resolve_values(values, context.mappings, [], titles) do
       {:ok, evidence} ->
         episode_ids = evidence |> Enum.flat_map(& &1.episode_ids) |> Enum.uniq()
 
@@ -534,12 +616,12 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  defp resolve_release(_release, _context, _wanted_ids), do: []
+  defp resolve_release(_release, _context, _wanted_ids, _titles), do: []
 
-  defp resolve_values([], _mappings, evidence), do: {:ok, Enum.reverse(evidence)}
+  defp resolve_values([], _mappings, evidence, _titles), do: {:ok, Enum.reverse(evidence)}
 
-  defp resolve_values([coordinate | rest], mappings, evidence) do
-    case resolve_coordinate(coordinate, mappings) do
+  defp resolve_values([coordinate | rest], mappings, evidence, titles) do
+    case resolve_coordinate(coordinate, mappings, titles) do
       {:ok, episode_ids, resolver_evidence} ->
         value_evidence =
           %{
@@ -551,7 +633,7 @@ defmodule Cinder.Acquisition.Anime do
           }
           |> put_coordinate_scope(coordinate)
 
-        resolve_values(rest, mappings, [value_evidence | evidence])
+        resolve_values(rest, mappings, [value_evidence | evidence], titles)
 
       _unresolved ->
         :error
@@ -560,7 +642,8 @@ defmodule Cinder.Acquisition.Anime do
 
   defp resolve_coordinate(
          %{source: source, namespace: namespace, scope_title: scope_title} = coordinate,
-         mappings
+         mappings,
+         titles
        )
        when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
     matching =
@@ -570,19 +653,19 @@ defmodule Cinder.Acquisition.Anime do
         identity.source == source and identity.scheme == coordinate.scheme and
           identity.namespace == namespace and
           identity.canonical_value == coordinate.canonical_value and
-          matching_scope_title?(Map.get(mapping, :scope_title), scope_title)
+          matching_scope_title?(Map.get(mapping, :scope_title), scope_title, titles)
       end)
 
     AnimeResolver.resolve_mappings(matching)
   end
 
-  defp resolve_coordinate(%{source: source, namespace: namespace}, _mappings)
+  defp resolve_coordinate(%{source: source, namespace: namespace}, _mappings, _titles)
        when is_binary(source) or is_binary(namespace),
        do: :error
 
   # An unscoped coordinate reads through the search's one numbering, bridge included. A scoped one
   # (above) matches its own provider namespace exactly, with no bridge.
-  defp resolve_coordinate(coordinate, mappings) do
+  defp resolve_coordinate(coordinate, mappings, _titles) do
     EpisodeNumbering.resolve(:anime, coordinate.scheme, coordinate.canonical_value, mappings)
   end
 
@@ -763,38 +846,38 @@ defmodule Cinder.Acquisition.Anime do
   defp waiting_ids(nil), do: []
   defp waiting_ids(waiting), do: waiting.episode_ids
 
-  defp snapshot_mapping(mapping) do
+  defp snapshot_mapping(mapping, titles) do
     %{
       "identity" => snapshot_identity(mapping.identity),
       "precedence" => Atom.to_string(mapping.precedence),
       "episode_ids" => mapping.episode_ids,
       "evidence" => json_safe(mapping.evidence)
     }
-    |> put_snapshot_scope_title(Map.get(mapping, :scope_title))
+    |> put_snapshot_scope_title(Map.get(mapping, :scope_title), titles)
   end
 
-  defp snapshot_mapping_safe?(mapping) do
+  defp snapshot_mapping_safe?(mapping, titles) do
     case Map.get(mapping, :scope_title) do
       nil ->
         true
 
       title when is_binary(title) ->
-        normalized = normalize_title(title)
+        normalized_title = normalized(titles, title)
 
         mapping.identity.scheme == "scene" and
-          within_codepoint_limit?(normalized, @max_title_codepoints)
+          within_codepoint_limit?(normalized_title, @max_title_codepoints)
 
       _invalid ->
         false
     end
   end
 
-  defp snapshot_coordinate(coordinate) do
+  defp snapshot_coordinate(coordinate, titles) do
     %{"scheme" => coordinate.scheme, "values" => coordinate.values}
-    |> put_snapshot_scope(coordinate)
+    |> put_snapshot_scope(coordinate, titles)
   end
 
-  defp snapshot_resolution(resolution) do
+  defp snapshot_resolution(resolution, titles) do
     %{
       "scheme" => resolution.scheme,
       "canonical_value" => resolution.canonical_value,
@@ -802,28 +885,28 @@ defmodule Cinder.Acquisition.Anime do
       "precedence" => Atom.to_string(resolution.precedence),
       "mapping_identities" => Enum.map(resolution.mapping_identities, &snapshot_identity/1)
     }
-    |> put_snapshot_scope(resolution)
+    |> put_snapshot_scope(resolution, titles)
   end
 
-  defp put_snapshot_scope(snapshot, %{
-         source: source,
-         namespace: namespace,
-         scope_title: scope_title
-       })
+  defp put_snapshot_scope(
+         snapshot,
+         %{source: source, namespace: namespace, scope_title: scope_title},
+         titles
+       )
        when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
     Map.merge(snapshot, %{
       "source" => source,
       "namespace" => namespace,
-      "scope_title" => normalize_title(scope_title)
+      "scope_title" => normalized(titles, scope_title)
     })
   end
 
-  defp put_snapshot_scope(snapshot, _value), do: snapshot
+  defp put_snapshot_scope(snapshot, _value, _titles), do: snapshot
 
-  defp put_snapshot_scope_title(snapshot, title) when is_binary(title) and title != "",
-    do: Map.put(snapshot, "scope_title", normalize_title(title))
+  defp put_snapshot_scope_title(snapshot, title, titles) when is_binary(title) and title != "",
+    do: Map.put(snapshot, "scope_title", normalized(titles, title))
 
-  defp put_snapshot_scope_title(snapshot, _title), do: snapshot
+  defp put_snapshot_scope_title(snapshot, _title, _titles), do: snapshot
 
   defp snapshot_identity(identity) do
     %{
@@ -952,7 +1035,7 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp search_titles(context) do
-    [context.title | parser_alias_titles(context)]
+    [context.title | titles(context).parser_aliases]
     |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
   end
 
@@ -961,11 +1044,11 @@ defmodule Cinder.Acquisition.Anime do
 
   defp known_alias?(_alias), do: false
 
-  defp alias_sort_key(alias_record) do
+  defp alias_sort_key(alias_record, norm) do
     {
       Map.get(@precedence_rank, Map.get(alias_record, :precedence), map_size(@precedence_rank)),
       Map.get(@kind_rank, Map.get(alias_record, :kind), map_size(@kind_rank)),
-      Map.get(alias_record, :normalized_title) || normalize_title(alias_record.title),
+      Map.get(alias_record, :normalized_title) || norm.(alias_record.title),
       alias_record.title
     }
   end
@@ -1124,11 +1207,9 @@ defmodule Cinder.Acquisition.Anime do
     canonical_release = canonicalize_separators(normalized_release)
 
     context
-    |> guard_titles()
-    |> Enum.any?(fn title ->
-      normalized_title = normalize_title(title)
-
-      if String.starts_with?(canonical_release, canonicalize_separators(normalized_title)) do
+    |> guard()
+    |> Enum.any?(fn {normalized_title, canonical_title} ->
+      if String.starts_with?(canonical_release, canonical_title) do
         remainder =
           binary_part(
             normalized_release,
@@ -1152,11 +1233,26 @@ defmodule Cinder.Acquisition.Anime do
   # semantics.
   defp canonicalize_separators(title), do: String.replace(title, ~r/[._-]/u, " ")
 
-  defp guard_titles(context) do
+  # The guard's titles, longest first, each normalized and with its separators canonicalized: from
+  # the context's search titles (`titles/1`) when it carries them, else built for this one call.
+  defp guard(context) do
+    inputs = title_inputs(context)
+
+    case Map.get(context, @titles_key) do
+      %{inputs: ^inputs, guard: guard} -> guard
+      _missing_or_stale -> guard_titles(context, &normalize_title/1)
+    end
+  end
+
+  defp guard_titles(context, norm) do
     [context.title | Enum.map(context.aliases, & &1.title)]
     |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
-    |> Enum.uniq_by(&normalize_title/1)
+    |> Enum.uniq_by(norm)
     |> Enum.sort_by(&String.length/1, :desc)
+    |> Enum.map(fn title ->
+      normalized_title = norm.(title)
+      {normalized_title, canonicalize_separators(normalized_title)}
+    end)
   end
 
   defp legal_title_remainder?(""), do: true
