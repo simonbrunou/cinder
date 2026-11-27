@@ -870,8 +870,13 @@ defmodule Cinder.Acquisition.Indexer.CardigannLoginTest do
         end
       })
 
-      assert {:error, {:no_indexer_answered, report}} =
+      # The first page's row comes back beside the rejection, and the search reads incomplete
+      # (#1738).
+      assert {:ok, [%{title: "[Group] Frieren - 01 [1080p]", indexer_id: id}], report} =
                Native.search_tv_query("frieren", categories: [5070])
+
+      assert id == indexer.id
+      assert Report.incomplete?(report)
 
       assert outcomes(report) == %{indexer.id => {:failed, :rejected_credentials}}
       assert counts(sent()) == %{"/login.php" => 1, "/" => 2}
