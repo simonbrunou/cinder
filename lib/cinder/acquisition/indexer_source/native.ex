@@ -238,15 +238,36 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
     end
   end
 
+  @doc """
+  One seam call of a parity run (`Cinder.Indexers.ParityRun`, #1684): the search callback that
+  `query` names (`t:Cinder.Acquisition.Indexer.query/0`), as the callback runs it, with two
+  changes taken from `run`:
+
+  - only the searchable indexers whose id is in `run.only` are searched; the others are left out
+    of the search and of its report, so none left answers `{:error, :no_indexers}`;
+  - each request to an indexer first calls `run.budget.(indexer_id)`, from that indexer's search
+    process, and a request it refuses is never sent (`Cinder.Acquisition.Indexer.request/3`).
+
+  The callbacks above never pass a `run`, so a live search checks no budget.
+  """
+  @spec search_run(Cinder.Acquisition.Indexer.query(), %{
+          only: [pos_integer()],
+          budget: (pos_integer() -> :ok | :refused)
+        }) :: IndexerSource.result()
+  def search_run(query, %{only: only, budget: budget})
+      when is_list(only) and is_function(budget, 1),
+      do: run(query, &(&1.id in only), budget)
+
   # The priority is read here, in the calling process: the search processes are new ones, which
   # do not inherit the mark of `Cinder.Acquisition.IndexerSource.interactive/1`.
-  defp run(query) do
+  defp run(query, keep \\ fn _indexer -> true end, budget \\ nil) do
     context = %{
       deadline_at: System.monotonic_time(:millisecond) + deadline_ms(),
-      priority: IndexerSource.priority()
+      priority: IndexerSource.priority(),
+      run_budget: budget
     }
 
-    case Indexers.searchable() do
+    case Enum.filter(Indexers.searchable(), keep) do
       [] -> {:error, :no_indexers}
       indexers -> indexers |> search_all(query, context) |> answer(indexers)
     end
@@ -323,10 +344,23 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   end
 
   defp start(indexer, adapter, query, context) do
+    context = indexer_context(context, indexer)
+
     Task.Supervisor.async_nolink(__MODULE__.TaskSupervisor, fn ->
       Process.flag(:max_heap_size, %{size: @max_heap_words, kill: true, error_logger: true})
       search_one(adapter, indexer, query, context)
     end)
+  end
+
+  # The adapter's context for one indexer: a parity run's budget becomes that indexer's
+  # `budget` (`t:Cinder.Acquisition.Indexer.context/0`); a live search carries none.
+  defp indexer_context(%{run_budget: nil} = context, _indexer),
+    do: Map.delete(context, :run_budget)
+
+  defp indexer_context(%{run_budget: budget} = context, indexer) do
+    context
+    |> Map.delete(:run_budget)
+    |> Map.put(:budget, fn -> budget.(indexer.id) end)
   end
 
   # An adapter that raises, exits or throws reads as crashed. The log names the indexer and the

@@ -64,10 +64,17 @@ defmodule Cinder.Acquisition.Indexer do
   deadline in `System.monotonic_time(:millisecond)`, and `priority`, `:interactive` for a
   manual search (`Cinder.Acquisition.IndexerSource.interactive/1`), else `:background`. A
   context with no `priority` is background.
+
+  `budget`, set only by a parity run (`Cinder.Indexers.ParityRun`: its searches through
+  `Cinder.Acquisition.IndexerSource.Native.search_run/2`, its caps reads, and its Cardigann link
+  checks through `Cinder.Acquisition.Indexer.Cardigann.Grab`), is a 0-arity function `request/3`
+  calls before each send: `:ok` lets the send go, anything else stops it unsent. A context with
+  no `budget` sends with no such check.
   """
   @type context :: %{
           required(:deadline_at) => integer(),
-          optional(:priority) => Lease.priority()
+          optional(:priority) => Lease.priority(),
+          optional(:budget) => (-> :ok | :refused)
         }
 
   @doc """
@@ -159,6 +166,10 @@ defmodule Cinder.Acquisition.Indexer do
   deadline. With no time left it sends nothing. Its body is read up to `opts[:max_bytes]`,
   `max_response_bytes/0` by default.
 
+  With `context.budget` set, each send, the retry included, first calls it, and a send it
+  refuses is never sent and answers `{:error, :deadline}`, as a send with no time left does: an
+  adapter reads it as the cut it already handles, and records nothing for it.
+
   An HTTP 502, 503, 504 or 408 answer gets one retry, sent `retry_delay_ms` after it (2 s unless
   `config :cinder, #{inspect(__MODULE__)}` sets it), and the retry's answer is the answer. When
   that delay is not shorter than the time left before the deadline, the retry is never sent and
@@ -217,11 +228,11 @@ defmodule Cinder.Acquisition.Indexer do
   defp retry_delay_ms,
     do: :cinder |> Application.get_env(__MODULE__, []) |> Keyword.get(:retry_delay_ms, 2_000)
 
-  defp send_once(%{deadline_at: deadline_at}, request_options, opts) do
+  defp send_once(%{deadline_at: deadline_at} = context, request_options, opts) do
     own_ms = Keyword.get(opts, :timeout_ms, @request_timeout_ms)
     left_ms = deadline_at - System.monotonic_time(:millisecond)
 
-    if left_ms <= 0 do
+    if left_ms <= 0 or not charged?(context) do
       {:error, :deadline}
     else
       request_options
@@ -236,6 +247,10 @@ defmodule Cinder.Acquisition.Indexer do
       |> classify(own_ms > left_ms, deadline_at)
     end
   end
+
+  # A parity run's budget (`t:context/0`): a send it refuses is never sent.
+  defp charged?(%{budget: budget}) when is_function(budget, 0), do: budget.() == :ok
+  defp charged?(_context), do: true
 
   defp raw_body(request, true),
     do: Req.Request.append_response_steps(request, raw_body: &drop_content_type/1)

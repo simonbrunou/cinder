@@ -148,8 +148,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     NewznabGrab.checked_and_recorded(indexer, fetched, from_source, opts)
   end
 
+  # Each request's context: the grab's one deadline, and a parity run's link check budget
+  # (`opts[:budget]`, `Cinder.Indexers.ParityRun`), which `Cinder.Acquisition.Indexer.request/3`
+  # calls before each send. A client's grab passes none.
+  defp context(deadline_at, opts) do
+    case Keyword.get(opts, :budget) do
+      budget when is_function(budget, 0) -> %{deadline_at: deadline_at, budget: budget}
+      _none -> %{deadline_at: deadline_at}
+    end
+  end
+
   defp request(copy, deadline_at, opts) do
-    request = copy.request.(%{deadline_at: deadline_at}, Native.now())
+    request = copy.request.(context(deadline_at, opts), Native.now())
     referenced? = request.link_secret_referenced? or request.download_secret_referenced?
 
     # Every URL the grab sends, and every magnet it returns, holds a secret when the row's
@@ -479,7 +489,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     if left_ms <= 0 do
       {:error, :deadline}
     else
-      Fetch.send_get(target, Map.put(state.request, :context, %{deadline_at: state.deadline_at}),
+      Fetch.send_get(
+        target,
+        Map.put(state.request, :context, context(state.deadline_at, state.opts)),
         headers: cookie_header(state.jar, target.uri),
         max_bytes: state.max_bytes,
         timeout_ms: left_ms,

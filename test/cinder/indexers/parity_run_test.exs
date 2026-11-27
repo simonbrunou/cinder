@@ -1,0 +1,1185 @@
+defmodule Cinder.Indexers.ParityRunTest do
+  # End to end through `Cinder.Indexers.ParityRun.run/1` (#1684): configured Newznab and Torznab
+  # indexers behind the `Cinder.NewznabStub` plug (`Cinder.NewznabFixtures.route/1`), Prowlarr's
+  # search behind `Cinder.ProwlarrStub` and its history and status behind
+  # `Cinder.ProwlarrApiStub`, with the real callers and the real engine. Each test reads the
+  # report the run prints and the requests the stubs received.
+  #
+  # No download client mock has an expectation, so a call to one raises and the run prints
+  # `Parity run failed: raised Mox.UnexpectedCallError`: every passing run shows that the link
+  # check sent nothing to a download client.
+  #
+  # Not async: the run registers one name per node, and Native's clock is global config.
+  use Cinder.DataCase, async: false
+
+  import Cinder.CatalogFixtures
+  import Cinder.NewznabFixtures
+  import ExUnit.CaptureIO
+  import Mox
+
+  alias Cinder.Acquisition.Indexer
+  alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr, Report}
+  alias Cinder.Catalog.BlockedRelease
+  alias Cinder.Indexers.ConfiguredIndexer
+  alias Cinder.Indexers.Parity.Picks
+  alias Cinder.Indexers.ParityRun
+  alias Cinder.Indexers.ParityRun.{Budget, Corpus, IndexerSet, LinkCheck}
+  alias Cinder.Indexers.ProwlarrApi.HTTP
+  alias Cinder.Repo
+
+  @key "SYNTHETICKEY123"
+  @public_address {93, 184, 216, 34}
+  @magnet "magnet:?xt=urn:btih:#{String.duplicate("a", 40)}&dn=Movie"
+
+  defmodule LeakyRelease do
+    @moduledoc false
+    defstruct [:title, :download_url]
+  end
+
+  setup do
+    stub_with(Cinder.Indexers.ProwlarrApiMock, HTTP)
+    history = start_supervised!({Agent, fn -> [] end}, id: :history)
+    statuses = start_supervised!({Agent, fn -> [] end}, id: :statuses)
+    %{history: history, statuses: statuses}
+  end
+
+  # --- the world ---
+
+  # Movie search by IMDb id alone, so `:movie_imdb` is the one kind the indexer takes and a run
+  # of that kind alone covers every cell.
+  @caps caps(
+          modes: %{"movie-search" => ~s(available="yes" supportedParams="q,imdbid")},
+          categories: [2000, 2040]
+        )
+
+  # Links `indexer` to Prowlarr indexer `pid`, as the Prowlarr import writes it (#1673).
+  defp link!(indexer, pid) do
+    Repo.update_all(Ecto.Query.where(ConfiguredIndexer, id: ^indexer.id),
+      set: [prowlarr_indexer_id: pid]
+    )
+
+    %{indexer | prowlarr_indexer_id: pid}
+  end
+
+  # Stubs both sides from `specs`, one per host: `%{pid, protocol, rows, get}`, plus `caps:` and
+  # `category:` (2040 by default) when given. `rows.(side, n)`
+  # answers the `n`th search request (from 1) that side sends the indexer, `[{title, size}]`;
+  # `get` answers its link fetch (a body, or `{status, body}`). Prowlarr answers each asked id
+  # with that id's host's rows, and writes one history entry per asked id. Every request reports
+  # itself to the test process.
+  defp world(specs, history) do
+    counter = start_supervised!({Agent, fn -> %{} end}, id: make_ref())
+
+    next = fn key ->
+      Agent.get_and_update(
+        counter,
+        &Map.get_and_update(&1, key, fn n -> {(n || 0) + 1, (n || 0) + 1} end)
+      )
+    end
+
+    by_pid = Map.new(specs, fn {host, spec} -> {spec.pid, {host, spec}} end)
+
+    route(
+      Map.new(specs, fn {host, spec} ->
+        {host,
+         fn conn, query ->
+           cond do
+             String.starts_with?(conn.request_path, "/dl/") ->
+               Map.fetch!(spec, :get)
+
+             query["t"] == "caps" ->
+               Map.get(spec, :caps, @caps)
+
+             true ->
+               rss(
+                 for {title, size} <- spec.rows.(:native, next.({:native, host})),
+                     do: native_item(host, spec, title, size)
+               )
+           end
+         end}
+      end)
+    )
+
+    prowlarr_search(history, fn _params, ids ->
+      for id <- ids,
+          {host, spec} <- List.wrap(Map.get(by_pid, id)),
+          {title, size} <- spec.rows.(:prowlarr, next.({:prowlarr, host})),
+          do: prowlarr_row(title, size, id, spec)
+    end)
+  end
+
+  defp native_item(host, %{protocol: protocol} = spec, title, size) do
+    link =
+      case protocol do
+        :usenet ->
+          {:nzb, "https://#{host}/dl/#{:erlang.phash2(title)}?apikey=#{key()}"}
+
+        :torrent ->
+          {:torrent, "https://#{host}/dl/#{:erlang.phash2(title)}.torrent?apikey=#{key()}"}
+
+        :magnet ->
+          {:magnet, @magnet}
+      end
+
+    item(title, link, size: size, category: Map.get(spec, :category, 2040))
+  end
+
+  defp prowlarr_row(title, size, pid, %{protocol: protocol} = spec) do
+    link =
+      if protocol == :magnet,
+        do: %{"magnetUrl" => @magnet},
+        else: %{
+          "downloadUrl" =>
+            "http://prowlarr:9696/#{pid}/download?link=#{:erlang.phash2(title)}&apikey=#{@key}"
+        }
+
+    Map.merge(link, %{
+      "title" => title,
+      "size" => size,
+      "protocol" => if(protocol == :usenet, do: "usenet", else: "torrent"),
+      "indexerId" => pid,
+      "indexer" => "idx #{pid}",
+      "publishDate" => "2026-11-25T10:30:00Z",
+      "categories" => [%{"id" => Map.get(spec, :category, 2040)}]
+    })
+  end
+
+  # Prowlarr's search: answers each request with `answer.(params, ids)` and writes one
+  # successful history entry per asked indexer id, dated now in whole seconds, as Prowlarr's
+  # `HistoryService` and `STJUtcConverter` write it (`b0b5774`). Reports
+  # `{:prowlarr_search, params, ids}` to the test process.
+  defp prowlarr_search(history, answer) do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      pairs = conn.query_string |> URI.query_decoder() |> Enum.to_list()
+      ids = for {"indexerIds", id} <- pairs, do: String.to_integer(id)
+      params = Map.new(pairs)
+      send(test_pid, {:prowlarr_search, params, ids})
+      results = answer.(params, ids)
+      now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+      added = for id <- ids, do: entry(id, now, Enum.count(results, &(&1["indexerId"] == id)))
+      Agent.update(history, &(added ++ &1))
+
+      Req.Test.json(conn, results)
+    end)
+  end
+
+  defp entry(indexer_id, date, count) do
+    %{
+      "id" => System.unique_integer([:positive]),
+      "indexerId" => indexer_id,
+      "date" => date,
+      "downloadId" => nil,
+      "successful" => true,
+      "eventType" => "indexerQuery",
+      "data" => %{
+        "query" => "q",
+        "queryResults" => Integer.to_string(count),
+        "url" => "https://indexer.example/api?apikey=#{@key}",
+        "cached" => "0"
+      }
+    }
+  end
+
+  # Prowlarr's history and status reads: the entries the search stub wrote, and the statuses
+  # agent's list, which `statuses.(n)` can replace per read (from 1).
+  defp prowlarr_api(history, statuses) do
+    test_pid = self()
+
+    Req.Test.stub(Cinder.ProwlarrApiStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/history" ->
+          records = Agent.get(history, & &1)
+
+          json(conn, %{
+            "page" => 1,
+            "pageSize" => 500,
+            "totalRecords" => length(records),
+            "records" => Enum.sort_by(records, & &1["date"], :desc)
+          })
+
+        "/api/v1/indexerstatus" ->
+          send(test_pid, :prowlarr_status)
+          json(conn, Agent.get(statuses, & &1))
+      end
+    end)
+  end
+
+  defp json(conn, body) do
+    conn
+    |> Plug.Conn.put_resp_content_type("application/json", "utf-8")
+    |> Plug.Conn.send_resp(200, Jason.encode!(body))
+  end
+
+  defp run!(opts) do
+    defaults = [
+      seed: 1,
+      retry_spacing_s: 0,
+      history_wait_ms: 0,
+      fetch_opts: [
+        plug: {Req.Test, Cinder.NewznabStub},
+        resolver: fn _host -> {:ok, [@public_address]} end
+      ]
+    ]
+
+    capture_io(fn -> send(self(), {:result, ParityRun.run(Keyword.merge(defaults, opts))}) end)
+  end
+
+  defp prowlarr_ids do
+    receive_all(fn
+      {:prowlarr_search, _params, ids} -> ids
+    end)
+  end
+
+  defp receive_all(fun, acc \\ []) do
+    receive do
+      {:prowlarr_search, _params, _ids} = message -> receive_all(fun, [fun.(message) | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
+  defp search_count(host), do: length(searches(host))
+
+  defp same(title, size), do: fn _side, _n -> [{title, size}] end
+
+  defp inception, do: movie_fixture(%{imdb_id: "tt1375666", title: "Inception", year: 2010})
+
+  defp nzb(pid, rows),
+    do: %{pid: pid, protocol: :usenet, rows: rows, get: Cinder.NzbFixture.minimal()}
+
+  @title "Inception.2010.1080p.WEB-DL-GRP"
+  @size 9_000_000_000
+
+  # --- a run that passes ---
+
+  test "a movie found alike by one Newznab indexer on both sides, with its NZB link, passes",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "Verdict: pass"
+    assert report =~ "link check passed"
+    assert prowlarr_ids() == [[7]]
+    refute report =~ @key
+    refute report =~ key()
+  end
+
+  test "two Newznab indexers and a Torznab one, each found alike on both sides, pass",
+       %{history: history, statuses: statuses} do
+    a = :newznab |> indexer!("a.example") |> link!(7)
+    b = :newznab |> indexer!("b.example") |> link!(8)
+    t = :torznab |> indexer!("t.example") |> link!(9)
+    inception()
+
+    world(
+      %{
+        "a.example" => nzb(7, same("Inception.2010.1080p.WEB-DL-A", @size)),
+        "b.example" => nzb(8, same("Inception.2010.720p.WEB-DL-B", 4_000_000_000)),
+        "t.example" => %{
+          pid: 9,
+          protocol: :torrent,
+          rows: same("Inception.2010.1080p.BluRay-T", 8_000_000_000),
+          get: Cinder.TorrentFixture.minimal()
+        }
+      },
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [a.id, b.id, t.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "Verdict: pass"
+    assert prowlarr_ids() == [[7, 8, 9]]
+  end
+
+  test "a magnet row passes its link check with no fetch", %{history: history, statuses: statuses} do
+    t = :torznab |> indexer!("t.example") |> link!(9)
+    inception()
+
+    world(
+      %{"t.example" => %{pid: 9, protocol: :magnet, rows: same(@title, @size), get: "unused"}},
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [t.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "link check passed"
+  end
+
+  # --- the link check's failures ---
+
+  for {name, get, tag} <- [
+        {"a 401", {401, "Unauthorized apikey=#{@key}"}, "indexer_auth_failed"},
+        {"an HTML page",
+         {200, [{"content-type", "text/html"}],
+          ~s(<html><body><a href="https://nzb.example/?apikey=#{@key}">Hi</a></body></html>)},
+         "challenge_page"},
+        {"a body that is no NZB",
+         {200, [{"content-type", "application/x-nzb"}], "not an nzb apikey=#{@key}"},
+         "bad_download_file"}
+      ] do
+    test "a link answering #{name} fails the link check with #{tag}",
+         %{history: history, statuses: statuses} do
+      indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+      inception()
+
+      world(
+        %{"nzb.example" => %{nzb(7, same(@title, @size)) | get: unquote(Macro.escape(get))}},
+        history
+      )
+
+      prowlarr_api(history, statuses)
+
+      report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+      assert_received {:result, :ok}
+      assert report =~ "link check failed #{unquote(tag)}"
+      refute report =~ "Verdict: pass"
+      refute report =~ @key
+    end
+  end
+
+  # The byte caps of SABnzbd (20 MiB) and qBittorrent (10 MiB): a body of the cap passes, one
+  # byte more fails as the client's own fetch refuses it.
+  for {protocol, cap} <- [usenet: 20 * 1024 * 1024, torrent: 10 * 1024 * 1024],
+      {bytes, outcome} <- [{cap, "link check passed"}, {cap + 1, "failed response_too_large"}] do
+    test "a #{protocol} link of #{bytes} bytes: #{outcome}",
+         %{history: history, statuses: statuses} do
+      type = if unquote(protocol) == :usenet, do: :newznab, else: :torznab
+      indexer = type |> indexer!("dl.example") |> link!(7)
+      inception()
+      body = padded(unquote(protocol), unquote(bytes))
+      assert byte_size(body) == unquote(bytes)
+
+      world(
+        %{
+          "dl.example" => %{
+            pid: 7,
+            protocol: unquote(protocol),
+            rows: same(@title, @size),
+            get: body
+          }
+        },
+        history
+      )
+
+      prowlarr_api(history, statuses)
+
+      report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+      assert_received {:result, :ok}
+      assert report =~ unquote(outcome)
+    end
+  end
+
+  # A valid NZB or torrent of exactly `bytes` bytes.
+  defp padded(:usenet, bytes) do
+    nzb = Cinder.NzbFixture.minimal()
+    nzb <> String.duplicate(" ", bytes - byte_size(nzb))
+  end
+
+  defp padded(:torrent, bytes) do
+    open = String.slice(Cinder.TorrentFixture.minimal(), 0..-2//1) <> "3:zzz"
+    pad = bytes - byte_size(open) - 1
+    # The padding string's length prefix takes some of the bytes too.
+    len = pad - String.length("#{pad}:")
+    len = if String.length("#{len}:") + len == pad, do: len, else: len + 1
+    open <> "#{len}:" <> String.duplicate("z", len) <> "e"
+  end
+
+  # --- the opts both sides get ---
+
+  test "a block scoped to the Prowlarr indexer also skips the title on Native's side",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    series = series_fixture(%{title: "The Office", year: nil, tvdb_id: 73_244})
+    season = season_fixture(series, %{season_number: 1})
+    episode_fixture(season, %{episode_number: 1})
+    episode_fixture(season, %{episode_number: 2})
+    blocked = "The.Office.S01.1080p.WEB-DL-BAD"
+    kept = "The.Office.S01.1080p.WEB-DL-OK"
+
+    Repo.insert!(%BlockedRelease{
+      series_id: series.id,
+      release_title: blocked,
+      reason: "stalled",
+      indexer_source: "prowlarr",
+      indexer_id: 7
+    })
+
+    rows = fn _side, _n -> [{blocked, 1_600_000_000}, {kept, 1_500_000_000}] end
+
+    world(
+      %{
+        "nzb.example" =>
+          7
+          |> nzb(rows)
+          |> Map.merge(%{
+            category: 5040,
+            caps:
+              caps(
+                modes: %{"tv-search" => ~s(available="yes" supportedParams="q,season,ep,tvdbid")},
+                categories: [5000, 5040]
+              )
+          })
+      },
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{season: 1}, indexers: [indexer.id])
+
+    # The TV kinds this run leaves out read uncovered, so the verdict is inconclusive; without
+    # the twin, Native would pick the blocked title and the season cell would fail.
+    assert_received {:result, :ok}
+    assert report =~ "season: covered"
+    assert report =~ "matching rows found, link check passed"
+    refute report =~ "fail"
+  end
+
+  # --- the seed ---
+
+  test "the same seed draws the same corpus and side order, another seed another order" do
+    for n <- 1..6,
+        do: movie_fixture(%{imdb_id: "tt000000#{n}", title: "Movie #{n}", year: 2000 + n})
+
+    labels = fn seed -> Enum.map(Corpus.draw(seed, %{movie_title: 3}), & &1.label) end
+
+    assert labels.(5) == labels.(5)
+    assert length(labels.(5)) == 3
+    assert Enum.any?(1..20, &(labels.(&1) != labels.(5)))
+  end
+
+  test "both sides judge with the same opts and the same now:",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+    test_pid = self()
+
+    picks = fn kind, target, opts, source ->
+      send(test_pid, {:side_opts, opts})
+      Picks.run(kind, target, opts, source)
+    end
+
+    run!(counts: %{movie_imdb: 1}, indexers: [indexer.id], picks: picks)
+
+    assert_received {:result, :ok}
+    assert_received {:side_opts, first}
+    assert_received {:side_opts, second}
+    refute_received {:side_opts, _third}
+    assert first == second
+    assert %DateTime{} = first[:now]
+  end
+
+  test "the seed picks the side that goes first, then the sides alternate",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    odd = run!(seed: 1, counts: %{movie_imdb: 2}, indexers: [indexer.id])
+    even = run!(seed: 2, counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+    assert odd =~ ~r/#0 .*first: native.*\n(.*\n)*.*#1 .*first: prowlarr/
+    assert even =~ ~r/#0 .*first: prowlarr.*\n(.*\n)*.*#1 .*first: native/
+  end
+
+  test "counts draws exactly that many searches of each kind, and no other kind" do
+    for n <- 1..4,
+        do: movie_fixture(%{imdb_id: "tt100000#{n}", title: "Movie #{n}", year: 2000 + n})
+
+    drawn = Corpus.draw(3, %{movie_title: 2, movie_imdb: 1})
+
+    assert Enum.frequencies_by(drawn, & &1.kind) == %{movie_title: 2, movie_imdb: 1}
+    assert Corpus.planned_counts(200) == Map.new(Corpus.kinds(), &{&1, 1})
+    assert Corpus.planned_counts(199) == Map.new(Corpus.kinds(), &{&1, 0})
+    assert Corpus.planned_counts(328) == Map.new(Corpus.kinds(), &{&1, 2})
+  end
+
+  test "an imported title is drawn before one that is not" do
+    imported = movie_fixture(%{title: "Imported", year: 2001, status: :available})
+    movie_fixture(%{title: "Wanted", year: 2002})
+
+    for seed <- 1..10 do
+      assert [%{label: label}] = Corpus.draw(seed, %{movie_title: 1})
+      assert label =~ "movie ##{imported.id} Imported"
+    end
+  end
+
+  test "an anime series whose policy does not resolve takes no draw" do
+    broken =
+      series_fixture(%{
+        title: "Broken Anime",
+        media_profile: :anime,
+        preferred_language: "dual",
+        original_language: nil
+      })
+
+    episode_fixture(season_fixture(broken, %{season_number: 1}), %{
+      episode_number: 1,
+      file_path: "/tv/broken/s01e01.mkv"
+    })
+
+    good =
+      series_fixture(%{
+        title: "Good Anime",
+        media_profile: :anime,
+        preferred_language: "original",
+        original_language: "ja"
+      })
+
+    episode_fixture(season_fixture(good, %{season_number: 1}), %{
+      episode_number: 1,
+      file_path: "/tv/good/s01e01.mkv"
+    })
+
+    for seed <- 1..10 do
+      assert [%{label: label}] = Corpus.draw(seed, %{anime_episodes: 1})
+      assert label =~ "Good Anime"
+    end
+  end
+
+  # --- the budget, the limits and the deadline ---
+
+  test "a spent budget stops the indexer: Prowlarr asks it no more and later searches read inconclusive",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(budget: 2, counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "inconclusive budget"
+    assert report =~ "Requests spent: newznab nzb.example (##{indexer.id}) 2"
+    # Native goes first (seed 1) and spends both requests: the caps fetch and its search. So
+    # Prowlarr's request would carry no id, and none is sent.
+    assert search_count("nzb.example") == 1
+    assert prowlarr_ids() == []
+  end
+
+  test "by default a run plans for 200 requests per indexer, a 2700 s deadline, a 660 s retry spacing and a 5000 ms history wait",
+       %{history: history, statuses: statuses} do
+    :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    # The header's last line raises, so the run stops before its first search and waits for
+    # none of these limits.
+    print = fn line ->
+      IO.puts(line)
+      if line =~ "Planned searches", do: raise("stop")
+    end
+
+    report =
+      capture_io(fn -> send(self(), {:result, ParityRun.run(seed: 1, print: print)}) end)
+
+    assert_received {:result, {:error, :raised}}
+
+    assert report =~
+             "Limits: 200 requests per indexer, deadline 2700 s, retry spacing 660 s, " <>
+               "history wait 5000 ms\n"
+
+    assert report =~
+             "Planned searches: movie_imdb 1, movie_title 1, season 1, season_zero 1, " <>
+               "anime_episodes 1, ebook 1, audiobook 1;"
+  end
+
+  # The Newznab link check reserves one request plus at most five redirects before it fetches.
+  test "a Newznab link check spends six requests of a full allowance",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    # The caps fetch, Native's search, Prowlarr's search for the indexer, then 1 + 5.
+    assert report =~ "Requests spent: newznab nzb.example (##{indexer.id}) 9\n"
+  end
+
+  # Budget 3 on a Cardigann indexer: the first try spends 2 (Native's page, Prowlarr's search),
+  # the link check's detail page the third, and its torrent request is refused, between the
+  # tries. Prowlarr answers another row, so the search is tried again.
+  test "a budget refused between two tries stops the indexer in the second, and the link check reads budget",
+       %{history: history, statuses: statuses} do
+    # A download block that follows the details page's torrent link: two requests per grab.
+    definition =
+      put_in(Cinder.CardigannFixtures.torrent9_like(), ["download", "selectors"], [
+        %{"selector" => "a.dl", "attribute" => "href"}
+      ])
+
+    [indexer] =
+      Cinder.CardigannFixtures.setup!(
+        [{"t9.yml", definition}],
+        [{"t9.yml", Cinder.CardigannFixtures.torrent9_base(), %{}}]
+      )
+
+    indexer = link!(indexer, 7)
+    inception()
+
+    Cinder.CardigannFixtures.route(%{
+      "t9.test" => fn conn, _query ->
+        case conn.request_path do
+          "/torrent/" <> _id ->
+            Cinder.CardigannFixtures.torrent9_details(link: "/get_torrent/1.torrent")
+
+          "/get_torrent/" <> _id ->
+            Cinder.TorrentFixture.minimal()
+
+          _search ->
+            Cinder.CardigannFixtures.torrent9_page([
+              %{
+                title: @title,
+                href: "/torrent/1",
+                size: "9 GB",
+                icon: "film",
+                date: "01/01/2025"
+              }
+            ])
+        end
+      end
+    })
+
+    other = %{
+      "title" => "Inception.2010.720p.WEB-DL-OTHER",
+      "size" => 4_000_000_000,
+      "downloadUrl" => "http://prowlarr:9696/7/download?link=1&apikey=#{@key}",
+      "protocol" => "torrent",
+      "indexerId" => 7,
+      "indexer" => "t9",
+      "publishDate" => "2026-11-25T10:30:00Z",
+      "categories" => [%{"id" => 2040}]
+    }
+
+    prowlarr_search(history, fn _params, ids -> if ids == [7], do: [other], else: [] end)
+    prowlarr_api(history, statuses)
+
+    report =
+      run!(
+        budget: 3,
+        counts: %{movie_title: 1},
+        indexers: [indexer.id],
+        fetch_opts: [
+          plug: {Req.Test, Cinder.CardigannStub},
+          resolver: fn _host -> {:ok, [@public_address]} end
+        ]
+      )
+
+    assert_received {:result, :ok}
+    assert report =~ "try 2"
+    assert report =~ "inconclusive budget"
+    assert report =~ "link check failed budget"
+    refute report =~ "Verdict: fail"
+    refute report =~ @key
+  end
+
+  # A plain 429 is a limit (`{:limit, wait}`); Prowlarr's "Indexer is disabled till" 429, from an
+  # indexer that points at a Prowlarr, reads `{:http_status, 429}` (`NewznabAnswer` rules 2, 3).
+  for {name, body} <- [
+        {"a limit", "Too Many Requests for apikey=#{@key}"},
+        {"a disabled-till answer",
+         ~s(<?xml version="1.0"?><error code="429" description="Indexer is disabled till 2026-11-27 10:00 apikey=#{@key}"/>)}
+      ] do
+    test "an HTTP 429 from Native, #{name}, stops the indexer for the rest of the run",
+         %{history: history, statuses: statuses} do
+      indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+      inception()
+      movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+
+      route(%{
+        "nzb.example" => fn _conn, query ->
+          if query["t"] == "caps", do: @caps, else: {429, unquote(body)}
+        end
+      })
+
+      prowlarr_search(history, fn _params, _ids -> [] end)
+      prowlarr_api(history, statuses)
+
+      report = run!(counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+      assert_received {:result, :ok}
+      assert report =~ "inconclusive rate_limited"
+      assert length(prowlarr_ids()) == 1
+      refute report =~ @key
+    end
+  end
+
+  test "a Prowlarr backoff that a failure during the search set stops the indexer",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+
+    prowlarr_search(history, fn _params, _ids ->
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+      Agent.update(statuses, fn _ ->
+        [
+          %{
+            "indexerId" => 7,
+            "disabledTill" => DateTime.to_iso8601(DateTime.add(now, 600)),
+            "mostRecentFailure" => DateTime.to_iso8601(now)
+          }
+        ]
+      end)
+
+      []
+    end)
+
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "inconclusive rate_limited"
+    assert length(prowlarr_ids()) == 1
+  end
+
+  defp failure_fields(:hour_ago, now),
+    do: %{"mostRecentFailure" => DateTime.to_iso8601(DateTime.add(now, -3600))}
+
+  defp failure_fields(:none, _now), do: %{}
+
+  # The engine reads a backoff that holds during a window as uncovered (`:prowlarr_backoff`); the
+  # run stops an indexer only for one a failure during its search set.
+  for {name, failure} <- [{"set before the run", :hour_ago}, {"with no failure date", :none}] do
+    test "a Prowlarr backoff #{name} does not stop the indexer",
+         %{history: history, statuses: statuses} do
+      indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+      inception()
+      movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+      world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+      now = DateTime.utc_now() |> DateTime.truncate(:second)
+      failure = failure_fields(unquote(failure), now)
+
+      Agent.update(statuses, fn _ ->
+        [
+          Map.merge(
+            %{"indexerId" => 7, "disabledTill" => DateTime.to_iso8601(DateTime.add(now, 600))},
+            failure
+          )
+        ]
+      end)
+
+      prowlarr_api(history, statuses)
+
+      report = run!(counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+      assert_received {:result, :ok}
+      assert report =~ "uncovered prowlarr_backoff"
+      refute report =~ "rate_limited"
+      assert length(prowlarr_ids()) == 2
+    end
+  end
+
+  test "a run past its deadline sends no search and reads inconclusive",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(deadline_s: 0, counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    refute report =~ "Verdict: pass"
+    assert search_count("nzb.example") == 0
+    assert prowlarr_ids() == []
+  end
+
+  # --- the retry ---
+
+  test "a search whose first try differs is tried once more", %{
+    history: history,
+    statuses: statuses
+  } do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+
+    rows = fn
+      :prowlarr, 1 -> [{"Inception.2010.720p.WEB-DL-OTHER", 4_000_000_000}]
+      _side, _n -> [{@title, @size}]
+    end
+
+    world(%{"nzb.example" => nzb(7, rows)}, history)
+    prowlarr_api(history, statuses)
+
+    {elapsed_us, report} =
+      :timer.tc(fn ->
+        run!(retry_spacing_s: 1, counts: %{movie_imdb: 1}, indexers: [indexer.id])
+      end)
+
+    assert_received {:result, :ok}
+    # The difference is listed under the first try only, and the second decides.
+    assert report =~ ~r/try 1: .*\n(.*\n)*?\s+difference: /
+    assert report =~ "try 2: ok"
+    refute report =~ "confirmed difference"
+    assert length(prowlarr_ids()) == 2
+    # The retry starts a spacing of 1 s after the first try ended.
+    assert elapsed_us >= 1_000_000
+  end
+
+  test "a retry spacing past the deadline waits for the deadline only, and runs no retry",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+
+    rows = fn
+      :prowlarr, 1 -> [{"Inception.2010.720p.WEB-DL-OTHER", 4_000_000_000}]
+      _side, _n -> [{@title, @size}]
+    end
+
+    world(%{"nzb.example" => nzb(7, rows)}, history)
+    prowlarr_api(history, statuses)
+
+    {elapsed_us, report} =
+      :timer.tc(fn ->
+        run!(
+          deadline_s: 1,
+          retry_spacing_s: 3_600,
+          counts: %{movie_imdb: 1},
+          indexers: [indexer.id]
+        )
+      end)
+
+    assert_received {:result, :ok}
+    refute report =~ "try 2"
+    assert length(prowlarr_ids()) == 1
+    assert elapsed_us < 30_000_000
+  end
+
+  # --- the set ---
+
+  test "an indexer with no Prowlarr link is reported, and Prowlarr is asked nothing for it",
+       %{history: history, statuses: statuses} do
+    indexer = indexer!(:newznab, "nzb.example")
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.name])
+
+    assert_received {:result, :ok}
+    assert report =~ "no_prowlarr_indexer"
+    assert prowlarr_ids() == []
+  end
+
+  test "the default set leaves out an unlinked, a disabled and a not-supported indexer",
+       %{history: history, statuses: statuses} do
+    kept = :newznab |> indexer!("nzb.example") |> link!(7)
+    indexer!(:newznab, "unlinked.example")
+    :newznab |> indexer!("off.example", %{enabled: false}) |> link!(8)
+    :newznab |> indexer!("fs.example", %{flaresolverr: true}) |> link!(9)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1})
+
+    assert_received {:result, :ok}
+    assert report =~ "Indexers: newznab nzb.example (##{kept.id})\n"
+    assert prowlarr_ids() == [[7]]
+  end
+
+  test "a named set limits both sides to it", %{history: history, statuses: statuses} do
+    a = :newznab |> indexer!("a.example") |> link!(7)
+    :newznab |> indexer!("b.example") |> link!(8)
+    inception()
+
+    world(
+      %{"a.example" => nzb(7, same(@title, @size)), "b.example" => nzb(8, same(@title, @size))},
+      history
+    )
+
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [a.name])
+
+    assert_received {:result, :ok}
+    assert report =~ "Indexers: newznab a.example (##{a.id})\n"
+    assert prowlarr_ids() == [[7]]
+    assert search_count("b.example") == 0
+  end
+
+  test "a name that matches no configured indexer refuses the run" do
+    report = run!(indexers: ["nope"])
+
+    assert_received {:result, {:error, :unknown_indexer}}
+    assert report == "Parity run failed: unknown_indexer\n"
+  end
+
+  # --- the guards ---
+
+  test "an inspect that shows a release's link refuses the run before any request" do
+    report = run!(release_structs: [LeakyRelease])
+
+    assert_received {:result, {:error, :inspect_shows_download_url}}
+    assert report == "Parity run failed: inspect_shows_download_url\n"
+    refute_received :prowlarr_status
+  end
+
+  test "a second run while one holds the node is refused" do
+    test_pid = self()
+
+    holder =
+      start_supervised!(
+        {Task,
+         fn ->
+           Process.register(self(), ParityRun)
+           send(test_pid, :held)
+           receive do: (:done -> :ok)
+         end},
+        id: make_ref()
+      )
+
+    assert_receive :held
+    report = run!([])
+    send(holder, :done)
+
+    assert_received {:result, {:error, :already_running}}
+    assert report == "Parity run failed: already_running\n"
+  end
+
+  test "a raise prints the exception's module and no link or key",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+
+    # The first print, the header's, raises with a link and a key in its message: the run's own
+    # process raising, as no HTTP stub can (each request runs in a task of its own).
+    raised = start_supervised!({Agent, fn -> false end}, id: :raised)
+
+    print = fn line ->
+      if Agent.get_and_update(raised, &{&1, true}),
+        do: IO.puts(line),
+        else: raise("boom https://nzb.example/?apikey=#{@key}")
+    end
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id], print: print)
+
+    assert_received {:result, {:error, :raised}}
+    assert report =~ "Parity run failed: raised RuntimeError\n"
+    refute report =~ @key
+    refute report =~ key()
+  end
+
+  test "Prowlarr with no URL or key refuses the run" do
+    Cinder.ConfigCase.put_config(Prowlarr, api_key: nil)
+
+    report = run!([])
+
+    assert_received {:result, {:error, :prowlarr_not_configured}}
+    assert report == "Parity run failed: prowlarr_not_configured\n"
+  end
+
+  test "a run leaves the app env as it found it", %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, same(@title, @size))}, history)
+    prowlarr_api(history, statuses)
+    before = Application.get_all_env(:cinder)
+
+    run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert Application.get_all_env(:cinder) == before
+  end
+
+  # --- the seams ---
+
+  describe "the seams" do
+    test "Indexer.request charges the context's budget per send and sends nothing it refuses" do
+      route(%{"nzb.example" => fn _conn, _query -> rss() end})
+
+      options = [
+        url: "https://nzb.example/api?t=search&q=x",
+        plug: {Req.Test, Cinder.NewznabStub}
+      ]
+
+      budget = Budget.new([1], 1)
+      deadline_at = System.monotonic_time(:millisecond) + 5_000
+      context = %{deadline_at: deadline_at, budget: fn -> Budget.take(budget, 1) end}
+
+      assert {:ok, %Req.Response{status: 200}} = Indexer.request(context, options)
+      assert Indexer.request(context, options) == {:error, :deadline}
+      assert length(searches("nzb.example")) == 1
+      assert Budget.refused(budget) == [1]
+    end
+
+    test "Native.search_run asks only the named indexers and spends the budget per request" do
+      a = indexer!(:newznab, "a.example")
+      b = indexer!(:newznab, "b.example")
+      route(%{"a.example" => fn _c, _q -> :default end, "b.example" => fn _c, _q -> :default end})
+      # Both have an allowance, so only `only` keeps b out.
+      budget = Budget.new([a.id, b.id], 50)
+
+      assert {:ok, [], _report} =
+               Native.search_run({:search_movie_query, "x", []}, %{
+                 only: [a.id],
+                 budget: &Budget.take(budget, &1)
+               })
+
+      assert search_count("b.example") == 0
+      # The caps fetch and the search.
+      assert Budget.spent(budget, a.id) == 2
+      assert Budget.spent(budget, b.id) == 0
+    end
+
+    test "an indexer's kinds follow its caps, and a caps fetch that fails keeps every kind" do
+      movies = indexer!(:newznab, "movies.example")
+      broken = indexer!(:newznab, "broken.example")
+
+      route(%{
+        "movies.example" => fn _conn, _query -> @caps end,
+        "broken.example" => fn _conn, _query -> {500, "oops"} end
+      })
+
+      budget = Budget.new([movies.id, broken.id], 10)
+
+      context = fn indexer ->
+        %{
+          deadline_at: System.monotonic_time(:millisecond) + 5_000,
+          budget: fn -> Budget.take(budget, indexer.id) end
+        }
+      end
+
+      assert IndexerSet.kinds(movies, Corpus.kinds(), context.(movies)) == [:movie_imdb]
+      assert IndexerSet.kinds(broken, Corpus.kinds(), context.(broken)) == Corpus.kinds()
+      assert Budget.spent(budget, movies.id) == 1
+      assert Budget.spent(budget, broken.id) == 1
+    end
+
+    test "a Cardigann grab charges the budget per page request and sends nothing it refuses" do
+      [indexer] =
+        Cinder.CardigannFixtures.setup!(
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_like()}],
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_base(), %{}}]
+        )
+
+      Cinder.CardigannFixtures.route(%{
+        "t9.test" => fn _conn, _query ->
+          Cinder.CardigannFixtures.torrent9_details(link: @magnet)
+        end
+      })
+
+      budget = Budget.new([indexer.id], 1)
+
+      opts = [
+        max_bytes: 1024 * 1024,
+        error_tag: :torrent_fetch_status,
+        allow_magnet: true,
+        indexer_source: "native",
+        indexer_id: indexer.id,
+        credentials_version: indexer.credentials_version,
+        budget: fn -> Budget.take(budget, indexer.id) end
+      ]
+
+      assert Native.fetch_download("https://t9.test/torrent/1", nil, opts) == {:magnet, @magnet}
+      assert {:error, _reason} = Native.fetch_download("https://t9.test/torrent/1", nil, opts)
+      assert Cinder.CardigannFixtures.requests() == [{"t9.test", "/torrent/1", %{}}]
+      assert Budget.refused(budget) == [indexer.id]
+    end
+
+    test "a Cardigann link check with no allowance left answers budget and sends nothing" do
+      [indexer] =
+        Cinder.CardigannFixtures.setup!(
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_like()}],
+          [{"t9.yml", Cinder.CardigannFixtures.torrent9_base(), %{}}]
+        )
+
+      Cinder.CardigannFixtures.route(%{
+        "t9.test" => fn _conn, _query ->
+          Cinder.CardigannFixtures.torrent9_details(link: @magnet)
+        end
+      })
+
+      row = %{
+        title: @title,
+        size: @size,
+        download_url: "https://t9.test/torrent/1",
+        protocol: :torrent,
+        seeders: 50,
+        indexer_id: indexer.id,
+        indexer_name: indexer.name,
+        indexer_source: "native",
+        credentials_version: indexer.credentials_version,
+        published_at: ~U[2026-11-01 10:00:00Z],
+        category_ids: [2040]
+      }
+
+      report = Report.put(Report.new(), {"native", indexer.id}, indexer.name, :asked)
+
+      call = %{
+        callback: :search_movie_query,
+        args: ["Inception 2010", []],
+        outcome: {:ok, [row], report}
+      }
+
+      search = %{
+        kind: :movie_title,
+        target: %{
+          context: %{
+            imdb_id: nil,
+            title: "Inception",
+            year: 2010,
+            aliases: [],
+            localized_titles: []
+          }
+        },
+        opts: [now: ~U[2026-11-25 10:00:00Z]],
+        tries: [%{native: %{calls: [call]}}]
+      }
+
+      spent = Budget.new([indexer.id], 1)
+      Budget.take(spent, indexer.id)
+
+      assert LinkCheck.check(indexer, [search], spent) == {:failed, :budget}
+      assert Cinder.CardigannFixtures.requests() == []
+      # The same row with one request left is fetched, so the refusal above is the budget's.
+      assert LinkCheck.check(indexer, [search], Budget.new([indexer.id], 1)) == :passed
+      assert Cinder.CardigannFixtures.requests() == [{"t9.test", "/torrent/1", %{}}]
+    end
+
+    test "Prowlarr.restricted sends one indexerIds per allowed id, none outside it, and no request for no id",
+         %{history: history} do
+      prowlarr_search(history, fn _params, _ids -> [] end)
+
+      Prowlarr.restricted(fn -> [7, 9] end, fn -> Prowlarr.search("tt1375666") end)
+      assert_received {:prowlarr_search, _params, [7, 9]}
+
+      assert Prowlarr.restricted(fn -> [] end, fn -> Prowlarr.search("tt1375666") end) ==
+               {:ok, []}
+
+      refute_received {:prowlarr_search, _, _}
+
+      Prowlarr.search("tt1375666")
+      assert_received {:prowlarr_search, _params, []}
+    end
+  end
+end

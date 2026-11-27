@@ -7,4 +7,4 @@
   `Cinder.Indexers.Parity.Replay`, which answers each search call from the record, or with
   `{:error, :not_recorded}` when the record holds no such call. The report never
   prints a row's link or an error term, and prints each word of its input text that holds `=` or
-  `://` as `[redacted]`. Until #1684, nothing calls it.
+  `://` as `[redacted]`. The parity run of #1684 calls it.

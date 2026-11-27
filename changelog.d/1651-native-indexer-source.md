@@ -3,8 +3,9 @@
   uses when its caller names none: `prowlarr` or `native`. A migration stores `prowlarr`
   on an install that has finished setup or stores any Prowlarr setting, unless it already
   stores an `indexer_source`. With no stored value, or one that is neither option, Cinder
-  uses Prowlarr. Every search in Cinder runs through the configured source, so every install
-  searches through Prowlarr until `native` is stored, which the "Indexer source" select of
+  uses Prowlarr. Every search in Cinder outside a parity run (#1684) runs through the
+  configured source, so every install searches through Prowlarr until `native` is stored,
+  which the "Indexer source" select of
   `/settings` can do (#1662). `IndexerSource.Native` asks each enabled configured indexer
   whose secrets decrypt and whose FlareSolverr toggle is off, unless it is backing off or its
   credentials were rejected (#1654), in a process of its own, through the adapter its type

@@ -311,11 +311,48 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   defp error({:ok, %{status: status}}), do: {:error, {:prowlarr_status, status}}
   defp error({:error, reason}), do: {:error, reason}
 
+  @restriction_key {__MODULE__, :indexer_ids}
+
+  @doc """
+  Runs `fun` with every search request it sends from the calling process restricted to the
+  Prowlarr indexers `ids.()` names, and answers `fun`'s value: a parity run's Prowlarr side
+  (`Cinder.Indexers.ParityRun`, #1684). Before each `/api/v1/search` request, `search_tv/3`'s two
+  included, the request calls `ids.()` and sends one `indexerIds` parameter per id, so Prowlarr
+  asks only those indexers (`SearchController.cs` at `b0b5774`). When `ids.()` answers `[]` the
+  request is never sent and answers no rows, since a search with no `indexerIds` asks every
+  enabled indexer. The scope is the calling process's own and ends when `fun` returns or raises;
+  a search outside it sends no `indexerIds`.
+  """
+  @spec restricted((-> [integer()]), (-> value)) :: value when value: term()
+  def restricted(ids, fun) when is_function(ids, 0) and is_function(fun, 0) do
+    previous = Process.put(@restriction_key, ids)
+
+    try do
+      fun.()
+    after
+      if previous,
+        do: Process.put(@restriction_key, previous),
+        else: Process.delete(@restriction_key)
+    end
+  end
+
   defp search_query(query, type, opts) do
     params =
       [query: query, type: type]
       |> add_categories(Keyword.get(opts, :categories, []))
 
+    case Process.get(@restriction_key) do
+      nil -> send_search(params)
+      ids -> restricted_search(params, ids.())
+    end
+  end
+
+  defp restricted_search(_params, []), do: {:ok, []}
+
+  defp restricted_search(params, ids),
+    do: send_search(params ++ Enum.map(ids, &{:indexerIds, &1}))
+
+  defp send_search(params) do
     case request(url: "/api/v1/search", params: params) do
       {:ok, %{status: 200, body: results}} when is_list(results) ->
         {:ok, Enum.flat_map(results, &normalize/1)}
