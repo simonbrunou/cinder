@@ -244,6 +244,13 @@ defmodule Cinder.MutationCheckScriptTest do
   OUT
       printf '\\n  Finished in 0.01 seconds\\n\\nResult: 0/7 passed, 1 invalid\\n'
       exit 2 ;;
+    # Compiler warnings as Elixir prints them, above a passing run or a kill, and a Logger
+    # `[warning]` line, which is none. `*WARNAB*` comes before `*WARNA*`, which also matches it.
+    *WARNAB*) printf '    warning: a\\n    warning: b\\n\\nResult: 2 passed\\n' ;;
+    *WARNSIX*) for i in $(seq 6); do printf '    warning: w%s\\n' "$i"; done; printf '\\nResult: 2 passed\\n' ;;
+    *WARNKILL*) printf '    warning: k\\n'; killed ;;
+    *LOGWARN*) printf '19:31:26.395 [warning] movie 3 search failed\\n\\nResult: 2 passed\\n' ;;
+    *WARNA*) printf '    warning: a\\n    │\\n\\nResult: 2 passed\\n' ;;
     *) printf '\\nResult: 2 passed\\n' ;;
   esac
   """
@@ -360,6 +367,60 @@ defmodule Cinder.MutationCheckScriptTest do
     assert calls(ctx) == 8
     assert File.read!(ctx.target) == @base
     assert_records_removed(ctx)
+  end
+
+  # On #1975, a mutant that read `@titles_key` above the attribute's definition compiled to nil,
+  # warned `undefined module attribute`, changed nothing and read SURVIVED.
+  @tag :tmp_dir
+  test "a passing mutant whose run prints a compiler warning is WARNED, with the warning", ctx do
+    list = mutants(ctx, [{"w", "x + 1", "x + 1 # WARNA"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+
+    assert out =~
+             "w: WARNED, Result: 2 passed\n    -def rule(x), do: x + 1\n" <>
+               "    +def rule(x), do: x + 1 # WARNA\n    output: warning: a\n0 of 1 killed\n"
+
+    assert File.read!(ctx.target) == @base
+  end
+
+  @tag :tmp_dir
+  test "a warning the control run printed too leaves a mutant SURVIVED and is not listed", ctx do
+    File.write!(ctx.target, @base <> "# WARNA\n")
+    list = mutants(ctx, [{"same", ":ok", ":ok "}, {"new", "WARNA", "WARNAB"}])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+
+    assert out =~
+             "same: SURVIVED, Result: 2 passed\n    -def other, do: :ok\n    +def other, do: :ok \nnew: "
+
+    assert out =~
+             "new: WARNED, Result: 2 passed\n    -# WARNA\n    +# WARNAB\n" <>
+               "    output: warning: b\n0 of 2 killed\n"
+  end
+
+  @tag :tmp_dir
+  test "a warned mutant lists 5 warnings, a killed one stays killed, a log line warns nothing",
+       ctx do
+    list =
+      mutants(ctx, [
+        {"six", "x + 1", "x + 1 # WARNSIX"},
+        {"kill", "x + 1", "x + 1 # WARNKILL"},
+        {"log", "x + 1", "x + 1 # LOGWARN"}
+      ])
+
+    {out, code} = run(ctx, [ctx.target, list, "t.exs"])
+
+    assert code == 1, out
+    listed = Enum.map_join(1..5, &"    output: warning: w#{&1}\n")
+    assert out =~ "+def rule(x), do: x + 1 # WARNSIX\n" <> listed <> "kill: "
+    assert out =~ "kill: killed, Result: 1/2 passed\n"
+    assert out =~ "log: SURVIVED, Result: 2 passed\n"
+    assert out =~ "1 of 3 killed\n"
   end
 
   @tag :tmp_dir

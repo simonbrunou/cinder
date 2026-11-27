@@ -51,24 +51,30 @@ script removes the folder, and ignores an error doing so.
 
 Under NO RESULT and HUNG it prints the run's first 5 error lines from its output, stdout before
 stderr, those that start with `error:` or `** (` after any blanks, or, when it has none, its last
-5 non-blank lines (`output: ...`). The output goes to two files in the record's folder, made
-anew for each run, so a process an earlier run left behind writes to that run's files only.
+5 non-blank lines (`output: ...`). Under WARNED it prints the first 5 of its new `warning:` lines
+the same way, without the location line under each.
+The output goes to two files in the record's folder, made anew for each run, so a process an
+earlier run left behind writes to that run's files only.
 
   killed     the run ends on a `Result:` line that ExUnit prints when a test failed
              (`N/M passed`) or a module's `setup_all` failed (`, N invalid`);
   SURVIVED   the run exits 0 on a `Result: N passed` line: no test covers the edit, or the
              mutant changes nothing;
+  WARNED     as SURVIVED, but the run printed a `warning:` line that the control run did not.
+             Read it: an edit that leaves a variable or function unused survived as written,
+             while a module attribute read above its definition compiled to nil and changed
+             nothing (#1975), so rewrite that mutant;
   NO RESULT  any other run, such as a compile error before ExUnit or `Result: 0 tests`:
              rewrite the mutant or the test arguments;
   HUNG       the run passed the time limit, whatever it printed before.
 
-Exit 0: every mutant killed. 1: a mutant survived, had no result or hung. 2: wrong arguments, a file
-or mutant list it cannot read, an `old` that does not occur exactly once, a `<file>:<line>` off a
-test's or describe's first line, a MUTATION_CHECK_TIMEOUT that is not a whole number from 1 to
-86400, no `mix` on PATH (run it through `nix develop`), a record folder it cannot make, a control
-run that does not pass, runs past the limit or passes fewer tests than its `--only test:` names, a
-<file> it cannot write or restore, a failure record it cannot empty, or a stdout closed early (as by
-`| head`). 130: a signal stopped the run.
+Exit 0: every mutant killed. 1: a mutant survived, warned, had no result or hung. 2: wrong
+arguments, a file or mutant list it cannot read, an `old` that does not occur exactly once, a
+`<file>:<line>` off a test's or describe's first line, a MUTATION_CHECK_TIMEOUT that is not a
+whole number from 1 to 86400, no `mix` on PATH (run it through `nix develop`), a record folder it
+cannot make, a control run that does not pass, runs past the limit or passes fewer tests than its
+`--only test:` names, a <file> it cannot write or restore, a failure record it cannot empty, or a
+stdout closed early (as by `| head`). 130: a signal stopped the run.
 """
 import difflib
 import json
@@ -122,6 +128,9 @@ TOP = re.compile(r"^ {5}\S")
 CODE = re.compile(r"^ {5}code:")
 LABEL = re.compile(r"^ {5}(code|doctest|arguments|left|right|mailbox|stacktrace):")
 ERROR = re.compile(r"^\s*(error:|\*\* \()")
+# A warning line, as the compiler prints one (`    warning: undefined module attribute @x, ...`)
+# and as `IO.warn/1` and Mix do.
+WARNING = re.compile(r"^\s*warning: ")
 # A test path with one or more lines, as `mix test` takes it (`x.exs:4`, `x.exs:4:9`).
 LINE_ARG = re.compile(r"^(.+\.exs)((?::\d+)+)$")
 BLOCK = re.compile(r"^\s*(test|describe)\b")
@@ -283,10 +292,18 @@ def failures(record):
     return lines
 
 
-def reasons(outcome, output, record):
-    """The lines that say why: each recorded failure for a kill, the errors for no result."""
+def warnings(output):
+    """The run's compiler warning lines, stripped."""
+    return [line.strip() for line in output if WARNING.match(line)]
+
+
+def reasons(outcome, output, record, new_warnings):
+    """The lines that say why: each recorded failure for a kill, the errors for no result, the
+    new warnings for a warned mutant."""
     if outcome == "killed":
         return failures(read_record(record)) or [NO_RECORD]
+    if outcome == "WARNED":
+        return [f"output: {line}" for line in new_warnings[:5]]
     if outcome in ("NO RESULT", "HUNG"):
         errors = [line.strip() for line in output if ERROR.match(line)]
         lines = errors[:5] or [line for line in output if line.strip()][-5:]
@@ -303,13 +320,13 @@ def restore(path, original):
         return False
 
 
-def verdict(code, result):
+def verdict(code, result, new_warnings):
     if code is None:
         return "HUNG"
     if KILLED.match(result or ""):
         return "killed"
     if code == 0 and PASSED.match(result or ""):
-        return "SURVIVED"
+        return "WARNED" if new_warnings else "SURVIVED"
     return "NO RESULT"
 
 
@@ -369,7 +386,7 @@ def status(code, result, limit):
 def check(path, mutants, tests, text, original, record, limit):
     """The control run, then each mutant's run and its lines; returns the exit status."""
     try:
-        code, result, _output = run_tests(tests, record, limit)
+        code, result, control_output = run_tests(tests, record, limit)
     except OSError as error:
         print(f"cannot run mix or empty its failure record: {error}", file=sys.stderr)
         return 2
@@ -384,18 +401,20 @@ def check(path, mutants, tests, text, original, record, limit):
         return 2
 
     missed, failure = 0, None
+    known = set(warnings(control_output))
     try:
         print(f"control: {result} (limit {limit} s a run)", flush=True)
         for m in mutants:
             mutated = text.replace(m["old"], m["new"])
             path.write_bytes(mutated.encode("utf-8"))
             code, result, output = run_tests(tests, record, limit)
-            outcome = verdict(code, result)
+            new_warnings = [line for line in warnings(output) if line not in known]
+            outcome = verdict(code, result, new_warnings)
             missed += outcome != "killed"
             diff = difflib.unified_diff(text.splitlines(), mutated.splitlines(), lineterm="", n=0)
             changed = [line for line in list(diff)[2:] if not line.startswith("@@")]
             print(f"{m['label']}: {outcome}, {status(code, result, limit)}", flush=True)
-            for line in changed + reasons(outcome, output, record):
+            for line in changed + reasons(outcome, output, record, new_warnings):
                 print(f"    {line}", flush=True)
         print(f"{len(mutants) - missed} of {len(mutants)} killed", flush=True)
     except BrokenPipeError:
