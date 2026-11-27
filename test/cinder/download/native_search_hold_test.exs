@@ -27,6 +27,11 @@ defmodule Cinder.Download.NativeSearchHoldTest do
 
   @backdated ~U[2020-01-01 00:00:00Z]
 
+  # Native's clock at the retry tests' first poll, late in its second: `IndexerStatus.record/3`
+  # truncates the failure to 12:00:00, so its 1 min backoff ends 1 µs after the control's
+  # second poll at `@failed_at` + 59 s.
+  @failed_at ~U[2026-01-01 12:00:00.999999Z]
+
   setup do
     ConfigCase.put_env(:indexer_source, Native)
 
@@ -39,6 +44,9 @@ defmodule Cinder.Download.NativeSearchHoldTest do
   # Native's clock, `offset_s` seconds after the real one.
   defp shift_native_clock(offset_s),
     do: ConfigCase.put_env(Native, clock: fn -> DateTime.add(DateTime.utc_now(), offset_s) end)
+
+  # Native's clock, stopped at `at`.
+  defp pin_native_clock(at), do: ConfigCase.put_env(Native, clock: fn -> at end)
 
   defp start_poller(poller, opts) do
     pid = start_supervised!({poller, Keyword.merge([interval: 60_000], opts)})
@@ -84,6 +92,9 @@ defmodule Cinder.Download.NativeSearchHoldTest do
 
   defp empty_route, do: fn _conn, _query -> :default end
 
+  # Native's clock stays pinned to `@failed_at` for the first poll and to an offset from it for
+  # the second, so the second poll's offset counts from `@failed_at`, whatever real time passes
+  # between the polls (#1783).
   describe "the incomplete-search retry through the movie poller" do
     setup do
       movie = movie_fixture(%{title: "Plain", year: 2020, imdb_id: "tt0133093"})
@@ -107,6 +118,7 @@ defmodule Cinder.Download.NativeSearchHoldTest do
 
     test "strikes once, then 60 s later asks the failed indexer again", %{movie: movie} do
       start_poller(Poller, [])
+      pin_native_clock(@failed_at)
 
       assert :ok = Poller.poll()
       assert {"ok.example", "movie"} in requests()
@@ -116,7 +128,7 @@ defmodule Cinder.Download.NativeSearchHoldTest do
       # 60 s later on both clocks: the poller's retry is due and the failed indexer's first
       # backoff step (1 min) has ended.
       retry_after_s(movie, 60)
-      shift_native_clock(60)
+      pin_native_clock(DateTime.add(@failed_at, 60))
       assert :ok = Poller.poll()
 
       assert {"bad.example", "movie"} in requests()
@@ -127,11 +139,12 @@ defmodule Cinder.Download.NativeSearchHoldTest do
       movie: movie
     } do
       start_poller(Poller, [])
+      pin_native_clock(@failed_at)
       assert :ok = Poller.poll()
       _first = requests()
 
       retry_after_s(movie, 60)
-      shift_native_clock(59)
+      pin_native_clock(DateTime.add(@failed_at, 59))
       assert :ok = Poller.poll()
 
       second = requests()
