@@ -1103,8 +1103,9 @@ defmodule Cinder.Indexers.ParityTest do
   end
 
   describe "known differences" do
-    # The search, then a search whose rows match as recorded, the evidence an explained try
-    # does not give.
+    # The search, then a search whose rows match as recorded: an explained try gives no evidence,
+    # unless `:category_filter` alone explains only row gaps and the try has no inconclusive
+    # reason, as recorded or once filtered (the describe block on that case).
     defp with_clean(search), do: [search, movie_search("Clean", [matching_try()])]
 
     test "a category-filter gap that re-judging explains is listed as explained, and the run passes" do
@@ -1125,11 +1126,6 @@ defmodule Cinder.Indexers.ParityTest do
       result = Parity.compare(run(with_clean(movie_search("Dune", [try]))))
       assert result.verdict == :pass, result.report
       assert_line(result.report, ~s|explained by category_filter: rows of Alpha (#1)|)
-
-      # Rows that matched only once a known difference applied are no evidence.
-      result = Parity.compare(run([movie_search("Dune", [try])]))
-      assert result.verdict == :inconclusive
-      assert result.reasons == [{:no_evidence, @alpha}, {:no_evidence, @bravo}]
     end
 
     test "an order gap that re-judging explains is listed as explained, and the run passes" do
@@ -1332,6 +1328,8 @@ defmodule Cinder.Indexers.ParityTest do
       assert {:search_inconclusive, 0, :pooled_differs_with_uncovered} in result.reasons
       assert_line(result.report, "explained by category_filter: rows of Bravo (#2)")
       assert result.retry == []
+      # Bravo's kept rows match, but an inconclusive try gives no evidence.
+      assert {:no_evidence, @bravo} in result.reasons
     end
 
     test "a pooled difference that stays without the uncovered indexers counts" do
@@ -1719,6 +1717,167 @@ defmodule Cinder.Indexers.ParityTest do
         assert [{:link_check, @alpha, _tag}] = result.reasons
         assert_line(result.report, "Alpha (#1) link check: #{Parity.Text.tag(check)}")
       end
+    end
+  end
+
+  # #1943: in #1687's second run, Nyaa.si's Native rows held soundtracks and artbooks outside the
+  # searched categories, which Prowlarr's filter after the fetch drops (`:category_filter`).
+  describe "evidence from a try that category_filter alone explains" do
+    @dune_a "Dune.2021.1080p.WEB-DL-AAA"
+    @dune_b "Dune.2021.720p.WEB-DL-BBB"
+
+    test "off-category Native rows beside matching kept rows give evidence" do
+      try =
+        movie_try(
+          [row(@dune_a, :prowlarr, @alpha), row(@dune_b, :prowlarr, @bravo)],
+          [
+            row(@dune_a, :native, @alpha),
+            row("Dune.2021.OST.FLAC-TVC", :native, @alpha, category_ids: [3040]),
+            row(@dune_b, :native, @bravo)
+          ]
+        )
+
+      result = Parity.compare(run([movie_search("Dune", [try])]))
+      assert result.verdict == :pass, result.report
+      assert result.reasons == []
+      assert_line(result.report, ~s|explained by category_filter: rows of Alpha (#1)|)
+      assert_line(result.report, "Alpha (#1): matching rows found, link check passed")
+      assert_line(result.report, "Bravo (#2): matching rows found, link check passed")
+    end
+
+    test "an indexer whose rows are all off-category on Native and absent on Prowlarr gets none" do
+      try =
+        movie_try(
+          [row(@dune_b, :prowlarr, @bravo)],
+          [
+            row("Dune.2021.OST.FLAC-TVC", :native, @alpha, category_ids: [3040]),
+            row(@dune_b, :native, @bravo)
+          ]
+        )
+
+      result = Parity.compare(run([movie_search("Dune", [try])]))
+      assert result.reasons == [{:no_evidence, @alpha}], result.report
+      assert_line(result.report, ~s|explained by category_filter: rows of Alpha (#1)|)
+      assert_line(result.report, "Alpha (#1): matching rows none")
+      assert_line(result.report, "Bravo (#2): matching rows found")
+    end
+
+    test "a try that also needs the row cap gives none, though its only gaps are row gaps" do
+      # Prowlarr's 1,001st Alpha row is past Native's cap, and Native holds an off-category row:
+      # only category_filter and row_cap together explain the try. The rows tie on rank, so
+      # both sides pick the first and no pick differs.
+      filler = fn side, n ->
+        for i <- 1..n, do: row("Dune.2021.480p.WEB-DL-F#{i}", side, @alpha, size: 1 * @gb)
+      end
+
+      try =
+        movie_try(
+          filler.(:prowlarr, 1001) ++ [row(@dune_b, :prowlarr, @bravo)],
+          filler.(:native, 1000) ++
+            [
+              row("Dune.2021.480p.WEB-DL-TVC", :native, @alpha,
+                size: 1 * @gb,
+                category_ids: [5040]
+              ),
+              row(@dune_b, :native, @bravo)
+            ]
+        )
+
+      result = Parity.compare(run([movie_search("Dune", [try])]))
+      assert result.reasons == [{:no_evidence, @alpha}, {:no_evidence, @bravo}], result.report
+
+      assert_line(
+        result.report,
+        ~s|explained by category_filter and row_cap: rows of Alpha (#1) in call 1 (search_movie_query): Prowlarr 1001 rows, Native 1001 rows; Prowlarr only 1 x "Dune.2021.480p.WEB-DL-F1001"|
+      )
+
+      refute_line(result.report, "pick of")
+      refute_line(result.report, "pooled pick")
+    end
+
+    test "an off-category Native row that changes a pick gives none" do
+      # Native's off-category 1080p row outranks the 720p rows both sides hold, so Alpha's pick
+      # and the pooled pick differ as recorded: a gap that is not a row gap.
+      a = "Dune.2021.720p.WEB-DL-AAA"
+
+      try =
+        movie_try(
+          [row(a, :prowlarr, @alpha), row(@dune_b, :prowlarr, @bravo)],
+          [
+            row(a, :native, @alpha),
+            row("Dune.2021.1080p.WEB-DL-TVC", :native, @alpha, category_ids: [5040]),
+            row(@dune_b, :native, @bravo)
+          ]
+        )
+
+      result = Parity.compare(run([movie_search("Dune", [try])]))
+      assert result.reasons == [{:no_evidence, @alpha}, {:no_evidence, @bravo}], result.report
+      assert_line(result.report, "explained by category_filter: pick of Alpha (#1) alone")
+      assert_line(result.report, "explained by category_filter: pooled pick")
+      assert_line(result.report, "explained by category_filter: rows of Alpha (#1)")
+    end
+
+    test "an off-category Native row of an uncovered indexer that changes the pooled pick gives none" do
+      # Alpha is uncovered, and its off-category 1080p row wins Native's pooled pick: inconclusive
+      # as recorded. Bravo's own off-category row adds a row gap and changes no pick, so the
+      # filter explains the whole try, yet a pick differed as recorded.
+      try =
+        movie_try(
+          [row(@dune_b, :prowlarr, @bravo)],
+          [
+            row("Dune.2021.1080p.WEB-DL-TVC", :native, @alpha, category_ids: [5040]),
+            row(@dune_b, :native, @bravo),
+            row("Dune.2021.480p.WEB-DL-TVB", :native, @bravo, category_ids: [5040])
+          ]
+        )
+
+      result =
+        Parity.compare(run([movie_search("Dune", [try])], history: uncovered_alpha_history()))
+
+      assert {:no_evidence, @bravo} in result.reasons, result.report
+      assert_line(result.report, "explained by category_filter: rows of Bravo (#2)")
+      assert_line(result.report, "Bravo (#2): matching rows none")
+    end
+
+    test "Prowlarr rows on a call Native errored and only off-category Native rows elsewhere give none" do
+      # The row count skips a call with an error on either side, so Alpha's Prowlarr row in call
+      # 2 makes no gap; Native's only Alpha row, in call 3, is off-category. Alpha keeps rows on
+      # Prowlarr's side only.
+      c = kind_case(:anime_episodes)
+      [{cb1, a1}, {cb2, a2}, {cb3, a3}] = c.calls
+      report = native_report([{@alpha, :asked}, {@bravo, :asked}])
+      later = DateTime.add(@t0, 30)
+      {_ta, tb} = c.titles
+      id = [query_origins: [:id_scoped], category_ids: [5070]]
+      ft = [query_origins: [:free_text], category_ids: [5070]]
+      ost = [query_origins: [:free_text], category_ids: [3040]]
+
+      try = %{
+        prowlarr:
+          side(
+            [
+              call(cb1, a1, {:ok, [row(tb, :prowlarr, @bravo, id)]}),
+              call(cb2, a2, {:ok, [row("Unrelated Thing Artbook", :prowlarr, @alpha, ft)]}),
+              call(cb3, a3, {:ok, []})
+            ],
+            []
+          ),
+        native:
+          side(
+            [
+              call(cb1, a1, {:ok, [row(tb, :native, @bravo, id)], report}, later),
+              call(cb2, a2, {:error, :timeout}, later),
+              call(cb3, a3, {:ok, [row("Show OST FLAC", :native, @alpha, ost)], report}, later)
+            ],
+            []
+          )
+      }
+
+      {result, _search} = kind_run(:anime_episodes, [try])
+      assert {:no_evidence, @alpha} in result.reasons, result.report
+      assert_line(result.report, "Alpha (#1): covered")
+      assert_line(result.report, "explained by category_filter: rows of Alpha (#1) in call 3")
+      assert_line(result.report, "Alpha (#1): matching rows none")
     end
   end
 

@@ -89,7 +89,12 @@ defmodule Cinder.Indexers.Parity do
     tries differ. The second try, when it ran, decides coverage and evidence.
   - **Evidence** (amendment change 1). Each indexer needs a covered search where both sides
     returned rows for it after the cut and its rows and picks matched as recorded, and a passed
-    link check. A try whose gaps a known difference explains gives no evidence.
+    link check. A try whose gaps a known difference explains gives no evidence, with one
+    exception (#1943): when `:category_filter` alone explains the try, the try has no
+    inconclusive reason as recorded or under that filter, and every gap as recorded is a row gap
+    of Native-only rows, the try gives
+    evidence from the rows left once that filter drops Native's off-category rows. An indexer
+    then needs rows on both sides among those kept rows.
   - **Blocks.** Per-indexer blocks pass through the map where #1684 builds the opts: a block
     scoped to one source with no twin for the mapped indexer of the other keeps the verdict from
     pass.
@@ -479,7 +484,7 @@ defmodule Cinder.Indexers.Parity do
     # once no other gap is left: a covered indexer's own gap still counts.
     cond do
       gaps == [] and inconclusive == nil ->
-        %{base | evidence: evidence_cids(search, pairs, cut, base.statuses, ctx)}
+        %{base | evidence: evidence_cids(search, pairs, [], cut, base.statuses, ctx)}
 
       gaps == [] ->
         %{base | status: {:inconclusive, inconclusive}}
@@ -488,9 +493,16 @@ defmodule Cinder.Indexers.Parity do
         {subset, still_inconclusive} = explained
         base = %{base | explained: {subset, gaps}}
 
-        if still_inconclusive,
-          do: %{base | status: {:inconclusive, still_inconclusive}},
-          else: base
+        cond do
+          still_inconclusive ->
+            %{base | status: {:inconclusive, still_inconclusive}}
+
+          off_category_rows_only?(subset, gaps, inconclusive) ->
+            %{base | evidence: evidence_cids(search, pairs, subset, cut, base.statuses, ctx)}
+
+          true ->
+            base
+        end
 
       true ->
         %{base | gaps: gaps}
@@ -646,9 +658,21 @@ defmodule Cinder.Indexers.Parity do
     for {key, count} <- a, left = count - Map.get(b, key, 0), left > 0, do: {key, left}
   end
 
-  # The covered indexers with rows on both sides of a try that has no gap as recorded.
-  defp evidence_cids(search, pairs, cut, statuses, ctx) do
-    {p_calls, n_calls} = prepared(search, pairs, [], cut, ctx)
+  # #1943: a try whose recorded gaps are all row gaps, that `:category_filter` alone explains,
+  # and that has no inconclusive reason as recorded (`inconclusive`), differs only by the
+  # off-category rows Prowlarr's filter drops after the fetch. That filter drops Native rows only,
+  # so each such gap is one of rows only Native holds. Any other known difference, a pick gap, or
+  # a pooled pick that differed as recorded keeps the rule that an explained try gives no
+  # evidence.
+  defp off_category_rows_only?(subset, gaps, inconclusive) do
+    inconclusive == nil and subset == [:category_filter] and
+      Enum.all?(gaps, &match?({:rows, _, _, _, _, _, _}, &1))
+  end
+
+  # The covered indexers with rows on both sides of a try once `subset` applies: `[]` for a try
+  # that has no gap as recorded, `[:category_filter]` for one `off_category_rows_only?/3` admits.
+  defp evidence_cids(search, pairs, subset, cut, statuses, ctx) do
+    {p_calls, n_calls} = prepared(search, pairs, subset, cut, ctx)
 
     for {cid, :covered} <- statuses,
         rows?(p_calls, :prowlarr, cid, ctx) and rows?(n_calls, :native, cid, ctx),
