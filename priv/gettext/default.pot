@@ -8706,3 +8706,23 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "The answer is not valid XML"
 msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cookie rejected"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cookie rejected: paste a new one in Settings"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login rejected"
+msgstr ""
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login rejected: check the username and password in Settings"
+msgstr ""

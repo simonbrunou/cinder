@@ -18,7 +18,8 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
      copy's first code, and `{:definition_no_longer_loads, reason}` when its running copy fails
      to load on this build.
   5. `{:credentials_rejected, by}`: an answer rejected its credentials; `by` is `{:code, code}`,
-     `{:http_status, 401}`, or nil for a rejection with no code.
+     `{:http_status, 401}`, `{:login_rejected, method}` for a refused Cardigann login (#1680),
+     or nil for a rejection with no code.
   6. `{:limit_backoff, until}`: a limit backoff runs until `until`.
   7. `{:failure_backoff, until, last_failure, failures_in_row}`: a failure backoff runs until
      `until`.
@@ -53,7 +54,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
           :disabled
           | :undecryptable
           | {:not_supported, atom()}
-          | {:credentials_rejected, {:code | :http_status, integer()} | nil}
+          | {:credentials_rejected,
+             {:code | :http_status, integer()}
+             | {:login_rejected, :post | :get | :form | :cookie}
+             | nil}
           | {:limit_backoff, DateTime.t()}
           | {:failure_backoff, DateTime.t(), term(), pos_integer()}
           | {:retry_due, DateTime.t(), term(), non_neg_integer()}
@@ -251,6 +255,18 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
     do: success != nil and DateTime.compare(success, limit) == :gt
 
   defp rejected_by(%IndexerStatus{credentials_rejected_by: nil}), do: nil
+
+  defp rejected_by(%IndexerStatus{credentials_rejected_by: :login_post}),
+    do: {:login_rejected, :post}
+
+  defp rejected_by(%IndexerStatus{credentials_rejected_by: :login_get}),
+    do: {:login_rejected, :get}
+
+  defp rejected_by(%IndexerStatus{credentials_rejected_by: :login_form}),
+    do: {:login_rejected, :form}
+
+  defp rejected_by(%IndexerStatus{credentials_rejected_by: :login_cookie}),
+    do: {:login_rejected, :cookie}
 
   defp rejected_by(%IndexerStatus{credentials_rejected_by: by, credentials_rejected_code: code}),
     do: {by, code}

@@ -31,7 +31,9 @@
   key when it has one, in the type's default category (Movies for Newznab, TV for Torznab). For
   a Cardigann indexer (#1671) it sends the first request of the definition's keywordless search,
   under the mappings the definition marks `default`. Each request gets the one retry a search
-  request gets.
+  request gets. For a `post`, `get` or `form` login (#1680), it sends the login's requests first
+  when the indexer has no stored session. After an answer that shows a login sign, it sends them,
+  then that request once more. No login request is retried.
   It records the answer in the backoff state as a search answer would, except that a pass also
   ends rejected credentials and a request the budget cut counts as a timeout, and stores the
   last Test's outcome and time in new `native_indexer_status` columns. A request still waiting

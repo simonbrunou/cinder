@@ -128,7 +128,8 @@ exceptions each own the tables named here and nothing derived:
 - `lib/cinder/indexers.ex` (`Cinder.Indexers`) is the one writer of `configured_indexers`.
 - `lib/cinder/acquisition/indexer_source/native/` (`Cinder.Acquisition.IndexerSource.Native`'s
   modules) is the one writer of Native's runtime tables: `native_indexer_caps`
-  (`Native.IndexerCaps`) and `native_indexer_status` (`Native.IndexerStatus`).
+  (`Native.IndexerCaps`), `native_indexer_status` (`Native.IndexerStatus`) and
+  `native_indexer_cookies` (`Native.IndexerCookies`).
 - `lib/cinder/indexers/definitions.ex` (`Cinder.Indexers.Definitions`) is the one writer of the
   `indexer_definition_*` tables.
 - `lib/cinder/indexers/definitions/updater.ex` (`Cinder.Indexers.Definitions.Updater`) is the one

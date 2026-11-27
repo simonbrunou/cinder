@@ -7,6 +7,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatusTest do
   alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.Indexers
+  alias Cinder.Repo
 
   @now ~U[2026-11-26 12:00:00Z]
 
@@ -263,6 +264,45 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatusTest do
                  {by, true, kind, code, :none, nil}
 
         assert {status.last_failure, status.last_failure_at} == {:rejected_credentials, @now}
+      end
+    end
+
+    test "a refused Cardigann login marks its method, which only a passing Test ends (#1680)" do
+      for {method, by} <- [
+            post: :login_post,
+            get: :login_get,
+            form: :login_form,
+            cookie: :login_cookie
+          ] do
+        status = after_answers([{:rejected_credentials, {:login_rejected, method}}, :success])
+
+        assert {method, status.credentials_rejected, status.credentials_rejected_by,
+                status.credentials_rejected_code, status.backoff, status.last_failure} ==
+                 {method, true, by, nil, :none, :rejected_credentials}
+
+        assert IndexerStatus.gate(status, @now) == {:failed, :rejected_credentials}
+
+        status = IndexerStatus.transition(status, :test_success, @now)
+        assert {method, status.credentials_rejected} == {method, false}
+      end
+    end
+
+    test "a refused Cardigann login stores its method's kind as the last Test (#1680)" do
+      indexer = indexer!()
+
+      for {method, outcome} <- [
+            post: :login_rejected,
+            get: :login_rejected,
+            form: :login_rejected,
+            cookie: :cookie_rejected
+          ] do
+        answer = {:rejected_credentials, {:login_rejected, method}}
+
+        assert {method, IndexerStatus.record_test(indexer, answer, @now)} ==
+                 {method, {:written, %{outcome: outcome, at: @now}}}
+
+        assert IndexerStatus.last_test(Repo.get(IndexerStatus, indexer.id)) ==
+                 %{outcome: outcome, at: @now}
       end
     end
   end

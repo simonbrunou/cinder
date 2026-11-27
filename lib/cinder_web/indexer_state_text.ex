@@ -68,6 +68,14 @@ defmodule CinderWeb.IndexerStateText do
   def detail({:credentials_rejected, {:http_status, status}}, _now),
     do: gettext("API key rejected (HTTP %{status}): update it in Settings", status: status)
 
+  # A refused Cardigann login (#1680): the `cookie` method's cookie, else the username and
+  # password.
+  def detail({:credentials_rejected, {:login_rejected, :cookie}}, _now),
+    do: gettext("Cookie rejected: paste a new one in Settings")
+
+  def detail({:credentials_rejected, {:login_rejected, _method}}, _now),
+    do: gettext("Login rejected: check the username and password in Settings")
+
   def detail({:credentials_rejected, _by}, _now),
     do: gettext("API key rejected: update it in Settings")
 
@@ -140,6 +148,8 @@ defmodule CinderWeb.IndexerStateText do
   def cause(:challenge), do: gettext("Blocked by a challenge page")
   def cause(:crashed), do: gettext("The search crashed")
   def cause(:rejected_credentials), do: gettext("API key rejected")
+  def cause(:login_rejected), do: gettext("Login rejected")
+  def cause(:cookie_rejected), do: gettext("Cookie rejected")
   def cause(:limit), do: gettext("Limit reached")
   def cause(:invalid_json), do: gettext("The answer is not valid JSON")
   def cause(:invalid_xml), do: gettext("The answer is not valid XML")

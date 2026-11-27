@@ -9058,3 +9058,23 @@ msgstr "La réponse n'est pas du JSON valide"
 #, elixir-autogen, elixir-format
 msgid "The answer is not valid XML"
 msgstr "La réponse n'est pas du XML valide"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cookie rejected"
+msgstr "Cookie refusé"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cookie rejected: paste a new one in Settings"
+msgstr "Cookie refusé : collez-en un nouveau dans les Paramètres"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login rejected"
+msgstr "Connexion refusée"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Login rejected: check the username and password in Settings"
+msgstr "Connexion refusée : vérifiez le nom d'utilisateur et le mot de passe dans les Paramètres"

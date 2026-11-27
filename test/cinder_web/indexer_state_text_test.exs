@@ -88,6 +88,15 @@ defmodule CinderWeb.IndexerStateTextTest do
       assert IndexerStateText.detail({:credentials_rejected, nil}, @now) ==
                "API key rejected: update it in Settings"
 
+      for method <- [:post, :get, :form] do
+        assert {method,
+                IndexerStateText.detail({:credentials_rejected, {:login_rejected, method}}, @now)} ==
+                 {method, "Login rejected: check the username and password in Settings"}
+      end
+
+      assert IndexerStateText.detail({:credentials_rejected, {:login_rejected, :cookie}}, @now) ==
+               "Cookie rejected: paste a new one in Settings"
+
       assert IndexerStateText.detail({:not_supported, :flaresolverr}, @now) ==
                "Not supported: FlareSolverr"
 
@@ -156,12 +165,22 @@ defmodule CinderWeb.IndexerStateTextTest do
   describe "last_test/2" do
     test "words each outcome, a failure by its cause" do
       lines =
-        for outcome <- [:success, :rejected_credentials, :limit, :timeout, {:http_status, 503}],
+        for outcome <- [
+              :success,
+              :rejected_credentials,
+              :login_rejected,
+              :cookie_rejected,
+              :limit,
+              :timeout,
+              {:http_status, 503}
+            ],
             do: IndexerStateText.last_test(%{outcome: outcome, at: at(-3_600)}, @now)
 
       assert lines == [
                "Last Test: worked at 11:00",
                "Last Test: API key rejected at 11:00",
+               "Last Test: Login rejected at 11:00",
+               "Last Test: Cookie rejected at 11:00",
                "Last Test: limit reached at 11:00",
                "Last Test: Timed out at 11:00",
                "Last Test: HTTP 503 at 11:00"

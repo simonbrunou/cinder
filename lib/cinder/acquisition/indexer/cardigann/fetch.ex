@@ -24,12 +24,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   trailing dot, is the indexer's base URL host (`pin_options/2`), and on no other hop.
 
   Then `Cinder.Acquisition.Indexer.request/3` sends the page's request (`send_page/2`): a GET, or
-  a POST with an `application/x-www-form-urlencoded` body (#1679), with `accept-encoding:
-  identity`, a 30 s timeout of its own, Req's redirects and retry off, and its one retry after a
-  502, 503, 504 or 408. The definition's headers (`site_headers`,
+  a POST with an `application/x-www-form-urlencoded` body (#1679) or a login's
+  `multipart/form-data` one (#1680), with `accept-encoding: identity`, a 30 s timeout of its
+  own, Req's redirects and retry off, and its one retry after a 502, 503, 504 or 408, which a
+  login's request turns off (`retry: false`). The definition's headers (`site_headers`,
   `Cinder.Acquisition.Indexer.Cardigann.Headers`) go only on a hop to a credential host, a
-  `cookie` among them joined with Cinder's own. The body is read up to `max_bytes/0`; the
-  request's path stays out of
+  `cookie` among them joined with Cinder's own. A login session's request (`send_session/3`)
+  carries the jar's cookies the same way and keeps each hop's `Set-Cookie` from a credential
+  host. The body is read up to `max_bytes/0`; the request's path stays out of
   `Cinder.HTTPPolicy`'s request telemetry. A site can answer gzip anyway: Nyaa.si's keywordless
   page came gzip-encoded to a request for `identity` (#1671's test path).
 
@@ -40,7 +42,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     `max_redirects/0` hops, past which the answer is `:too_many_redirects`; with it off,
     `{:http_status, status}`, as Prowlarr's parser throws on a redirect. A 301, 302 or 303
     turns a POST into a GET with no body; a 307 or 308 keeps both, and the secret check reads
-    the body again before that hop (`redirected/2`);
+    the body again before that hop (`redirected/2`), and a login's body (`secret_body?`) goes
+    on it only to a credential host;
   - a 403 or 503 whose `server` header names Cloudflare: `:challenge` (#1682 handles it);
   - a 2xx: `{:ok, body, uri}`, `uri` the URL that answered, which links resolve against. A body
     whose `content-encoding` is `gzip` or `x-gzip` is inflated first, up to `max_bytes/0` of
@@ -54,7 +57,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   """
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Query}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Jar, Query}
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.HTTPPolicy
 
@@ -93,33 +96,68 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   def request_timeout_ms, do: @request_timeout_ms
 
   @typedoc """
-  One search request: its URL, its method (`:get` unless given), its form body (nil for none),
-  the definition's headers (`site_headers`, sent only to a credential host) and whether its
-  search path follows redirects on its own (`follow_redirects?`, beside the definition's).
+  One request: its URL, its method (`:get` unless given), its body (nil for none), the body's
+  `content_type` (`application/x-www-form-urlencoded` unless given), the definition's headers
+  (`site_headers`, sent only to a credential host), whether its search path follows redirects on
+  its own (`follow_redirects?`, beside the definition's), whether `request/3`'s one retry runs
+  (`retry`, true unless given), and whether its body holds a credential whatever the secret
+  check finds in it (`secret_body?`, a login's, #1680): such a body goes on a redirect hop only
+  to a credential host.
   """
   @type outgoing :: %{
           required(:url) => String.t(),
           optional(:method) => :get | :post,
           optional(:body) => binary() | nil,
+          optional(:content_type) => String.t() | nil,
           optional(:site_headers) => [{String.t(), String.t()}],
-          optional(:follow_redirects?) => boolean()
+          optional(:follow_redirects?) => boolean(),
+          optional(:retry) => boolean(),
+          optional(:secret_body?) => boolean()
         }
+
+  @typedoc """
+  A 2xx answer of `send_session/3`: its body, decoded as `decoded/1` says, the URL that answered
+  and its `content-type` header, nil for none.
+  """
+  @type page :: %{body: binary(), uri: URI.t(), content_type: String.t() | nil}
 
   @doc "Sends a GET to `url` under `request`; see the moduledoc."
   @spec get(String.t(), request()) :: {:ok, binary(), URI.t()} | {:error, term()}
   def get(url, request) when is_binary(url), do: send_page(%{url: url}, request)
 
   @doc """
-  Sends `outgoing` under `request` and follows its redirects as the moduledoc says. A 301, 302 or
-  303 turns a POST into a GET with no body; a 307 or 308 keeps the method and the body, and the
-  secret check reads the body again before that hop.
+  Sends `outgoing` under `request` and follows its redirects as the moduledoc says, with no
+  cookie: `send_session/3` with no jar.
   """
   @spec send_page(outgoing(), request()) :: {:ok, binary(), URI.t()} | {:error, term()}
   def send_page(%{url: url} = outgoing, request) when is_binary(url) do
+    case send_session(outgoing, request, nil) do
+      {{:ok, page}, nil} -> {:ok, page.body, page.uri}
+      {{:error, _class} = error, nil} -> error
+    end
+  end
+
+  @doc """
+  Sends `outgoing` under `request` with the cookies of `jar` (#1680), a
+  `Cinder.Acquisition.Indexer.Cardigann.Jar` or nil for none, and follows its redirects as the
+  moduledoc says. A 301, 302 or 303 turns a POST into a GET with no body; a 307 or 308 keeps the
+  method and the body, and the secret check reads the body again before that hop.
+
+  Each hop sends the jar's cookies for its own origin, only to a credential host
+  (`Jar.header/3`), and each hop's answer, a redirect included, adds its `Set-Cookie` pairs from
+  a credential host (`Jar.keep/4`). Answers `{answer, jar}`, the jar after the last hop: `answer`
+  is `{:ok, page}` for a 2xx, else `{:error, class}` as the moduledoc lists.
+  """
+  @spec send_session(outgoing(), request(), Jar.t() | nil) ::
+          {{:ok, page()} | {:error, term()}, Jar.t() | nil}
+  def send_session(%{url: url} = outgoing, request, jar) when is_binary(url) do
     out = %{
       method: Map.get(outgoing, :method, :get),
       body: Map.get(outgoing, :body),
-      site_headers: Map.get(outgoing, :site_headers, [])
+      content_type: Map.get(outgoing, :content_type),
+      site_headers: Map.get(outgoing, :site_headers, []),
+      retry: Map.get(outgoing, :retry, true),
+      secret_body?: Map.get(outgoing, :secret_body?, false)
     }
 
     request = %{
@@ -128,40 +166,53 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
           request.follow_redirects? or Map.get(outgoing, :follow_redirects?, false)
     }
 
-    with {:ok, target} <- target(url, request, :definition_error, out.body) do
-      hop(target, out, request, 0)
+    case target(url, request, :definition_error, out.body) do
+      {:ok, target} -> hop(target, out, request, jar, 0)
+      {:error, _reason} = refused -> {refused, jar}
     end
   end
 
-  defp hop(target, out, request, hops) do
-    case send_request(target, request, out) do
+  defp hop(target, out, request, jar, hops) do
+    case send_request(target, request, out, jar) do
       {:ok, %Req.Response{status: status} = response} when status in 300..399 ->
-        redirect(target, response, out, request, hops)
+        redirect(target, response, out, request, kept(jar, target, response, request), hops)
 
       {:ok, response} ->
-        answer(response, target, request)
+        {answer(response, target, request), kept(jar, target, response, request)}
 
       {:error, tag} ->
-        {:error, tag}
+        {{:error, tag}, jar}
     end
   end
 
-  defp redirect(target, response, out, request, hops) do
+  defp kept(nil, _target, _response, _request), do: nil
+
+  defp kept(jar, target, response, request),
+    do: Jar.keep(jar, target.uri, response, request.credential_hosts)
+
+  defp redirect(target, response, out, request, jar, hops) do
     case Req.Response.get_header(response, "location") do
       [location | _] when request.follow_redirects? and hops < @max_redirects ->
         out = redirected(out, response.status)
 
         target
-        |> redirect_target(location, request, out.body)
-        |> followed(out, request, hops)
+        |> redirect_target(location, hop_check(out, request), out.body)
+        |> followed(out, request, jar, hops)
 
       [_location | _] when request.follow_redirects? ->
-        {:error, :too_many_redirects}
+        {{:error, :too_many_redirects}, jar}
 
       _none_or_not_followed ->
-        {:error, {:http_status, response.status}}
+        {{:error, {:http_status, response.status}}, jar}
     end
   end
+
+  # A login's body holds a credential in a form the secret check may not read (a multipart part,
+  # a filtered input): a hop that keeps it goes only to a credential host.
+  defp hop_check(%{secret_body?: true, body: body}, request) when is_binary(body),
+    do: %{request | secret_referenced?: true}
+
+  defp hop_check(_out, request), do: request
 
   @doc """
   The method and body a redirect with `status` keeps of `out`: a 307 or 308 keeps both, any other
@@ -171,11 +222,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   def redirected(out, status) when status in [307, 308], do: out
   def redirected(out, _status), do: %{out | method: :get, body: nil}
 
-  defp followed({:ok, next}, out, request, hops), do: hop(next, out, request, hops + 1)
-  defp followed({:error, :secret_host} = refused, _out, _request, _hops), do: refused
+  defp followed({:ok, next}, out, request, jar, hops), do: hop(next, out, request, jar, hops + 1)
+  defp followed({:error, :secret_host} = refused, _out, _request, jar, _hops), do: {refused, jar}
 
-  defp followed({:error, reason}, _out, _request, _hops),
-    do: {:error, refusal(reason, :bad_response)}
+  defp followed({:error, reason}, _out, _request, jar, _hops),
+    do: {{:error, refusal(reason, :bad_response)}, jar}
 
   @doc """
   The pinned target of a redirect from `target` to `location` under `request`, or the refusal:
@@ -365,11 +416,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
 
   # --- one request ---
 
-  defp send_request(target, request, out) do
+  defp send_request(target, request, out, jar) do
     send_get(target, request,
       method: out.method,
       body: out.body,
-      site_headers: out.site_headers
+      content_type: out.content_type,
+      site_headers: out.site_headers,
+      headers: if(jar, do: Jar.header(jar, target.uri, request.credential_hosts), else: []),
+      retry: out.retry
     )
   end
 
@@ -377,9 +431,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   Sends one request to `target` under `request` through `Cinder.Acquisition.Indexer.request/3`,
   with `accept-encoding: identity`, Req's redirects and retry off and the path out of the request
   telemetry, and answers `request/3`'s answer. `opts` takes `method` (`:get` by default), `body`
-  (a form body, sent as `application/x-www-form-urlencoded`), `site_headers` (the definition's
-  headers, sent only when `target`'s host is a credential host), `headers` (Cinder's own, such
-  as a grab's cookies), `max_bytes` (`max_bytes/0` by default), `timeout_ms`
+  (sent as `content_type`, `application/x-www-form-urlencoded` unless given), `site_headers`
+  (the definition's headers, sent only when `target`'s host is a credential host), `headers`
+  (Cinder's own, such as a jar's cookies), `max_bytes` (`max_bytes/0` by default), `timeout_ms`
   (`request_timeout_ms/0` by default) and `retry` (`request/3`'s one retry, true by default).
   The plug is the request's `req_options` when it holds them, else the adapter config's.
   """
@@ -393,7 +447,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     own =
       [{"accept-encoding", "identity"} | Keyword.get(opts, :headers, [])] ++
         if(is_binary(body),
-          do: [{"content-type", "application/x-www-form-urlencoded"}],
+          do: [
+            {"content-type",
+             Keyword.get(opts, :content_type) || "application/x-www-form-urlencoded"}
+          ],
           else: []
         )
 
@@ -492,10 +549,19 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
         {:error, :challenge}
 
       status in 200..299 ->
-        with {:ok, body} <- decoded(response), do: {:ok, body, target.uri}
+        with {:ok, body} <- decoded(response),
+             do: {:ok, %{body: body, uri: target.uri, content_type: content_type(response)}}
 
       true ->
         NewznabAnswer.classify(status, response.headers, nil, request.now)
+    end
+  end
+
+  # `Indexer.request/3` moves the `content-type` header into the private `:cinder_content_type`.
+  defp content_type(response) do
+    case Req.Response.get_private(response, :cinder_content_type) do
+      [_ | _] = values -> Enum.join(values, ", ")
+      _none -> nil
     end
   end
 

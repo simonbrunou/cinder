@@ -13,17 +13,19 @@
   is skipped too. With `testlinktorrent` on, Prowlarr's default, a link that answers 2xx with
   a body that is not empty, does not start with `d` once inflated, and is no login page of the
   indexer, moves on to the next selector. Every answer goes through the shared download check,
-  which records the indexer's limit, rejected credentials or failure in Native's backoff state
-  as for a Newznab grab. One 90 s deadline covers the whole grab, and the parser worker is
-  killed at it. Each request goes only to a public address, follows at most five redirects,
-  is never retried and adds no `Referer` of its own, but for #1679's `before` request. A request
-  that would carry a secret setting to a host outside the indexer's own hosts is never sent, and a
-  magnet that would carry one is refused. A URL or magnet carries one when it holds a secret
-  value, or when the definition's row fields or download block name a secret setting that holds
-  one. A cookie one of the indexer's own hosts sets goes back only to that scheme, host and
-  port, and only for the rest of the grab. A failure of the download block, such as no link, a
-  parser worker crash, a regex limit, the deadline or a refused secret host, is a capped retry
-  (`{:cardigann_grab, tag}`). The definition loader runs a download block's `selectors` and
-  `testlinktorrent`, and raised its revision to 5.
+  which records the indexer's limit, rejected credentials or failure in Native's backoff state as
+  for a Newznab grab, but for the login rules #1680 adds. One 90 s deadline covers the
+  whole grab, and the parser worker is killed at it. Each request goes only to a public
+  address, follows at most five redirects, is never retried and adds no `Referer` of its own,
+  but for #1679's `before` request and #1680's form login. A request that would carry a secret
+  setting to a host outside the indexer's own hosts is never sent, and a magnet that would
+  carry one is refused. A URL or magnet carries one when it holds a secret value, or when the
+  definition's row fields or download block name a secret setting that holds one. A cookie one
+  of the indexer's own hosts sets on a request of the download block goes back only to that
+  scheme, host and port, and only for the rest of the grab, but for #1680's stored login
+  cookies. A failure of the download block, such as no link, a parser worker crash, a regex
+  limit, the deadline or a refused secret host, is a capped retry (`{:cardigann_grab, tag}`). The
+  definition loader runs a download block's `selectors` and `testlinktorrent`, and raised its
+  revision to 5.
 - `mix cinder.definitions.canary` now queries the Torrent9 definition instead of listing it as not
   supported.

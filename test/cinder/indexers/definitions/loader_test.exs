@@ -176,11 +176,16 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
                    :certificates,
                    :category_default,
                    :tv_search_imdb,
+                   {:login, "form"},
+                   {:login, "post"},
+                   {:login, "cookie"},
+                   {:login, "get"},
                    {:setting, "info"},
                    {:setting, "text"},
                    {:setting, "password"},
                    {:setting, "checkbox"},
                    {:setting, "select"},
+                   {:setting, "info_cookie"},
                    {:setting, "info_flaresolverr"}
                  ]
 
@@ -194,9 +199,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     # Revision 2 is #1665's selector check (Cinder.Indexers.Definitions.LoadCheck), revision 3
     # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671), revision
     # 5 the grab's download block (#1672), revision 6 the JSON and XML answers, the charsets and
-    # the pinned certificates (#1678), revision 7 the remaining search and download keys (#1679).
-    test "fingerprint/0 declares schema version 12 and revision 7" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 7}
+    # the pinned certificates (#1678), revision 7 the remaining search and download keys (#1679),
+    # revision 8 the post, get, form and cookie logins (#1680).
+    test "fingerprint/0 declares schema version 12 and revision 8" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 8}
     end
 
     # #1679's acceptance: every key the slice lifts, in one HTML definition, loads with no code,
@@ -700,9 +706,9 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
         {["settings"], [%{"name" => "a", "type" => "slider"}], [{:unknown_value, :setting_type}]},
         {["login"], %{"method" => "magic"}, [{:unknown_value, :login_method}]},
         {["login"], %{"method" => "form", "captcha" => %{"type" => "audio"}},
-         [{:unknown_value, :captcha_type}, {:login, "form"}, :login_captcha]},
+         [{:unknown_value, :captcha_type}, :login_captcha]},
         {["login"], %{"method" => "form", "captcha" => %{"selector" => "img"}},
-         [{:unknown_value, :captcha_type}, {:login, "form"}, :login_captcha]},
+         [{:unknown_value, :captcha_type}, :login_captcha]},
         {["search", "paths"], [%{"path" => "/", "response" => %{"type" => "csv"}}],
          [{:unknown_value, :response_type}]},
         {["search", "paths"], [%{"path" => "/", "response" => %{}}],
@@ -754,12 +760,27 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
       assert {:ok, %{settings: [], unsupported: []}} = Loader.load(yaml(@base))
     end
 
-    test "a login with no method reads as a form login" do
+    test "a login with no method reads as a form login, which loads (#1680)" do
       for login <- [%{"path" => "/login"}, %{"path" => "/login", "method" => nil}, %{}] do
         assert {:ok, definition} = load_with(["login"], login)
         assert definition.login.method == "form"
-        assert definition.unsupported == [{:login, "form"}]
+        assert definition.unsupported == []
       end
+    end
+
+    test "the post, get, form and cookie logins load; oneurl and a captcha do not (#1680)" do
+      for method <- ~w(post get form cookie) do
+        assert {:ok, definition} = load_with(["login"], %{"method" => method, "path" => "/l"})
+        assert {method, definition.login.method, definition.unsupported} == {method, method, []}
+      end
+
+      assert {:ok, %{unsupported: [{:login, "oneurl"}]}} =
+               load_with(["login"], %{"method" => "oneurl"})
+
+      captcha = %{"type" => "image", "selector" => "img", "input" => "c"}
+
+      assert {:ok, %{unsupported: [:login_captcha]}} =
+               load_with(["login"], %{"method" => "form", "captcha" => captcha})
     end
 
     test "a null login stays absent" do
@@ -971,7 +992,7 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     end
 
     # Cardigann slice (a) builds these (#1671), so they read as supported.
-    @built_settings ~w(info text password checkbox select info_flaresolverr)
+    @built_settings ~w(info text password checkbox select info_cookie info_flaresolverr)
     @built_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                       append tolower toupper base64decode base64encode urldecode urlencode
                       htmldecode htmlencode timeago reltime validfilename diacritics
@@ -1215,38 +1236,37 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
        [{:filter, "fuzzytime"}]},
       # login
       {["login"], %{"method" => "form", "form" => "f", "submitpath" => "/s", "selectors" => true},
-       [{:login, "form"}]},
+       []},
       {["login"], %{"method" => "post", "inputs" => %{"u" => "x"}, "headers" => %{"A" => ["b"]}},
-       [{:login, "post"}]},
-      {["login"], %{"method" => "cookie", "cookies" => ["a=b"]}, [{:login, "cookie"}]},
-      {["login"], %{"method" => "get", "test" => %{"path" => "/", "selector" => "a"}},
-       [{:login, "get"}]},
+       []},
+      {["login"], %{"method" => "cookie", "cookies" => ["a=b"]}, []},
+      {["login"], %{"method" => "get", "test" => %{"path" => "/", "selector" => "a"}}, []},
       {["login"], %{"method" => "oneurl"}, [{:login, "oneurl"}]},
       {["login"],
        %{
          "method" => "form",
          "captcha" => %{"type" => "image", "selector" => "img", "input" => "c"}
-       }, [{:login, "form"}, :login_captcha]},
+       }, [:login_captcha]},
       {["login"],
        %{"method" => "form", "captcha" => %{"type" => "text", "selector" => "p", "input" => "c"}},
-       [{:login, "form"}, :login_captcha]},
+       [:login_captcha]},
       {["login"],
        %{
          "method" => "form",
          "selectorinputs" => %{"t" => %{"selector" => "i", "filters" => [filter("fuzzytime")]}}
-       }, [{:filter, "fuzzytime"}, {:login, "form"}]},
+       }, [{:filter, "fuzzytime"}]},
       {["login"],
        %{
          "method" => "form",
          "getselectorinputs" => %{"t" => %{"selector" => "i", "remove" => "b"}}
-       }, [{:login, "form"}]},
+       }, []},
       {["login"],
        %{
          "method" => "form",
          "error" => [
            %{"selector" => "e", "message" => %{"selector" => "m", "remove" => "b"}}
          ]
-       }, [{:login, "form"}]}
+       }, []}
     ]
   end
 

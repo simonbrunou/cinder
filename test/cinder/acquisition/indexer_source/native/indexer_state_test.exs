@@ -182,6 +182,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStateTest do
       for {answer, by} <- [
             {{:rejected_credentials, {:code, 101}}, {:code, 101}},
             {{:rejected_credentials, {:http_status, 401}}, {:http_status, 401}},
+            {{:rejected_credentials, {:login_rejected, :post}}, {:login_rejected, :post}},
+            {{:rejected_credentials, {:login_rejected, :get}}, {:login_rejected, :get}},
+            {{:rejected_credentials, {:login_rejected, :form}}, {:login_rejected, :form}},
+            {{:rejected_credentials, {:login_rejected, :cookie}}, {:login_rejected, :cookie}},
             {:indexer_auth_failed, nil}
           ] do
         indexer =

@@ -1,8 +1,9 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann do
   @moduledoc """
   The Cardigann adapter of `Cinder.Acquisition.Indexer` (#1671): Cardigann slice (a), the HTML
-  search of a definition with no login, as Nyaa.si and Torrent9 use it. Its `fetch_download/3`
-  is `Cinder.Acquisition.Indexer.Cardigann.Grab`'s (#1672).
+  search of a definition, as Nyaa.si and Torrent9 use it, under the definition's login when it
+  has one (#1680). Its `fetch_download/3` is `Cinder.Acquisition.Indexer.Cardigann.Grab`'s
+  (#1672).
 
   ## Which copy runs
 
@@ -46,19 +47,33 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   `:definition_error`) or a page that hit a limit fails the indexer with that reason and the
   call goes on; a deadline cut or a backoff skip after an answer keeps `:asked`.
 
+  ## The login (#1680)
+
+  For a definition with a `login` block, one `Cinder.Acquisition.Indexer.Cardigann.Session`
+  runs through the call's queries and pages: its first request reads the stored cookie row or
+  logs in first, and each page goes out with the session's cookies. A page answer that shows a
+  login sign (`Cinder.Acquisition.Indexer.Cardigann.Login.sign/4`) is never read or recorded as
+  a page: the session logs in once and sends the page once more, and a second sign is rejected
+  credentials, `{:rejected_credentials, {:login_rejected, method}}`. Each login request holds
+  the slot as a page does, the gate and the spacing included, and the login's answer is
+  recorded inside its hold. A refused login, or a login failure, ends the call as a request
+  failure does.
+
   ## The Test
 
   `test/3` sends the first request of a keywordless search with no category
   (`Query.test_plan/3`), as Prowlarr's `TestConnection` does, and records `:test_success` when
   its page gives at least one row that passes the row rules; when it gives none, the partial
   kind when a field hit a limit (`:regex_limit` or `:filter_output_cap`), else `:no_rows`; or
-  the failure (a deadline cut reads `:timeout`).
+  the failure (a deadline cut reads `:timeout`). Under a login it runs the same session, with
+  the gate off, so a Test runs while the indexer's credentials read rejected, and its one
+  answer, a login's included, is recorded once at its end.
   """
 
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Fetch, Query, Rows, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Fetch, Query, Rows, Session, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
@@ -216,18 +231,19 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   end
 
   defp send_queries(indexer, copy, entries, context) do
-    {row_lists, answered?, query_error, stop} =
-      Enum.reduce_while(entries, {[], false, nil, nil}, fn entry,
-                                                           {lists, answered?, error, nil} ->
-        case send_query(indexer, copy, entry, context) do
-          {:ok, rows, partial} ->
-            {:cont, {[rows | lists], true, error || partial, nil}}
+    start = {[], false, nil, nil, Session.start(copy)}
+
+    {row_lists, answered?, query_error, stop, _session} =
+      Enum.reduce_while(entries, start, fn entry, {lists, answered?, error, nil, session} ->
+        case send_query(indexer, copy, entry, context, session) do
+          {:ok, rows, partial, session} ->
+            {:cont, {[rows | lists], true, error || partial, nil, session}}
 
           {:query_error, kind} ->
-            {:cont, {lists, answered?, error || kind, nil}}
+            {:cont, {lists, answered?, error || kind, nil, session}}
 
           {:stop, rows, stop, page_answered?} ->
-            {:halt, {[rows | lists], answered? or page_answered?, error, stop}}
+            {:halt, {[rows | lists], answered? or page_answered?, error, stop, session}}
         end
       end)
 
@@ -237,14 +253,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
 
   # A query that fails before any request: a limit records its partial kind, a template failure
   # a failure.
-  defp send_query(indexer, _copy, {:error, kind}, _context) do
+  defp send_query(indexer, _copy, {:error, kind}, _context, _session) do
     IndexerStatus.record(indexer, kind, now())
     {:query_error, kind}
   end
 
-  defp send_query(indexer, copy, {:ok, planned}, context) do
-    case pages(indexer, copy, planned, context, planned.pages, nil, []) do
-      {:ok, rows, partial} -> {:ok, tagged(rows, planned), partial}
+  defp send_query(indexer, copy, {:ok, planned}, context, session) do
+    case pages(indexer, copy, planned, context, {planned.pages, session}, nil, []) do
+      {:ok, rows, partial, session} -> {:ok, tagged(rows, planned), partial, session}
       {:stop, rows, stop, answered?} -> {:stop, tagged(rows, planned), stop, answered?}
     end
   end
@@ -255,51 +271,85 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     |> Enum.map(&Map.put(&1, :query_origins, [planned.origin]))
   end
 
-  # The page loop: `first` is the first page's row count, nil before it.
-  defp pages(_indexer, _copy, _planned, _context, [], _first, acc), do: finished(acc)
+  # The page loop: `first` is the first page's row count, nil before it; the session (nil for a
+  # definition with no login) goes from page to page.
+  defp pages(_indexer, _copy, _planned, _context, {[], session}, _first, acc),
+    do: finished(acc, session)
 
-  defp pages(indexer, copy, planned, context, [page | rest], first, acc) do
-    case page(indexer, copy, planned, page, context) do
-      {:ok, page} ->
+  defp pages(indexer, copy, planned, context, {[page | rest], session}, first, acc) do
+    case page(indexer, copy, planned, page, context, session) do
+      {:ok, page, session} ->
         acc = [page | acc]
         first = first || page.count
 
         if first == 0 or page.count < first,
-          do: finished(acc),
-          else: pages(indexer, copy, planned, context, rest, first, acc)
+          do: finished(acc, session),
+          else: pages(indexer, copy, planned, context, {rest, session}, first, acc)
 
       {:error, stop} ->
         {:stop, acc |> Enum.reverse() |> Enum.flat_map(& &1.rows), stop, acc != []}
     end
   end
 
-  defp finished(acc) do
+  defp finished(acc, session) do
     pages = Enum.reverse(acc)
-    {:ok, Enum.flat_map(pages, & &1.rows), Enum.find_value(pages, & &1.partial)}
+    {:ok, Enum.flat_map(pages, & &1.rows), Enum.find_value(pages, & &1.partial), session}
   end
 
-  # One search request in the indexer's slot: the page, or the stop it gives.
-  defp page(indexer, copy, planned, page, context) do
-    fun = fn -> read_page(indexer, copy, planned, page, context) end
+  # One search request in the indexer's slot: the page, or the stop it gives. A definition with
+  # a login sends it under its session (`Cinder.Acquisition.Indexer.Cardigann.Session`).
+  defp page(indexer, copy, planned, page, context, nil) do
+    fun = fn ->
+      now = now()
+      request = copy.request.(context, now)
+
+      page
+      |> Fetch.send_page(request)
+      |> fetched()
+      |> read_answer({indexer, copy, planned, page, context}, request, now)
+    end
 
     case Indexer.leased(indexer, context, fun, delay_ms: copy.delay_ms) do
-      {:ran, answer} -> answer
-      {:not_run, {:skipped, :deadline}} -> {:error, :deadline}
-      not_run -> {:error, not_run}
+      {:ran, {:ok, page}} -> {:ok, page, nil}
+      {:ran, {:error, _stop} = stop} -> stop
+      not_run -> not_run_stop(not_run)
     end
   end
 
-  defp read_page(indexer, copy, planned, page, context) do
-    now = now()
-    request = copy.request.(context, now)
+  defp page(indexer, copy, planned, page, context, session) do
+    run = %{
+      indexer: indexer,
+      copy: copy,
+      context: context,
+      hold: &Indexer.leased(indexer, context, &1, delay_ms: copy.delay_ms),
+      record?: true
+    }
 
-    with {:ok, body, uri} <- Fetch.send_page(page, request),
+    finish = &read_answer(&1, {indexer, copy, planned, page, context}, &2, &3)
+
+    case Session.exchange(run, page, session, finish) do
+      {:ok, page, session} -> {:ok, page, session}
+      {:error, stop} -> {:error, stop}
+      {:not_run, outcome} -> not_run_stop({:not_run, outcome})
+    end
+  end
+
+  defp not_run_stop({:not_run, {:skipped, :deadline}}), do: {:error, :deadline}
+  defp not_run_stop(not_run), do: {:error, not_run}
+
+  defp fetched({:ok, body, uri}), do: {:ok, %{body: body, uri: uri}}
+  defp fetched({:error, _class} = error), do: error
+
+  # A page's answer read and recorded: `:success`, then the page's partial kind; the failure
+  # class otherwise.
+  defp read_answer(answer, {indexer, copy, planned, page, context}, request, now) do
+    with {:ok, fetched} <- answer,
          {:ok, page} <-
            Rows.read(
-             body,
+             fetched.body,
              copy.definition,
              page.variables,
-             uri,
+             fetched.uri,
              planned.andmatch,
              context.deadline_at,
              request,
@@ -355,39 +405,72 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   def test(%ConfiguredIndexer{} = indexer, context, record) do
     with {:ok, copy} <- copy(indexer),
          {:ok, page, _variables} <- Query.test_plan(copy.definition, copy.config, now()) do
-      fun = fn -> record.(test_answer(copy, page, context)) end
-      Indexer.leased(indexer, context, fun, gate: false, delay_ms: copy.delay_ms)
+      test_page(indexer, copy, page, context, record, Session.start(copy))
     else
       {:not_supported, feature} -> {:not_run, {:not_asked, {:not_supported, feature}}}
       {:error, reason} -> {:ran, record.(reason)}
     end
   end
 
-  defp test_answer(copy, test_page, context) do
-    request = copy.request.(context, now())
+  defp test_page(indexer, copy, page, context, record, nil) do
+    fun = fn ->
+      request = copy.request.(context, now())
 
-    with {:ok, body, uri} <- Fetch.send_page(test_page, request),
+      page
+      |> Fetch.send_page(request)
+      |> fetched()
+      |> test_answer(copy, page, context, request)
+      |> test_class()
+      |> record.()
+    end
+
+    Indexer.leased(indexer, context, fun, gate: false, delay_ms: copy.delay_ms)
+  end
+
+  # A definition with a login: its session in the Test's slots, which no rejected credentials
+  # close, and the answer recorded once its last request answered.
+  defp test_page(indexer, copy, page, context, record, session) do
+    run = %{
+      indexer: indexer,
+      copy: copy,
+      context: context,
+      hold: &Indexer.leased(indexer, context, &1, gate: false, delay_ms: copy.delay_ms),
+      record?: false
+    }
+
+    finish = fn answer, request, _now -> test_answer(answer, copy, page, context, request) end
+
+    case Session.exchange(run, page, session, finish) do
+      {:ok, answer, _session} -> {:ran, record.(answer)}
+      {:error, class} -> {:ran, record.(test_class({:error, class}))}
+      {:not_run, outcome} -> {:not_run, outcome}
+    end
+  end
+
+  defp test_answer(answer, copy, test_page, context, request) do
+    with {:ok, fetched} <- answer,
          {:ok, page} <-
            Rows.read(
-             body,
+             fetched.body,
              copy.definition,
              test_page.variables,
-             uri,
+             fetched.uri,
              nil,
              context.deadline_at,
              request,
              test_page.response
            ) do
       cond do
-        page.rows != [] -> :test_success
-        page.partial != nil -> page.partial
-        true -> :no_rows
+        page.rows != [] -> {:ok, :test_success}
+        page.partial != nil -> {:ok, page.partial}
+        true -> {:ok, :no_rows}
       end
-    else
-      {:error, :deadline} -> :timeout
-      {:error, class} -> class
     end
   end
+
+  defp test_class({:ok, answer}), do: answer
+  defp test_class({:error, :deadline}), do: :timeout
+  defp test_class({:error, class}), do: class
 
   defp now, do: Native.now()
 end

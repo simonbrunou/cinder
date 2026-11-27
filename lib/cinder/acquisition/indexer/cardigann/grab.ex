@@ -125,14 +125,35 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   - The details page is read up to `Fetch.max_bytes/0`, past which it is
     `{:cardigann_grab, :page_too_large}`; a link up to the client's `max_bytes`, past which it is
     `:response_too_large`.
-  - No request holds the indexer's slot or reads its backoff state. Cinder adds a `Referer` of
-    its own only on the `before` request, the link's, as step 1 says; a `Referer` the definition
-    sets goes on the other requests to the credential hosts, as its other headers do.
+  - No request holds the indexer's slot or reads its backoff state, but for the login rule
+    below. Cinder adds a `Referer` of its own only on the `before` request, the link's, as step
+    1 says; a `Referer` the definition sets goes on the other requests to the credential hosts,
+    as its other headers do.
   - Cookies: a `Set-Cookie` from a credential host keeps its `name=value` pair for the rest of
-    the grab when its name is not blank, the pair is under 4 KiB, and neither holds a control
-    character, a `;` or a `,`. It is sent back only to the same scheme, host and port, which
-    keep at most 32 names: a new name past them is dropped, a known one replaced. Any other
-    host's `Set-Cookie` is dropped. Nothing is stored after the grab.
+    the grab, by `Cinder.Acquisition.Indexer.Cardigann.Jar`'s rules: sent back only to the same
+    scheme, host and port while its host is a credential host; any other host's `Set-Cookie`
+    is dropped. Under a login session, a pair the block's answers keep also updates the stored
+    row, as the login section below says.
+
+  ## The login (#1680)
+
+  A definition with a `login` block grabs under its session
+  (`Cinder.Acquisition.Indexer.Cardigann.Session`), outside the lease and inside the grab's
+  deadline:
+
+  - while the indexer's credentials are rejected, the grab sends no request and answers
+    `:indexer_auth_failed`;
+  - the requests start with the stored session's cookies, or after a login when no stored
+    session reads, and a `Set-Cookie` that changes the jar updates the stored row
+    (`IndexerCookies.update/3`);
+  - a trusted answer that is a login redirect, an HTTP 401 or a login page logs in once and
+    runs the block again once;
+  - a refused login, or a login sign after this grab's login (any login sign of the `cookie`
+    method), records `{:rejected_credentials, {:login_rejected, method}}` and answers
+    `:indexer_auth_failed`, with nothing more recorded;
+  - a login that fails otherwise records its class as a search's login does (#1654's ladder, a
+    limit's backoff), and answers `{:indexer_limit, until}` for a limit, else
+    `{:cardigann_grab, :login_failed}`, with nothing more recorded.
 
   ## The answer
 
@@ -151,14 +172,18 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     Fetch,
     Filters,
     Headers,
+    Jar,
+    Login,
     Magnet,
     Query,
+    Session,
     Template,
     Variables
   }
 
   alias Cinder.Acquisition.Indexer.Newznab.Grab, as: NewznabGrab
   alias Cinder.Acquisition.IndexerSource.Native
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCookies, IndexerStatus}
   alias Cinder.Download.Client.DownloadCheck
   alias Cinder.Download.Torrent
   alias Cinder.HTTPPolicy
@@ -170,8 +195,6 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   # for the whole chain.
   @deadline_ms 90_000
   @worker_ms 30_000
-  @max_cookies 32
-  @max_cookie_bytes 4_096
   @redirect_statuses [301, 302, 303, 307, 308]
   @get %{method: :get, body: nil, site_headers: nil}
   # A 40-digit hex or 32-character base32 info hash, as `xt=urn:btih:` takes.
@@ -209,7 +232,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     state = %{
       request: request,
       deadline_at: deadline_at,
-      jar: %{},
+      jar: Jar.new(),
+      store: nil,
       opts: opts,
       charset: Charset.of_definition(copy.definition),
       variables: variables,
@@ -217,10 +241,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
       final: final_request(copy.definition.download)
     }
 
-    {fetched, from_source} =
+    answer =
       case Headers.download(copy.definition, variables, request.now) do
         {:ok, headers} ->
-          run(copy, url, %{state | site_headers: headers})
+          session_run(indexer, copy, url, %{state | site_headers: headers})
 
         {:error, kind} when kind in [:regex_limit, :filter_output_cap] ->
           {{:error, {:cardigann_grab, kind}}, false}
@@ -229,8 +253,114 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
           {{:error, {:cardigann_grab, :bad_headers}}, false}
       end
 
-    NewznabGrab.checked_and_recorded(indexer, fetched, from_source, opts)
+    case answer do
+      {:recorded, client_answer} ->
+        client_answer
+
+      {fetched, from_source} ->
+        NewznabGrab.checked_and_recorded(indexer, fetched, from_source, opts)
+    end
   end
+
+  # --- the login session (#1680) ---
+
+  # A definition with no login runs the block as it is. One with a login runs it under its
+  # session: no request while its credentials are rejected; the stored row, or a login first;
+  # one login and one rerun of the block when its answer is a login sign. A refused login, or a
+  # login sign after this grab's login, is recorded as the login's rejection once, and the
+  # client gets `:indexer_auth_failed`; a login that fails otherwise is recorded by the session
+  # (`record?: true`). Both pass by the own record of
+  # `Cinder.Acquisition.Indexer.Newznab.Grab.checked_and_recorded/4`.
+  defp session_run(indexer, copy, url, state) do
+    if copy.definition.login == nil do
+      run(copy, url, state)
+    else
+      run = %{
+        indexer: indexer,
+        copy: copy,
+        context: context(state.deadline_at, state.opts),
+        hold: &{:ran, &1.()},
+        record?: true,
+        request: Map.take(state.request, [:resolver, :req_options])
+      }
+
+      if rejected?(indexer), do: refused_login(), else: loaded(run, copy, url, state)
+    end
+  end
+
+  defp rejected?(indexer) do
+    status = IndexerStatus.read([indexer])[indexer.id]
+    IndexerStatus.gate(status, Native.now()) == {:failed, :rejected_credentials}
+  end
+
+  defp loaded(run, copy, url, state) do
+    case Session.load(run, :unloaded) do
+      {:ok, session} -> with_session(run, copy, url, state, session)
+      refused -> login_refusal(refused)
+    end
+  end
+
+  defp with_session(run, copy, url, state, session) do
+    answer = run(copy, url, under(state, run, session))
+
+    cond do
+      not login_sign?(answer) ->
+        answer
+
+      session.logged_in? or Login.method(copy.definition) == :cookie ->
+        rejected(run)
+
+      true ->
+        relogin(run, copy, url, state, session)
+    end
+  end
+
+  defp relogin(run, copy, url, state, session) do
+    case Session.login(run, session) do
+      {:ok, session} -> rerun(run, copy, url, state, session)
+      refused -> login_refusal(refused)
+    end
+  end
+
+  defp rerun(run, copy, url, state, session) do
+    answer = run(copy, url, under(state, run, session))
+    if login_sign?(answer), do: rejected(run), else: answer
+  end
+
+  # The block runs on the session's jar, and a jar its answers change goes to the stored row.
+  defp under(state, run, session),
+    do: %{state | jar: session.jar, store: {run.indexer, session.logged_in_at}}
+
+  # A trusted answer that says the session is not logged in: a redirect to a login path, or an
+  # answer `DownloadCheck` reads as `:indexer_auth_failed` (`login_page?/1`), an HTTP 401 and a
+  # login page among them.
+  defp login_sign?({{:ok, %{trusted: true} = page}, _from_source}),
+    do: page.login_redirect or login_page?(page)
+
+  defp login_sign?(_answer), do: false
+
+  # A login that did not log in, its class already recorded by the session.
+  defp login_refusal({:error, {:rejected_credentials, _by}}), do: refused_login()
+
+  defp login_refusal({:error, {:limit, until}}),
+    do: {:recorded, {:error, {:indexer_limit, until}}}
+
+  defp login_refusal(_failure), do: {:recorded, {:error, {:cardigann_grab, :login_failed}}}
+
+  # A login sign after this grab's login, or any of the `cookie` method's.
+  defp rejected(run) do
+    method = Login.method(run.copy.definition)
+
+    IndexerStatus.record(
+      run.indexer,
+      {:rejected_credentials, {:login_rejected, method}},
+      Native.now()
+    )
+
+    refused_login()
+  end
+
+  defp refused_login, do: {:recorded, {:error, :indexer_auth_failed}}
 
   # The block's steps in Prowlarr's order (`DownloadRequest`, `b0b5774`): `before`, then
   # `infohash`, which wins over `selectors`, then `selectors`, else the link itself.
@@ -857,7 +987,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
       Fetch.send_get(
         target,
         Map.put(state.request, :context, context(state.deadline_at, state.opts)),
-        headers: cookie_header(state.jar, target.uri),
+        headers: Jar.header(state.jar, target.uri, state.request.credential_hosts),
         site_headers: state.out.site_headers || state.site_headers,
         method: state.out.method,
         body: state.out.body,
@@ -924,61 +1054,16 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
 
   # --- cookies ---
 
+  # Under a login session (`store`), a jar an answer changed updates the stored row
+  # (`IndexerCookies.update/3`), as a search answer does.
   defp keep_cookies(state, uri, response) do
-    if credential?(uri, state) do
-      origin = origin(uri)
-
-      jar =
-        response
-        |> Req.Response.get_header("set-cookie")
-        |> Enum.flat_map(&pair/1)
-        |> Enum.reduce(state.jar, &keep_cookie(&1, &2, origin))
-
-      %{state | jar: jar}
-    else
-      state
-    end
+    jar = Jar.keep(state.jar, uri, response, state.request.credential_hosts)
+    if jar != state.jar, do: stored(state.store, jar)
+    %{state | jar: jar}
   end
 
-  # Past `@max_cookies` names per origin, a new name is dropped; a known one is replaced.
-  defp keep_cookie({name, value}, jar, origin) do
-    cookies = Map.get(jar, origin, %{})
-
-    if map_size(cookies) < @max_cookies or Map.has_key?(cookies, name),
-      do: Map.put(jar, origin, Map.put(cookies, name, value)),
-      else: jar
-  end
-
-  # The `name=value` pair before the first `;`, kept when its name is not blank and neither
-  # holds a control character, a `;` or a `,`, and it fits `@max_cookie_bytes`.
-  defp pair(header) do
-    with [pair | _attributes] <- String.split(header, ";", parts: 2),
-         [name, value] <- String.split(pair, "=", parts: 2),
-         name = String.trim(name),
-         value = String.trim(value),
-         true <- name != "" and byte_size(name) + byte_size(value) < @max_cookie_bytes,
-         true <- cookie_text?(name) and cookie_text?(value) do
-      [{name, value}]
-    else
-      _refused -> []
-    end
-  end
-
-  defp cookie_text?(text),
-    do: String.valid?(text) and not String.match?(text, ~r/[\x00-\x1f\x7f;,]/)
-
-  defp cookie_header(jar, uri) do
-    case Map.get(jar, origin(uri), %{}) do
-      cookies when map_size(cookies) == 0 ->
-        []
-
-      cookies ->
-        [{"cookie", Enum.map_join(cookies, "; ", fn {name, value} -> "#{name}=#{value}" end)}]
-    end
-  end
-
-  defp origin(%URI{scheme: scheme, host: host, port: port}),
-    do: {scheme, host |> String.downcase(:ascii) |> String.trim_trailing("."), port}
+  defp stored(nil, _jar), do: :none
+  defp stored({indexer, logged_in_at}, jar), do: IndexerCookies.update(indexer, logged_in_at, jar)
 
   defp config, do: Application.get_env(:cinder, Cardigann, [])
 end

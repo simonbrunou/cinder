@@ -13,8 +13,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     those of `dateheaders`; `count` is read on a JSON page only), each `search.fields` entry's
     `selector`, `remove` and `case` keys, and each `search.error` entry's `selector` and `message` selector. A JSON or XML
     copy's selectors there are paths for another reader (#1678);
-  - `login`: `form`, `test.selector`, `captcha.selector`, each `error` entry's `selector` and
-    `message` selector, and every `selectorinputs` and `getselectorinputs` selector;
+  - `login`: `form`, `test.selector`, `captcha.selector`, each `inputs` key when `selectors` is
+    on (#1680), each `error` entry's `selector` and `message` selector, and every
+    `selectorinputs` and `getselectorinputs` selector;
   - `download`: each `selectors` entry, `before.pathselector` and `infohash`'s `hash` and
     `title`, then the `remove` of each `selectors` entry and of `hash` and `title` (#1679).
 
@@ -81,7 +82,8 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   features #1671 switched on, to 4, and the download selector templates, with the download block
   #1672 switched on, to 5, the JSON, XML and certificate checks, with what #1678 switched on,
   to 6, and the `.Result` field renderings and the download `remove` checks, with what #1679
-  switched on, to 7, for #1667 to store the answer under.
+  switched on, to 7, and the `login.inputs` keys, with the logins #1680 switched on, to 8, for
+  #1667 to store the answer under.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.{
@@ -434,8 +436,13 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
   defp login_selectors(nil), do: []
 
+  # With `login.selectors` on, each `login.inputs` key is a selector the form login reads its
+  # input's name with (#1680).
   defp login_selectors(login) do
+    input_keys = if login.selectors, do: for({key, _value} <- login.inputs, do: key), else: []
+
     [login.form, login.test && login.test.selector, login.captcha && login.captcha.selector] ++
+      input_keys ++
       Enum.flat_map(login.error, &error_selectors/1) ++
       Enum.flat_map(login.selectorinputs ++ login.getselectorinputs, fn {_name, input} ->
         block(input)

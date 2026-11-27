@@ -104,8 +104,12 @@ defmodule Cinder.Indexers.Definitions.Loader do
     `infohash` (`download_infohash`), `method: post` (`download_post`), non-empty `headers`
     (`download_headers`) and a selector's `usebeforeresponse`
     (`download_use_before_response`).
+  - #1680: the `post`, `get`, `form` and `cookie` logins (`{:login, method}`) with every login
+    key but `captcha`, and the `info_cookie` setting type, a text the settings form shows,
+    which every v11 `cookie` login declares.
 
-  Every other flag is off. Some codes that are off are reported only for some uses:
+  Every other flag is off: `{:login, "oneurl"}` and `login_captcha` among them. Some codes that
+  are off are reported only for some uses:
 
   - `encoding` only for a name `Cinder.Acquisition.Indexer.Cardigann.Charset.fetch/1` does not
     know, so the nine legacy charsets and UTF-8 load;
@@ -135,7 +139,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # 7: the remaining search and download keys load (#1679), `rows.count` loads on any search
   #    and `LoadCheck` checks it on a JSON copy only, and `LoadCheck` renders a field selector
   #    that reads `.Result` and checks a download selector's `remove`.
-  @revision 7
+  # 8: the `post`, `get`, `form` and `cookie` logins and the `info_cookie` setting type load
+  #    (#1680), and `LoadCheck` checks a `login.inputs` key read as a selector.
+  @revision 8
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -145,8 +151,10 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # The filters #1670 and #1677 built, and #1671's row filter and setting types.
   @built_filters Cinder.Acquisition.Indexer.Cardigann.Filters.supported()
   @built_row_filters ~w(andmatch strdump)
-  @built_setting_types ~w(info text password checkbox select info_flaresolverr)
+  @built_setting_types ~w(info text password checkbox select info_cookie info_flaresolverr)
   @login_methods ~w(form post cookie get oneurl)
+  # The login methods #1680 built.
+  @built_login_methods ~w(form post cookie get)
   @setting_types ~w(info text password checkbox select info_category_8000 info_cookie
                     info_flaresolverr info_useragent)
   @privacy_types ~w(public semi-private private)
@@ -289,7 +297,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
                 category_default: true,
                 tv_search_imdb: true
               ] ++
-              Enum.map(@login_methods, &{{:login, &1}, false}) ++
+              Enum.map(@login_methods, &{{:login, &1}, &1 in @built_login_methods}) ++
               [login_captcha: false] ++
               Enum.map(@setting_types, &{{:setting, &1}, &1 in @built_setting_types})
 

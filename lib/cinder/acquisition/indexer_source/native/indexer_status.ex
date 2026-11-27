@@ -29,10 +29,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     reason the report carries.
   - `{:limit, wait}`: a limit backoff until `NewznabAnswer.limit_until/2` of `wait`. The level
     and the failure count stay; the limit is the last failure.
-  - `{:rejected_credentials, by}`: credentials rejected by `by`, `{:code, code}` or
-    `{:http_status, 401}`; `:rejected_credentials` and a grab's `:indexer_auth_failed` (#1659)
-    reject them with no code. No backoff starts or ends; the level and the failure count stay;
-    it is the last failure.
+  - `{:rejected_credentials, by}`: credentials rejected by `by`, `{:code, code}`,
+    `{:http_status, 401}` or a refused Cardigann login `{:login_rejected, method}` (#1680,
+    `method` one of `:post`, `:get`, `:form` and `:cookie`); `:rejected_credentials` and a grab's
+    `:indexer_auth_failed` (#1659) reject them with no code. No backoff starts or ends; the
+    level and the failure count stay; it is the last failure.
   - `:crashed`, a search process that died or raised (Native records it): a failure.
   - Cardigann's failures (#1671), `:parser_failed`, `:forbidden_address`, `:secret_host`,
     `:too_many_redirects` and `:definition_error`, and those of its JSON and XML answers
@@ -89,8 +90,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
 
   # The last Test's outcome: a pass, a query error, a Cardigann page with no row, or a failure
   # reason the report can carry.
-  @test_tags [:success, :query_error, :no_rows | @failure_tags]
+  @test_tags [:success, :query_error, :no_rows, :login_rejected, :cookie_rejected | @failure_tags]
   @partial_kinds [:regex_limit, :filter_output_cap]
+  # A refused Cardigann login, by its method (#1680).
+  @login_methods [:post, :get, :form, :cookie]
+  @rejected_by [:code, :http_status, :login_post, :login_get, :login_form, :login_cookie]
   @test_fields [:last_test, :last_test_code, :last_test_at]
 
   @fields [
@@ -121,7 +125,7 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     field :last_failure_code, :integer
     field :last_failure_at, :utc_datetime
     field :credentials_rejected, :boolean, default: false
-    field :credentials_rejected_by, Ecto.Enum, values: [:code, :http_status]
+    field :credentials_rejected_by, Ecto.Enum, values: @rejected_by
     field :credentials_rejected_code, :integer
     field :last_success_at, :utc_datetime
     field :last_partial, Ecto.Enum, values: @partial_kinds
@@ -234,6 +238,10 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
        when by in [:code, :http_status] and is_integer(code),
        do: reject(status, by, code, now)
 
+  defp step(status, {:rejected_credentials, {:login_rejected, method}}, now)
+       when method in @login_methods,
+       do: reject(status, login_by(method), nil, now)
+
   defp step(status, tag, now) when tag in [:rejected_credentials, :indexer_auth_failed],
     do: reject(status, nil, nil, now)
 
@@ -255,6 +263,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
     level = min(status.level + 1, @top_level)
     failure(status, level, ladder_until(level, now), reason, now)
   end
+
+  defp login_by(:post), do: :login_post
+  defp login_by(:get), do: :login_get
+  defp login_by(:form), do: :login_form
+  defp login_by(:cookie), do: :login_cookie
 
   defp reject(status, by, code, now) do
     status
@@ -372,6 +385,11 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   defp test_outcome(:test_success), do: :success
   defp test_outcome({:query_error, code}), do: {:query_error, code}
   defp test_outcome({:limit, _wait}), do: :limit
+  defp test_outcome({:rejected_credentials, {:login_rejected, :cookie}}), do: :cookie_rejected
+
+  defp test_outcome({:rejected_credentials, {:login_rejected, method}})
+       when method in @login_methods,
+       do: :login_rejected
 
   defp test_outcome(answer) do
     case NewznabAnswer.reason(answer) do
