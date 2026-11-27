@@ -5,15 +5,18 @@ defmodule CinderWeb.ProwlarrImportComponents do
   preview's form, and the report. The component renders it inside its `<.portal>` and
   `<.focus_wrap>`, and handles its events: `import_change`, `import_submit` and `close`.
 
-  Each preview row is a `<fieldset>` named by Prowlarr's name. A tickable row has its tick (a
-  direct row's "Import", a through-Prowlarr row's unticked "Add it through Prowlarr"), its
-  name, and, for a direct row whose key Prowlarr masks, its API key input
-  `secrets[<Prowlarr id>][api_key]` with `phx-update="ignore"` and an id new with each preview
+  Each preview row is a `<fieldset>` named by Prowlarr's name. A tickable row has its tick (a direct
+  row's "Import", a through-Prowlarr row's unticked "Add it through Prowlarr"), its name, and, for a
+  direct row whose key Prowlarr masks, its API key input `secrets[<Prowlarr id>][api_key]` with
+  `phx-update="ignore"` and an id new with each preview
   (`CinderWeb.ProwlarrImportDialog.secret_id/2`). A direct Cardigann row has one such input per
-  secret setting Prowlarr masks, `secrets[<Prowlarr id>][<setting>]` labelled by the definition,
-  and lists each select that took its default; the report lists those again under the indexer. A greyed row (held, already imported or
-  refused) has no input. Each box posts the hidden `false` that `CinderWeb.CoreComponents.input/1`
-  puts before it, so an unticked box still says so.
+  secret setting Prowlarr masks, `secrets[<Prowlarr id>][<setting>]` labelled by the definition, and
+  lists each select that took its default; the report lists those again under the indexer. A greyed
+  row (held, already imported or refused) has no input. While Cinder has no FlareSolverr URL and
+  Prowlarr uses one FlareSolverr host (#1682), the rows are followed by "Prowlarr uses FlareSolverr
+  at <host>" and the unticked box `flaresolverr[save]`; the report then says when the import saved
+  it. Each box posts the hidden `false` that `CinderWeb.CoreComponents.input/1` puts before it, so
+  an unticked box still says so.
   """
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
@@ -55,6 +58,9 @@ defmodule CinderWeb.ProwlarrImportComponents do
           {ProwlarrImportText.skipped(name)}
         </li>
       </ul>
+      <p :if={@dialog.report.flaresolverr_url_saved} id="import-report-flaresolverr" class="text-sm">
+        {gettext("FlareSolverr URL saved.")}
+      </p>
       <p :if={@testing} id="import-report-testing" class="text-sm">{@testing}</p>
       <p id="import-report-source" class="text-sm">
         {gettext("The indexer source stays as it was.")}
@@ -64,6 +70,7 @@ defmodule CinderWeb.ProwlarrImportComponents do
         describedby={
           Enum.join(
             ["import-report"] ++
+              List.wrap(if(@dialog.report.flaresolverr_url_saved, do: "import-report-flaresolverr")) ++
               List.wrap(@testing && "import-report-testing") ++
               ["import-report-source"],
             " "
@@ -105,6 +112,18 @@ defmodule CinderWeb.ProwlarrImportComponents do
           choice={@dialog.choices[row.prowlarr_id]}
           errors={Map.get(@dialog.row_errors, row.prowlarr_id, [])}
         />
+        <fieldset :if={@dialog.flaresolverr_offer} id="import-flaresolverr" class="space-y-1">
+          <legend class="text-sm">
+            {gettext("Prowlarr uses FlareSolverr at %{url}", url: @dialog.flaresolverr_offer)}
+          </legend>
+          <.input
+            type="checkbox"
+            id="import-flaresolverr-save"
+            name="flaresolverr[save]"
+            value={@dialog.flaresolverr_save}
+            label={gettext("Save it as Cinder's FlareSolverr URL")}
+          />
+        </fieldset>
         <div class="mt-4 flex flex-wrap justify-end gap-2">
           <.button type="button" variant="ghost" id="import-close" phx-click={close_js(@myself)}>
             {gettext("Cancel")}

@@ -25,7 +25,7 @@ defmodule Cinder.Settings.DefinitionTest do
     radarr_api_key radarr_local_path_prefix radarr_remote_path_prefix radarr_url readarr_api_key
     readarr_local_path_prefix readarr_remote_path_prefix readarr_url sabnzbd_api_key
     sabnzbd_enabled sabnzbd_local_path_prefix sabnzbd_remote_path_prefix sabnzbd_url
-    indexer_source setup_complete smtp_from smtp_host smtp_password smtp_port smtp_ssl
+    flaresolverr_url indexer_source setup_complete smtp_from smtp_host smtp_password smtp_port smtp_ssl
     smtp_username
     sonarr_api_key sonarr_local_path_prefix sonarr_remote_path_prefix sonarr_url
     subtitle_languages tmdb_token torrent_cleanup_ratio torrent_cleanup_seed_hours torrent_client

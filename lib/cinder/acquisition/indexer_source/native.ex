@@ -10,8 +10,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
 
   - A type with no adapter in the `:indexer_adapters` map is `{:not_asked, {:not_supported,
     type}}` and gets no request.
-  - Otherwise an indexer whose FlareSolverr toggle is on is `{:not_asked, {:not_supported,
-    :flaresolverr}}`, and its adapter is never called.
+  - Otherwise a Newznab or Torznab indexer whose FlareSolverr toggle is on is `{:not_asked,
+    {:not_supported, :flaresolverr}}`, and its adapter is never called. A Cardigann indexer with
+    the toggle on is asked: its adapter solves a challenge through FlareSolverr (#1682).
   - Otherwise Native reads the indexer's backoff state
     (`Cinder.Acquisition.IndexerSource.Native.IndexerStatus.read/1`) before any request. An
     indexer whose credentials are rejected is `{:failed, :rejected_credentials}`, and one in a
@@ -443,13 +444,17 @@ defmodule Cinder.Acquisition.IndexerSource.Native do
   @doc """
   The feature Native lacks to ask `indexer`, or nil when it can ask it: the type when `adapters`
   (the `:indexer_adapters` map) names no adapter for it, else `:flaresolverr` when its
-  FlareSolverr toggle is on. The search, the Test and `IndexerState` read it.
+  FlareSolverr toggle is on and it is no Cardigann indexer, whose adapter uses FlareSolverr
+  (#1682). The search, the Test and `IndexerState` read it.
   """
   @spec not_supported(ConfiguredIndexer.t(), map()) :: atom() | nil
   def not_supported(%ConfiguredIndexer{type: type}, adapters) when not is_map_key(adapters, type),
     do: type
 
-  def not_supported(%ConfiguredIndexer{flaresolverr: true}, _adapters), do: :flaresolverr
+  def not_supported(%ConfiguredIndexer{type: type, flaresolverr: true}, _adapters)
+      when type != :cardigann,
+      do: :flaresolverr
+
   def not_supported(%ConfiguredIndexer{}, _adapters), do: nil
 
   defp collect([], _query, _context), do: %{}

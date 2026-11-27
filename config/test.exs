@@ -170,6 +170,10 @@ config :cinder, Cinder.Acquisition.Indexer.Newznab,
 config :cinder, Cinder.Indexers.ProwlarrApi.HTTP,
   req_options: [plug: {Req.Test, Cinder.ProwlarrApiStub}]
 
+# The FlareSolverr calls of a Cardigann request behind a challenge (#1682) go to a Req.Test stub.
+config :cinder, Cinder.Acquisition.Indexer.Cardigann.FlareSolverr,
+  req_options: [plug: {Req.Test, Cinder.FlareSolverrStub}]
+
 # The Cardigann adapter's requests go to a Req.Test stub, and its resolver answers by name: a
 # `.loopback.test` host resolves to 127.0.0.1, a `.lan.test` host to 192.168.1.10, an `.nx.test`
 # host to nothing, and every other host to a public address.

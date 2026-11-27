@@ -18,7 +18,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerStatus do
   - `:test_success`, a passing Test (`record_test/3` records it): a success that also ends
     rejected credentials.
   - A failure (`{:http_status, status}`, `{:indexer_error, code}`, `:timeout`,
-    `:connection_failed`, `:bad_response`, `:too_large`, `:challenge`): the level climbs one, up
+    `:connection_failed`, `:bad_response`, `:too_large`, `:challenge`, and #1682's
+    `:cloudflare_challenge`, `:flaresolverr_url_not_set`, `:flaresolverr_failed` and
+    `:flaresolverr_off_host`): the level climbs one, up
     to 9, and a failure backoff runs for that step of the ladder, 1, 5, 15 and 30 min, then 1, 3,
     6, 12 and 24 h. The failure count rises by one and the failure is the last failure.
   - `:dns` and `:connection_refused`: a failure that climbs no higher than level 1. A level

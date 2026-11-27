@@ -11,8 +11,9 @@ defmodule Cinder.Acquisition.IndexerSource.Native.IndexerState do
 
   1. `:disabled`: the admin turned it off.
   2. `:undecryptable`: its stored secrets do not decrypt.
-  3. `{:not_supported, feature}`: its type has no adapter (`feature` is the type), or its
-     FlareSolverr toggle is on (`:flaresolverr`), as `Native.not_supported/2` says.
+  3. `{:not_supported, feature}`: its type has no adapter (`feature` is the type), or it is not
+     a Cardigann indexer and its FlareSolverr toggle is on (`:flaresolverr`), as
+     `Native.not_supported/2` says.
   4. For a Cardigann indexer, from `Cinder.Indexers.Definitions.indexer_codes/0` (#1668):
      `{:not_supported, feature}` when its running copy reads not supported, `feature` being the
      copy's first code, and `{:definition_no_longer_loads, reason}` when its running copy fails

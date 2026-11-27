@@ -17,7 +17,11 @@ defmodule CinderWeb.IndexerStateTextTest do
     :forbidden_address,
     :secret_host,
     :too_many_redirects,
-    :definition_error
+    :definition_error,
+    :cloudflare_challenge,
+    :flaresolverr_url_not_set,
+    :flaresolverr_failed,
+    :flaresolverr_off_host
   ]
 
   defp at(seconds), do: DateTime.add(@now, seconds, :second)
@@ -61,6 +65,24 @@ defmodule CinderWeb.IndexerStateTextTest do
       refute "Failed" in causes
       assert length(Enum.uniq(causes)) == length(@cardigann_reasons)
       assert IndexerStateText.cause(:secret_host) =~ "credential"
+    end
+
+    test "a challenge and each FlareSolverr failure read as #1682 words them" do
+      causes =
+        for kind <- [
+              :cloudflare_challenge,
+              :flaresolverr_url_not_set,
+              :flaresolverr_failed,
+              :flaresolverr_off_host
+            ],
+            do: IndexerStateText.cause(kind)
+
+      assert causes == [
+               "Cloudflare challenge",
+               "FlareSolverr URL not set",
+               "FlareSolverr failed",
+               "FlareSolverr answered from another site"
+             ]
     end
 
     test "HTTP 410 and 404 name their Prowlarr cause" do

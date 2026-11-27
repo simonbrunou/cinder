@@ -191,6 +191,29 @@ defmodule Cinder.Acquisition.IndexerSource.NativeTest do
       assert {:ok, [], report} = Native.search("tt0000001")
       assert outcomes(report) == %{solver.id => {:not_asked, {:not_supported, :cardigann}}}
     end
+
+    test "leaves a Cardigann indexer asked: its adapter solves challenges (#1682)" do
+      solver = cardigann!(%{flaresolverr: true})
+      torznab = indexer!(%{type: :torznab, flaresolverr: true})
+      adapters(%{cardigann: IndexerAdapterMock, torznab: OtherIndexerAdapterMock})
+      test_pid = self()
+
+      stub(IndexerAdapterMock, :search, fn indexer, _query, _context ->
+        send(test_pid, {:searched, indexer.id})
+        {[], :asked}
+      end)
+
+      assert {:ok, [], report} = Native.search("tt0000001")
+
+      assert outcomes(report) == %{
+               solver.id => :asked,
+               torznab.id => {:not_asked, {:not_supported, :flaresolverr}}
+             }
+
+      assert_received {:searched, id}
+      assert id == solver.id
+      assert Native.not_supported(solver, %{cardigann: IndexerAdapterMock}) == nil
+    end
   end
 
   describe "each type" do

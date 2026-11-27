@@ -9,7 +9,7 @@ defmodule CinderWeb.ProwlarrImportComponentsTest do
     render_component(&ProwlarrImportComponents.import_step/1,
       dialog: %{
         phase: :report,
-        report: %{created: created, tests_started: tests_started},
+        report: %{created: created, tests_started: tests_started, flaresolverr_url_saved: false},
         skipped: []
       },
       myself: %Phoenix.LiveComponent.CID{cid: 1}

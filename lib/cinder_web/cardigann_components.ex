@@ -383,6 +383,38 @@ defmodule CinderWeb.CardigannComponents do
           control={control}
         />
 
+        <.input
+          :if={not @dialog.broken?}
+          type="checkbox"
+          field={@form[:flaresolverr]}
+          id="indexer-form-flaresolverr"
+          label={gettext("Use FlareSolverr")}
+          aria-describedby="indexer-form-flaresolverr-help"
+        />
+        <p
+          :if={not @dialog.broken?}
+          id="indexer-form-flaresolverr-help"
+          class="-mt-1 mb-2 text-xs text-base-content/70"
+        >
+          {gettext(
+            "Cinder calls FlareSolverr only when the site answers with a Cloudflare or DDoS-Guard challenge."
+          )}
+        </p>
+        <.input
+          :if={
+            not @dialog.broken? and @dialog.values["flaresolverr"] == "true" and
+              not @dialog.flaresolverr_url?
+          }
+          type="text"
+          id="indexer-form-flaresolverr-url"
+          name="flaresolverr[url]"
+          value={@dialog.flaresolverr_url}
+          label={gettext("FlareSolverr URL")}
+          inputmode="url"
+          autocomplete="off"
+          errors={@errors[:flaresolverr_url] || []}
+        />
+
         <p
           :if={@dialog.mode == :add and CardigannDialog.captcha?(@dialog)}
           id="indexer-form-captcha-after-save"

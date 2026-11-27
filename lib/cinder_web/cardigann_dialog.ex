@@ -14,7 +14,8 @@ defmodule CinderWeb.CardigannDialog do
     defaults the form renders. An edit whose running copy no longer parses has no `copy` and no
     hash (`broken?`): its form holds the name, priority and Enabled only.
   - `values`: the typed non-secret fields as strings, `"name"`, `"base_url"`, `"priority"`,
-    `"enabled"`, plus `"settings"`, each checkbox and select value by setting name, and
+    `"enabled"`, `"flaresolverr"` (the toggle, #1682), plus `"settings"`, each checkbox and
+    select value by setting name, and
     `"clear"`, each secret's Clear box by setting name. `change/2` and a refused `save/3` keep
     them, so a re-render shows them again. Setting names are definition text and stay strings.
   - `saved`, the setting names whose secret the indexer stores, or `:unreadable`, and `plain`,
@@ -32,16 +33,21 @@ defmodule CinderWeb.CardigannDialog do
     a secret fills shows as its template, so a typed secret never enters the dialog. The form
     draws the list's digest (`shown_digest/1`) in a hidden input, the save sends the posted one,
     and the store refuses it when the list it reads then differs.
+  - `flaresolverr_url?`, whether a FlareSolverr URL is saved, read on open, on each change and
+    on each save, and `flaresolverr_url`, the URL typed in the field the form shows while the
+    toggle is on and none is saved; it posts under `flaresolverr[url]`. A save with the toggle
+    on and no URL saved saves the typed URL first (`Cinder.Indexers.FlareSolverrUrl.put/1`),
+    then the indexer, and refuses a blank or invalid one under `:flaresolverr_url`.
   - As `CinderWeb.IndexerDialog` has them: `id`, `lock_version` and `config_version` for an edit
     or a Switch, `errors`, and the `stale?` and `deleted?` flags a refused save sets.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann
   alias Cinder.Indexers
-  alias Cinder.Indexers.{CardigannSettings, Definitions}
+  alias Cinder.Indexers.{CardigannSettings, Definitions, FlareSolverrUrl}
   alias CinderWeb.IndexerFormText
 
-  @value_keys ~w(name base_url priority enabled)
+  @value_keys ~w(name base_url priority enabled flaresolverr)
   @hostless_targets [["indexer", "name"], ["indexer", "priority"], ["indexer", "enabled"]]
   @secret_types ["text", "password"]
   @label_types ["info_useragent", "info_category_8000"]
@@ -60,6 +66,7 @@ defmodule CinderWeb.CardigannDialog do
       "base_url" => List.first(definition.links || []) || "",
       "priority" => "25",
       "enabled" => "true",
+      "flaresolverr" => "false",
       "settings" => strings(plain)
     })
   end
@@ -131,6 +138,7 @@ defmodule CinderWeb.CardigannDialog do
       "base_url" => row.base_url,
       "priority" => Integer.to_string(row.priority),
       "enabled" => to_string(row.enabled),
+      "flaresolverr" => to_string(row.flaresolverr),
       "settings" => strings(plain)
     }
   end
@@ -168,7 +176,9 @@ defmodule CinderWeb.CardigannDialog do
       id: nil,
       lock_version: nil,
       config_version: nil,
-      secret_key: System.unique_integer([:positive])
+      secret_key: System.unique_integer([:positive]),
+      flaresolverr_url?: FlareSolverrUrl.get() != nil,
+      flaresolverr_url: ""
     }
   end
 
@@ -183,14 +193,27 @@ defmodule CinderWeb.CardigannDialog do
   """
   @spec change(map(), map()) :: map()
   def change(%{mode: :switch} = dialog, params) do
-    dialog = %{dialog | values: typed(dialog, params)}
+    dialog = changed(dialog, params)
 
     if params["_target"] in @hostless_targets and is_list(dialog.hosts),
       do: dialog,
       else: with_hosts(dialog, params)
   end
 
-  def change(dialog, params), do: %{dialog | values: typed(dialog, params)}
+  def change(dialog, params), do: changed(dialog, params)
+
+  # The typed values, the typed FlareSolverr URL, and whether a URL is saved now.
+  defp changed(dialog, params) do
+    %{
+      dialog
+      | values: typed(dialog, params),
+        flaresolverr_url: typed_url(params),
+        flaresolverr_url?: FlareSolverrUrl.get() != nil
+    }
+  end
+
+  defp typed_url(%{"flaresolverr" => %{"url" => url}}) when is_binary(url), do: url
+  defp typed_url(_params), do: ""
 
   # The hosts of the input `save/3` sends for these `params`, or the save's refusal of it.
   defp with_hosts(dialog, params) do
@@ -246,7 +269,33 @@ defmodule CinderWeb.CardigannDialog do
   """
   @spec save(map(), term(), map()) :: {:ok, map()} | {:error, map()}
   def save(dialog, actor, params) do
-    dialog = %{dialog | values: typed(dialog, params)}
+    dialog = changed(dialog, params)
+
+    case save_url(dialog) do
+      :ok ->
+        save_indexer(%{dialog | flaresolverr_url?: FlareSolverrUrl.get() != nil}, actor, params)
+
+      {:error, reason} ->
+        {:error,
+         %{dialog | errors: %{flaresolverr_url: [IndexerFormText.flaresolverr_url(reason)]}}}
+    end
+  end
+
+  # With the toggle on and no URL saved, the typed URL saves first (#1682), so the URL exists
+  # before the indexer's Test runs, and stays saved when the store then refuses the indexer.
+  defp save_url(
+         %{broken?: false, values: %{"flaresolverr" => "true"}, flaresolverr_url?: false} = dialog
+       ) do
+    cond do
+      String.trim(dialog.flaresolverr_url) == "" -> {:error, :blank}
+      FlareSolverrUrl.put(dialog.flaresolverr_url) == :ok -> :ok
+      true -> {:error, :invalid}
+    end
+  end
+
+  defp save_url(_dialog), do: :ok
+
+  defp save_indexer(dialog, actor, params) do
     attrs = dialog |> attrs() |> posted_digest(dialog, params)
     secrets = if dialog.broken?, do: %{}, else: secrets(dialog, params)
 
@@ -279,8 +328,10 @@ defmodule CinderWeb.CardigannDialog do
   defp refused_hosts(dialog, _params), do: dialog
 
   # An edit whose running copy no longer parses sends the fields its form holds and no hash, so
-  # the store checks nothing against a copy (`Cinder.Indexers.update/5`).
-  defp attrs(%{broken?: true, values: values}), do: base_attrs(values)
+  # the store checks nothing against a copy (`Cinder.Indexers.update/5`). Its form holds no
+  # FlareSolverr toggle, so the stored one stays.
+  defp attrs(%{broken?: true, values: values}),
+    do: values |> base_attrs() |> Map.delete("flaresolverr")
 
   defp attrs(dialog) do
     attrs =
@@ -327,7 +378,8 @@ defmodule CinderWeb.CardigannDialog do
     do: %{
       "name" => values["name"],
       "priority" => values["priority"],
-      "enabled" => values["enabled"] == "true"
+      "enabled" => values["enabled"] == "true",
+      "flaresolverr" => values["flaresolverr"] == "true"
     }
 
   # Each secret the form renders, as typed, and its Clear box; any other key or shape is left
@@ -471,6 +523,7 @@ defmodule CinderWeb.CardigannDialog do
     [
       name: "indexer-form-name",
       base_url: "indexer-form-base-url",
+      flaresolverr_url: "indexer-form-flaresolverr-url",
       priority: "indexer-form-priority",
       enabled: "indexer-form-enabled"
     ]

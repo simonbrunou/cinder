@@ -19,7 +19,7 @@ defmodule Cinder.Acquisition.Indexer.CardigannCaptchaTest do
   }
 
   alias Cinder.ConfigCase
-  alias Cinder.Indexers.Definitions
+  alias Cinder.Indexers.{Definitions, FlareSolverrUrl}
   alias Cinder.Repo
 
   @now ~U[2026-11-26 12:00:00Z]
@@ -282,6 +282,55 @@ defmodule Cinder.Acquisition.Indexer.CardigannCaptchaTest do
         assert Native.load_captcha(indexer.id) == {:error, error}
         assert Repo.get(IndexerCaptchas, indexer.id) == nil
       end
+    end
+
+    test "an image behind a challenge, with the FlareSolverr toggle on, loads once solved" do
+      ua = "Mozilla/5.0 FlareSolverrCaptchaTest"
+      test_pid = self()
+      :ok = FlareSolverrUrl.put("http://flaresolverr.lan:8191")
+
+      Req.Test.stub(Cinder.FlareSolverrStub, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:flaresolverr, Jason.decode!(body)})
+
+        Req.Test.json(conn, %{
+          "status" => "ok",
+          "solution" => %{
+            "url" => "https://nyaa.test/",
+            "cookies" => [%{"name" => "cf_clearance", "value" => "c1", "domain" => ".nyaa.test"}],
+            "userAgent" => ua
+          }
+        })
+      end)
+
+      definition = nyaa_like(&(&1 |> private() |> Map.put("login", captcha_login())))
+
+      [indexer] =
+        setup!(
+          [{"captcha.yml", definition}],
+          [{"captcha.yml", nyaa_base(), @secrets, %{flaresolverr: true}}]
+        )
+
+      site(landing(@captcha_img), %{
+        "/captcha.php" => fn conn ->
+          if Plug.Conn.get_req_header(conn, "user-agent") == [ua] do
+            {200, "image/png", @png}
+          else
+            conn
+            |> Plug.Conn.put_resp_header("server", "cloudflare")
+            |> Plug.Conn.put_resp_content_type("text/html")
+            |> Plug.Conn.send_resp(403, "<html><title>Just a moment...</title></html>")
+          end
+        end
+      })
+
+      assert {:ok, %{mime: "image/png", image: image}} = Native.load_captcha(indexer.id)
+      assert Base.decode64!(image) == @png
+
+      # A login's request solves on the base URL, then the image goes again with the clearance.
+      assert_received {:flaresolverr, %{"cmd" => "request.get", "url" => "https://nyaa.test/"}}
+      refute_received {:flaresolverr, _payload}
+      assert paths() == [{"GET", "/login.php"}, {"GET", "/captcha.php"}, {"GET", "/captcha.php"}]
     end
 
     # The positive control of this test is the first test of this block.

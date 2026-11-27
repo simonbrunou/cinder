@@ -62,6 +62,11 @@ defmodule CinderWeb.IndexersComponent do
   gets its notice; the Tests the import started mark their rows as the runner's messages arrive.
   A refused commit moves focus to the alert above the rows, or to the first refused row's name.
 
+  The FlareSolverr line under the table (#1682) opens the URL dialog of
+  `CinderWeb.FlareSolverrDialog` in the same portal; a save or a clear reads the rows again and
+  gives focus back to the line's button. A Cardigann save that saved the URL before the indexer
+  refused shows the saved URL on the line.
+
   Its own actions save at once and say so in one `role="status"` line. The switch saves through
   `Cinder.Indexers.set_enabled/4`, checked against the `lock_version` the row was read with, and
   starts no Test. Delete goes through `Cinder.Indexers.delete/2`, which takes no version, and
@@ -117,11 +122,12 @@ defmodule CinderWeb.IndexersComponent do
     IndexerStateText
   }
 
-  alias CinderWeb.ProwlarrImportDialog
+  alias CinderWeb.{FlareSolverrDialog, ProwlarrImportDialog}
 
   import CinderWeb.CardigannComponents,
     only: [accept_step: 1, cardigann_form: 1, definition_entries: 1, definitions_line: 1]
 
+  import CinderWeb.FlareSolverrDialog, only: [flaresolverr_line: 1, flaresolverr_step: 1]
   import CinderWeb.ProwlarrImportComponents, only: [import_step: 1]
 
   # The generic types of the add list; its Cardigann sites come from the definitions mirror.
@@ -227,7 +233,12 @@ defmodule CinderWeb.IndexersComponent do
       end
 
     socket
-    |> assign(rows: rows, now: now, only_source?: only_source?())
+    |> assign(
+      rows: rows,
+      now: now,
+      only_source?: only_source?(),
+      flaresolverr_url: FlareSolverrDialog.url()
+    )
     |> schedule_refresh(rows, now)
     |> show_rows()
   end
@@ -417,6 +428,32 @@ defmodule CinderWeb.IndexersComponent do
       ),
       do: import_submit(socket, params)
 
+  def handle_event("open_flaresolverr", _params, socket),
+    do:
+      {:noreply,
+       assign(socket, dialog: FlareSolverrDialog.open(), opener: "indexers-flaresolverr")}
+
+  def handle_event(
+        "flaresolverr_change",
+        params,
+        %{assigns: %{dialog: %{step: :flaresolverr} = dialog}} = socket
+      ),
+      do: {:noreply, assign(socket, dialog: FlareSolverrDialog.change(dialog, params))}
+
+  def handle_event(
+        "flaresolverr_save",
+        params,
+        %{assigns: %{dialog: %{step: :flaresolverr} = dialog}} = socket
+      ) do
+    case FlareSolverrDialog.save(dialog, params) do
+      {:ok, notice} ->
+        {:noreply, socket |> assign(notice: notice) |> close_saved()}
+
+      {:error, dialog} ->
+        {:noreply, socket |> assign(dialog: dialog) |> focus_flaresolverr(dialog)}
+    end
+  end
+
   def handle_event("back", _params, %{assigns: %{dialog: %{mode: :add}}} = socket),
     do: {:noreply, assign(socket, dialog: %{step: :pick, query: "", picker: picker()})}
 
@@ -509,13 +546,24 @@ defmodule CinderWeb.IndexersComponent do
       else: {:noreply, socket}
   end
 
-  # The dialog's form always posts both maps: a save that lacks either changes nothing.
+  # A Newznab or Torznab form always posts both maps: a save that lacks either changes nothing,
+  # and so does a save whose `indexer` or `secrets` is not a map.
   def handle_event(
         "save",
         %{"indexer" => %{}, "secrets" => %{}} = params,
         %{assigns: %{dialog: %{step: :form, deleted?: false}}} = socket
       ),
       do: save(socket, params)
+
+  # A Cardigann site with no text or password setting renders no `secrets[...]` input, and the
+  # browser posts no empty map (#1682): its save carries none.
+  def handle_event(
+        "save",
+        %{"indexer" => %{}} = params,
+        %{assigns: %{dialog: %{step: :form, type: :cardigann, deleted?: false}}} = socket
+      )
+      when not is_map_key(params, "secrets"),
+      do: save(socket, Map.put(params, "secrets", %{}))
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -566,7 +614,7 @@ defmodule CinderWeb.IndexersComponent do
   # never ran on the element the portal moved to `body` (browser case 13).
   defp close_dialog(socket, opener) do
     opener =
-      if opener in ["indexers-add", "indexers-import"] or
+      if opener in ["indexers-add", "indexers-import", "indexers-flaresolverr"] or
            Enum.any?(socket.assigns.rows, &(opener == "indexer-#{&1.id}-edit")),
          do: opener,
          else: "indexers-add"
@@ -606,15 +654,26 @@ defmodule CinderWeb.IndexersComponent do
     end
   end
 
+  # A refused Cardigann save can follow the save of its FlareSolverr URL, which the line shows.
   defp save_form(socket, dialog, form, params, answer) do
     case form.save(dialog, socket.assigns.actor, params) do
       {:ok, row} ->
         saved(socket, dialog, form, row, answer)
 
       {:error, dialog} ->
-        {:noreply, socket |> assign(dialog: dialog) |> focus_refusal(dialog)}
+        {:noreply,
+         socket
+         |> assign(dialog: dialog, flaresolverr_url: FlareSolverrDialog.url())
+         |> focus_refusal(dialog)}
     end
   end
+
+  # A refused URL moves focus to its field; the count a clear shows moves it to the save button.
+  defp focus_flaresolverr(socket, %{in_use: count}) when is_integer(count),
+    do: push_event(socket, "focus-invalid", %{id: "flaresolverr-save"})
+
+  defp focus_flaresolverr(socket, _dialog),
+    do: push_event(socket, "focus-invalid", %{id: "flaresolverr-url"})
 
   # `{:error, :running}`: a Test of that indexer started before the save still runs, so the
   # answer waits. The dialog opens again on the saved row, its new versions with it, and keeps
@@ -674,14 +733,18 @@ defmodule CinderWeb.IndexersComponent do
   # The typed keys go from `params` to the commit and are never assigned. Once the import
   # committed, the rows are read again, the Tests it started mark their rows as the runner's
   # `:started` messages reach the page, and the host gets its notice. A refused commit moves
-  # focus to the alert above the rows, else to the first row it refused.
+  # focus to the alert above the rows, else to the first row it refused; the URL line reads the
+  # URL again, which the tick can have saved before the refusal.
   defp import_submit(socket, params) do
     case ProwlarrImportDialog.submit(socket.assigns.dialog, socket.assigns.actor, params) do
       {:ok, dialog} ->
         {:noreply, socket |> assign(dialog: dialog) |> load_rows() |> notify_host()}
 
       {:error, dialog} ->
-        {:noreply, socket |> assign(dialog: dialog) |> focus_import_refusal(dialog)}
+        {:noreply,
+         socket
+         |> assign(dialog: dialog, flaresolverr_url: FlareSolverrDialog.url())
+         |> focus_import_refusal(dialog)}
     end
   end
 
@@ -1130,6 +1193,7 @@ defmodule CinderWeb.IndexersComponent do
       <p id="indexers-notice" role="status" class="text-sm">{@notice}</p>
 
       <.definitions_line line={@definitions} myself={@myself} />
+      <.flaresolverr_line url={@flaresolverr_url} myself={@myself} />
 
       <.portal :if={@dialog} id="indexer-dialog" target="body">
         <div
@@ -1149,6 +1213,11 @@ defmodule CinderWeb.IndexersComponent do
             ]}
           >
             <.import_step :if={@dialog.step == :import} dialog={@dialog} myself={@myself} />
+            <.flaresolverr_step
+              :if={@dialog.step == :flaresolverr}
+              dialog={@dialog}
+              myself={@myself}
+            />
             <.pick_step :if={@dialog.step == :pick} dialog={@dialog} myself={@myself} />
             <.accept_step :if={@dialog.step == :accept} dialog={@dialog} myself={@myself} />
             <.form_step

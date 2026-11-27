@@ -477,12 +477,12 @@ defmodule CinderWeb.SettingsProwlarrImportTest do
 
       {_html, [call]} =
         CallTrace.calls(
-          {ProwlarrImport, :commit, 3},
+          {ProwlarrImport, :commit, 4},
           fn -> submit(lv, typed) end,
           pid: lv.pid
         )
 
-      assert [_preview, choices, actor] = call.args
+      assert [_preview, choices, actor, [save_flaresolverr_url: false]] = call.args
       assert %User{} = actor
 
       assert choices == %{
@@ -520,12 +520,12 @@ defmodule CinderWeb.SettingsProwlarrImportTest do
 
       {_html, [call]} =
         CallTrace.calls(
-          {ProwlarrImport, :commit, 3},
+          {ProwlarrImport, :commit, 4},
           fn -> lv |> target() |> render_submit("import_submit", params) end,
           pid: lv.pid
         )
 
-      assert [_preview, choices, _actor] = call.args
+      assert [_preview, choices, _actor, _opts] = call.args
 
       assert for({id, choice} <- choices, into: %{}, do: {id, choice.secrets}) == %{
                1 => %{"api_key" => @key},

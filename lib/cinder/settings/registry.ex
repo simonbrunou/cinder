@@ -581,7 +581,14 @@ defmodule Cinder.Settings.Registry do
       slot: :enabled,
       save: :direct
     ),
-    new("setup_complete", :boolean, save: :direct, render: :none)
+    new("setup_complete", :boolean, save: :direct, render: :none),
+    # The FlareSolverr URL (#1682): its inputs live in the indexers' dialogs, outside the form,
+    # and `Cinder.Indexers.FlareSolverrUrl.put/1` checks and saves it.
+    new("flaresolverr_url", :service_url,
+      label: "FlareSolverr URL",
+      save: :direct,
+      render: :none
+    )
   ]
 
   # The indexer source every search uses unless its caller names one (#1651). `/settings` and

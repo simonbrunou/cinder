@@ -1,18 +1,18 @@
 ### Added
-- **Add indexer can add a Cardigann site once the indexer definitions are loaded (#1676).**
-  In the Indexers group of `/settings` and of the setup wizard, Add indexer lists each site of
-  the loaded definitions after Newznab and Torznab, with its privacy, language and description,
-  and a search box filters the sites by name and description. A site whose definition Cinder
-  cannot run yet shows greyed with the reason and opens no form. Until the definitions are first
-  loaded, the list says so and still offers Newznab and Torznab. A site's form holds its name,
-  a select of the site's addresses, a field or a notice for each setting its definition declares
-  apart from the FlareSolverr notice, a notice with no text to show, and the setting types Cinder
-  does not know, then priority and Enabled. For a site whose `form` login shows an image captcha,
-  Edit shows the captcha section of #1681 before priority, and Add a line saying to save the
-  indexer first. A site that signs in with a cookie also shows how to copy the cookie from the
-  browser. Cinder stores a text or password value encrypted and never shows it again, and a
-  checkbox or select value plain. Edit opens the same form on the copy the indexer runs, or only
-  the name, priority and Enabled when Cinder can no longer read that copy. A save is
+- **Add indexer can add a Cardigann site once the indexer definitions are loaded (#1676).** In the
+  Indexers group of `/settings` and of the setup wizard, Add indexer lists each site of the loaded
+  definitions after Newznab and Torznab, with its privacy, language and description, and a search
+  box filters the sites by name and description. A site whose definition Cinder cannot run yet shows
+  greyed with the reason and opens no form. Until the definitions are first loaded, the list says so
+  and still offers Newznab and Torznab. A site's form holds its name, a select of the site's
+  addresses, a field or a notice for each setting its definition declares apart from the
+  FlareSolverr notice, a notice with no text to show, and the setting types Cinder does not know,
+  then a "Use FlareSolverr" toggle (#1682), priority and Enabled. For a site whose `form` login
+  shows an image captcha, Edit shows the captcha section of #1681 before priority, and Add a line
+  saying to save the indexer first. A site that signs in with a cookie also shows how to copy the
+  cookie from the browser. Cinder stores a text or password value encrypted and never shows it
+  again, and a checkbox or select value plain. Edit opens the same form on the copy the indexer
+  runs, or only the name, priority and Enabled when Cinder can no longer read that copy. A save is
   refused when the site's definition changed while the form was open.
 - **The indexer definitions line under the indexers table (#1676).** It reads "Indexer definitions:
   N loaded at <commit>, checked <time>" with Update now, which starts the definitions job, or

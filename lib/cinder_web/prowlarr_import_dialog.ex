@@ -15,6 +15,12 @@ defmodule CinderWeb.ProwlarrImportDialog do
     * `:report`: `report` holds the commit's report and `skipped` the names of the rows the
       preview showed as already imported. The preview is dropped.
 
+  `flaresolverr_offer` is the preview's `flaresolverr_host` while Cinder has no FlareSolverr URL
+  saved, else nil (#1682). The preview then renders the box `flaresolverr[save]`, unticked, and
+  `flaresolverr_save` keeps its tick. `submit/3` asks the commit to save the host only while
+  both are set. A forged tick with no offer saves nothing, and the commit saves nothing either
+  once a URL is saved.
+
   `token` is new for each preview. Each API key input's id is built from it and the row
   (`secret_id/2`), and carries `phx-update="ignore"`: the browser keeps what it holds across the
   `phx-change` re-renders, and a new preview renders new, empty inputs.
@@ -28,7 +34,7 @@ defmodule CinderWeb.ProwlarrImportDialog do
   the `api_key` of `secrets[<Prowlarr id>]` straight from the submit's params, for each ticked
   direct row whose key Prowlarr masks, the rows that render a key input, and the masked
   settings of each ticked Cardigann row with secret inputs, and hands them to
-  `ProwlarrImport.commit/3`. No other row's secrets, and no other setting's, are read. Each
+  `ProwlarrImport.commit/4`. No other row's secrets, and no other setting's, are read. Each
   payload is client-controlled: the params are read under the ids of the held preview's tickable
   rows, so another id changes nothing, and so does a value that is not a map where a map goes or
   text where text goes, save the secrets of a ticked row with a key or secret input: a `secrets`
@@ -36,7 +42,7 @@ defmodule CinderWeb.ProwlarrImportDialog do
   text, the commit refuses on that row.
   """
 
-  alias Cinder.Indexers.ProwlarrImport
+  alias Cinder.Indexers.{FlareSolverrUrl, ProwlarrImport}
   alias Cinder.Indexers.ProwlarrImport.{Preview, Row}
 
   @doc "Reads Prowlarr's preview: a dialog on its preview, or on the message of its error."
@@ -62,7 +68,9 @@ defmodule CinderWeb.ProwlarrImportDialog do
       row_errors: %{},
       alert: nil,
       report: nil,
-      skipped: []
+      skipped: [],
+      flaresolverr_offer: nil,
+      flaresolverr_save: false
     }
   end
 
@@ -86,7 +94,8 @@ defmodule CinderWeb.ProwlarrImportDialog do
             into: %{},
             do: {row.prowlarr_id, Enum.map(row.secret_inputs, & &1.field)}
           ),
-        alert: alert
+        alert: alert,
+        flaresolverr_offer: if(FlareSolverrUrl.get() == nil, do: preview.flaresolverr_host)
     }
   end
 
@@ -147,7 +156,13 @@ defmodule CinderWeb.ProwlarrImportDialog do
         {id, typed(choice, input, MapSet.member?(dialog.via_ids, id))}
       end)
 
-    %{dialog | choices: choices}
+    save =
+      case flag(map_at(params, "flaresolverr")["save"]) do
+        {:ok, on} -> dialog.flaresolverr_offer != nil and on
+        :error -> dialog.flaresolverr_save
+      end
+
+    %{dialog | choices: choices, flaresolverr_save: save}
   end
 
   def change(dialog, _params), do: dialog
@@ -186,7 +201,10 @@ defmodule CinderWeb.ProwlarrImportDialog do
   def submit(%{phase: :preview} = dialog, actor, params) do
     dialog = change(dialog, params)
 
-    case ProwlarrImport.commit(dialog.preview, choices(dialog, params), actor) do
+    save? = dialog.flaresolverr_offer != nil and dialog.flaresolverr_save
+    opts = [save_flaresolverr_url: save?]
+
+    case ProwlarrImport.commit(dialog.preview, choices(dialog, params), actor, opts) do
       {:ok, report} ->
         {:ok,
          %{
@@ -202,11 +220,19 @@ defmodule CinderWeb.ProwlarrImportDialog do
         {:error, on_preview(preview, :changed)}
 
       {:error, {:rows, errors}} ->
-        {:error, %{dialog | row_errors: errors, alert: nil}}
+        {:error, offer_kept(%{dialog | row_errors: errors, alert: nil})}
 
       {:error, tag} ->
-        {:error, %{dialog | row_errors: %{}, alert: {:error, tag}}}
+        {:error, offer_kept(%{dialog | row_errors: %{}, alert: {:error, tag}})}
     end
+  end
+
+  # A batch refused after the tick saved the URL, or after a URL was saved elsewhere, offers it
+  # no more.
+  defp offer_kept(dialog) do
+    if FlareSolverrUrl.get() == nil,
+      do: dialog,
+      else: %{dialog | flaresolverr_offer: nil, flaresolverr_save: false}
   end
 
   # Each tickable row's choice, with the typed key of a ticked row that renders a key input and

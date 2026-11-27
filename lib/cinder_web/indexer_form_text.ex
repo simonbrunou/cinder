@@ -17,6 +17,9 @@ defmodule CinderWeb.IndexerFormText do
 
   import CinderWeb.CoreComponents, only: [translate_error: 1]
 
+  alias Cinder.Settings.Shape
+  alias CinderWeb.DomainLabels
+
   @form_fields [:name, :base_url, :api_path, :priority, :enabled]
 
   @doc "The changeset's refusals by form field, for a form of `type`, each list in order."
@@ -30,6 +33,16 @@ defmodule CinderWeb.IndexerFormText do
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
     |> Map.new(fn {field, messages} -> {field, Enum.uniq(messages)} end)
   end
+
+  @doc """
+  The refusal of the Cardigann form's FlareSolverr URL field (#1682): `:blank` with the toggle on
+  and no URL saved, `:invalid` for a URL `Cinder.Indexers.FlareSolverrUrl.put/1` refuses.
+  """
+  @spec flaresolverr_url(:blank | :invalid) :: String.t()
+  def flaresolverr_url(:blank), do: gettext("Enter FlareSolverr's URL, or turn FlareSolverr off.")
+
+  def flaresolverr_url(:invalid),
+    do: DomainLabels.t(Shape.message(:service_url))
 
   @doc "Whether the changeset is the store's stale-save refusal."
   @spec stale?(Ecto.Changeset.t()) :: boolean()

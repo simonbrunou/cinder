@@ -14,6 +14,7 @@ defmodule Cinder.Acquisition.Indexer.CardigannLoginTest do
   alias Cinder.Acquisition.IndexerSource.{Native, Report}
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerCookies, IndexerStatus}
   alias Cinder.ConfigCase
+  alias Cinder.Indexers.FlareSolverrUrl
 
   @now ~U[2026-11-26 12:00:00Z]
   @password "pw-Secret-91"
@@ -1412,6 +1413,86 @@ defmodule Cinder.Acquisition.Indexer.CardigannLoginTest do
                ["https", "nyaa.test", 443, "seen", "2"],
                ["https", "nyaa.test", 443, "sid", "s3ss10n"]
              ]
+    end
+  end
+
+  describe "FlareSolverr (#1682)" do
+    @ua "Mozilla/5.0 FlareSolverrLoginTest"
+
+    # FlareSolverr answers every call with a clearance for nyaa.test, and sends the test each
+    # payload.
+    defp flaresolverr! do
+      test_pid = self()
+      :ok = FlareSolverrUrl.put("http://flaresolverr.lan:8191")
+
+      Req.Test.stub(Cinder.FlareSolverrStub, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test_pid, {:flaresolverr, Jason.decode!(body)})
+
+        Req.Test.json(conn, %{
+          "status" => "ok",
+          "solution" => %{
+            "url" => "https://nyaa.test/",
+            "cookies" => [%{"name" => "cf_clearance", "value" => "c1", "domain" => ".nyaa.test"}],
+            "userAgent" => @ua
+          }
+        })
+      end)
+    end
+
+    test "a login page load carrying no secret solves on the base URL, not its own path" do
+      [indexer] =
+        setup!(
+          [
+            {"login.yml",
+             login_like(
+               %{
+                 "method" => "form",
+                 "path" => "login.php",
+                 "inputs" =>
+                   obj([
+                     {"user_x", "{{ .Config.username }}"},
+                     {"pass_x", "{{ .Config.password }}"}
+                   ]),
+                 "test" => %{"path" => "my.php", "selector" => ~s|a[href*="logout"]|}
+               },
+               & &1
+             )}
+          ],
+          [{"login.yml", nyaa_base(), @secrets, %{flaresolverr: true}}]
+        )
+
+      flaresolverr!()
+
+      route(%{
+        "nyaa.test" => fn conn, _query ->
+          cleared? = Plug.Conn.get_req_header(conn, "user-agent") == [@ua]
+
+          case {cleared?, conn.request_path} do
+            {false, _path} ->
+              conn
+              |> Plug.Conn.put_resp_header("server", "cloudflare")
+              |> Plug.Conn.put_resp_content_type("text/html")
+              |> Plug.Conn.send_resp(403, "<html><title>Just a moment...</title></html>")
+
+            {true, "/login.php"} ->
+              ~s|<form action="/takelogin.php" method="post"><input name="user_x">| <>
+                ~s|<input type="password" name="pass_x"></form>|
+
+            {true, "/takelogin.php"} ->
+              with_cookie(conn, "sid=s3ss10n")
+
+            {true, "/"} ->
+              session_page()
+          end
+        end
+      })
+
+      assert {:ok, [_row], report} = Native.search_tv_query("frieren", categories: [5070])
+      assert outcomes(report) == %{indexer.id => :asked}
+
+      assert_received {:flaresolverr, %{"cmd" => "request.get", "url" => "https://nyaa.test/"}}
+      refute_received {:flaresolverr, _payload}
     end
   end
 end

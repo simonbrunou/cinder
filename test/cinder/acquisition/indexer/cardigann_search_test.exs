@@ -371,13 +371,15 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
     test "each answer class: a status fails the indexer, a 502 gets one retry, a challenge is named" do
       indexer = t9!()
 
-      cloudflare = fn status ->
+      cloudflare = fn status, body ->
         fn conn ->
           conn
           |> Plug.Conn.put_resp_header("server", "cloudflare")
-          |> Plug.Conn.send_resp(status, "")
+          |> Plug.Conn.send_resp(status, body)
         end
       end
+
+      page = "<html><head><title>Just a moment...</title></head></html>"
 
       for {answers, outcome, sent} <- [
             {[{401, ""}], {:failed, :rejected_credentials}, 1},
@@ -386,9 +388,11 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
             {[{500, ""}], {:failed, {:http_status, 500}}, 1},
             {[{502, ""}, {502, ""}], {:failed, {:http_status, 502}}, 2},
             {[{502, ""}, torrent9_page(t9_rows(["Dune 2021"]))], :asked, 2},
-            {[cloudflare.(403)], {:failed, :challenge}, 1},
-            # A 503 gets its retry before it reads as a challenge.
-            {[cloudflare.(503)], {:failed, :challenge}, 2}
+            # With FlareSolverr off, a challenge page is named and gets no retry, a 503 included.
+            {[cloudflare.(403, page)], {:failed, :cloudflare_challenge}, 1},
+            {[cloudflare.(503, page)], {:failed, :cloudflare_challenge}, 1},
+            # A Cloudflare 403 with no challenge page is a status (#1682).
+            {[cloudflare.(403, "")], {:failed, {:http_status, 403}}, 1}
           ] do
         # Each case starts with no backoff, and each request takes the next answer, the last one
         # repeated.

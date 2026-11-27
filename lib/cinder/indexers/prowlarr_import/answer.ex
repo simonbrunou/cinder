@@ -24,7 +24,9 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
   reads without the `cardigann` key.
 
   `/api/v1/indexerproxy` is a list of proxies, each with an integer `id`, a string
-  `implementation` and `tags` as a list of integers. `/api/v1/config/host` is a map whose
+  `implementation` and `tags` as a list of integers. A FlareSolverr proxy also reads its `host`
+  field when that is text, else nil (#1682); every other field, and any other proxy's, is
+  dropped. `/api/v1/config/host` is a map whose
   `proxyEnabled` is a boolean; the rest of it, Prowlarr's own API key and the global proxy's
   password among it, is dropped.
   """
@@ -60,7 +62,12 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
           not_carried: [atom()]
         }
 
-  @type proxy :: %{id: integer(), implementation: String.t(), tags: [integer()]}
+  @type proxy :: %{
+          id: integer(),
+          implementation: String.t(),
+          tags: [integer()],
+          host: String.t() | nil
+        }
 
   @doc "The indexers of an `/api/v1/indexer` body."
   @spec indexers(term()) :: {:ok, [indexer()]} | {:error, :unexpected_response}
@@ -225,14 +232,23 @@ defmodule Cinder.Indexers.ProwlarrImport.Answer do
     end
   end
 
-  defp proxy(%{"id" => id, "implementation" => implementation, "tags" => tags})
+  defp proxy(%{"id" => id, "implementation" => implementation, "tags" => tags} = entry)
        when is_integer(id) and is_binary(implementation) do
     if integers?(tags),
-      do: {:ok, %{id: id, implementation: implementation, tags: tags}},
+      do: {:ok, %{id: id, implementation: implementation, tags: tags, host: host(entry)}},
       else: :error
   end
 
   defp proxy(_entry), do: :error
+
+  defp host(%{"implementation" => "FlareSolverr", "fields" => fields}) when is_list(fields) do
+    Enum.find_value(fields, fn
+      %{"name" => "host", "value" => host} when is_binary(host) -> host
+      _field -> nil
+    end)
+  end
+
+  defp host(_entry), do: nil
 
   defp integers?(list), do: is_list(list) and Enum.all?(list, &is_integer/1)
 

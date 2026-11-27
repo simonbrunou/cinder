@@ -50,16 +50,18 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
   ## Commit
 
-  `commit(preview, choices, actor)` takes, for each Prowlarr id, the submit's
+  `commit(preview, choices, actor, opts)` takes, for each Prowlarr id, the submit's
   `%{ticked: boolean, name: String.t(), via_prowlarr: boolean, secrets: map}`; a call site passes
   `secrets` straight from the event params, as `%{"api_key" => typed}`. Only ticked rows are
-  read. It answers:
+  read. `opts` takes `save_flaresolverr_url: true`, the import's FlareSolverr tick (#1682). It
+  answers:
 
     * `{:error, :nothing_ticked}` before any request, for choices that tick no row;
     * `{:error, :import_running}` while another commit runs;
     * `{:error, tag}` for a read as `preview/0` answers it;
-    * `{:error, {:changed, new_preview}}` when the stored Prowlarr URL or key, or a ticked row's
-      plan, differs from what the preview read: Prowlarr's answer is read again first;
+    * `{:error, {:changed, new_preview}}` when the stored Prowlarr URL or key, the FlareSolverr
+      host, or a ticked row's plan, differs from what the preview read: Prowlarr's answer is
+      read again first;
     * `{:error, {:rows, errors}}`, errors by Prowlarr id, each a list of codes, when a ticked
       row cannot be created: `:not_importable` (held, already imported, refused, or not in the
       preview), `:via_prowlarr_not_chosen` (a through-Prowlarr row ticked without
@@ -87,18 +89,26 @@ defmodule Cinder.Indexers.ProwlarrImport do
   Prowlarr keeps its enabled state. A through-Prowlarr row gets the stored Prowlarr key, read on
   the server at commit, and its FlareSolverr toggle off.
 
+  With the FlareSolverr tick, a preview `flaresolverr_host` and no FlareSolverr URL saved, the
+  commit saves that host through `Cinder.Indexers.FlareSolverrUrl.put/1` once the ticked rows
+  pass their checks and before they are created, so the URL exists before their Tests run. A
+  batch the insert then refuses keeps the URL, as the indexer form does. A URL already saved is
+  kept, the tick aside.
+
   The rows are created through `Cinder.Indexers.import_batch/2`, in one transaction with one
-  `Cinder.Audit` row naming the count. After it commits, the import asks the Test runner to
-  start each enabled created indexer's Test in the background
-  (`Cinder.Acquisition.IndexerSource.Native.TestRunner.start/1`); a runner that is down or
-  already holds that indexer's mark starts none. The report is
-  `%{created: [%{id, prowlarr_id, name, enabled, notes}], tests_started: [id]}`; `tests_started`
-  names each indexer whose Test the runner started. The import never changes `indexer_source`.
+  `Cinder.Audit` row naming the count. After it commits, the import asks the Test runner to start
+  each enabled created indexer's Test in the background
+  (`Cinder.Acquisition.IndexerSource.Native.TestRunner.start/1`); a runner that is down or already
+  holds that indexer's mark starts none. The report is
+  `%{created: [%{id, prowlarr_id, name, enabled, notes}], tests_started: [id]}` plus
+  `flaresolverr_url_saved`, whether the tick saved the URL; `tests_started` names each indexer
+  whose Test the runner started. While no URL is saved, each created indexer with its FlareSolverr
+  toggle on notes `:flaresolverr_url_not_set`. The import never changes `indexer_source`.
   """
 
   alias Cinder.Acquisition.IndexerSource.Native.TestRunner
   alias Cinder.Indexers
-  alias Cinder.Indexers.{ConfiguredIndexer, Definitions, ProwlarrApi, Secrets}
+  alias Cinder.Indexers.{ConfiguredIndexer, Definitions, FlareSolverrUrl, ProwlarrApi, Secrets}
   alias Cinder.Indexers.ProwlarrApi.Connection
   alias Cinder.Indexers.ProwlarrImport.{Answer, Cardigann, Preview, Row}
 
@@ -129,12 +139,14 @@ defmodule Cinder.Indexers.ProwlarrImport do
   end
 
   @doc "Creates the configured indexers `choices` ticks, as the moduledoc says."
-  @spec commit(Preview.t(), %{optional(pos_integer()) => choice()}, Indexers.actor()) ::
+  @spec commit(Preview.t(), %{optional(pos_integer()) => choice()}, Indexers.actor(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def commit(%Preview{} = preview, choices, actor \\ nil) when is_map(choices) do
+  def commit(%Preview{} = preview, choices, actor \\ nil, opts \\ []) when is_map(choices) do
+    save? = Keyword.get(opts, :save_flaresolverr_url, false) == true
+
     case ticked_ids(choices) do
       [] -> {:error, :nothing_ticked}
-      ticked -> with_lock(fn -> run_commit(preview, choices, ticked, actor) end)
+      ticked -> with_lock(fn -> run_commit(preview, choices, ticked, actor, save?) end)
     end
   end
 
@@ -157,16 +169,25 @@ defmodule Cinder.Indexers.ProwlarrImport do
     end
   end
 
-  defp run_commit(preview, choices, ticked, actor) do
+  defp run_commit(preview, choices, ticked, actor, save?) do
     with {:ok, connection} <- ProwlarrApi.connection(),
          {:ok, read} <- read(connection),
          fresh = build(read, connection, preview.mac_key),
          :ok <- unchanged(preview, fresh, ticked, read, connection),
          {:ok, entries} <- entries(preview, fresh, choices, ticked, read, connection),
+         saved? = save_flaresolverr_url(save?, fresh.flaresolverr_host),
          {:ok, created} <- create(actor, entries) do
-      {:ok, report(created, entries)}
+      {:ok, report(created, entries, saved?)}
     end
   end
+
+  # The tick saves Prowlarr's host only while Cinder has no URL, before the indexers, so the
+  # URL exists before their Tests run; a batch refused after it keeps the URL, as the form does.
+  defp save_flaresolverr_url(true, host) when is_binary(host) do
+    FlareSolverrUrl.get() == nil and FlareSolverrUrl.put(host) == :ok
+  end
+
+  defp save_flaresolverr_url(_save?, _host), do: false
 
   # The links and names are read before Prowlarr's answers, so a link made while the answers
   # are read reaches the transaction's own check.
@@ -205,9 +226,25 @@ defmodule Cinder.Indexers.ProwlarrImport do
     %Preview{
       rows: rows,
       global_proxy: read.global_proxy,
+      flaresolverr_host: flaresolverr_host(read.proxies),
       mac_key: mac_key,
       source_mac: mac(mac_key, {connection.url, connection.api_key})
     }
+  end
+
+  # The one URL Prowlarr's FlareSolverr proxies name, when `FlareSolverrUrl.put/1` would save
+  # it; proxies on two hosts offer none, since the import cannot tell which one a row uses.
+  defp flaresolverr_host(proxies) do
+    hosts =
+      for %{implementation: "FlareSolverr", host: host} <- proxies,
+          is_binary(host),
+          uniq: true,
+          do: String.trim(host)
+
+    case hosts do
+      [host] -> if FlareSolverrUrl.valid?(host), do: host
+      _none_or_several -> nil
+    end
   end
 
   defp row(indexer, read, connection, mac_key) do
@@ -448,6 +485,7 @@ defmodule Cinder.Indexers.ProwlarrImport do
 
     same? =
       preview.source_mac == fresh.source_mac and
+        preview.flaresolverr_host == fresh.flaresolverr_host and
         Enum.all?(ticked, fn id -> not Map.has_key?(old, id) or old[id] == new[id] end)
 
     if same?, do: :ok, else: {:error, {:changed, build(read, connection, new_mac_key())}}
@@ -608,20 +646,24 @@ defmodule Cinder.Indexers.ProwlarrImport do
     end
   end
 
-  defp report(created, entries) do
+  defp report(created, entries, saved?) do
     notes = Map.new(entries, &{&1.prowlarr_id, &1.notes})
+    url? = FlareSolverrUrl.get() != nil
 
     %{
       created:
         Enum.map(created, fn row ->
+          not_set = if row.flaresolverr and not url?, do: [:flaresolverr_url_not_set], else: []
+
           %{
             id: row.id,
             prowlarr_id: row.prowlarr_indexer_id,
             name: row.name,
             enabled: row.enabled,
-            notes: Map.fetch!(notes, row.prowlarr_indexer_id)
+            notes: Map.fetch!(notes, row.prowlarr_indexer_id) ++ not_set
           }
         end),
+      flaresolverr_url_saved: saved?,
       tests_started: for(row <- created, row.enabled, start_test(row.id) == :ok, do: row.id)
     }
   end

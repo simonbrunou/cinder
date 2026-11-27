@@ -18,12 +18,14 @@ defmodule CinderWeb.SettingsProwlarrImportCardigannTest do
   alias Cinder.Acquisition.IndexerSource.Prowlarr
   alias Cinder.{ConfigCase, DefinitionFixtures}
   alias Cinder.Indexers
+  alias Cinder.Indexers.FlareSolverrUrl
   alias CinderWeb.ProwlarrImportText
   alias Plug.Conn.Query
 
   @prowlarr_url "https://media.example.com/prowlarr"
   @prowlarr_key "stored-prowlarr-key-3e9a"
   @password "clear-password-SENTINEL-77"
+  @flaresolverr "http://flaresolverr.lan:8191/"
 
   setup :register_and_log_in_admin
   setup :reset_cinder_env
@@ -238,6 +240,142 @@ defmodule CinderWeb.SettingsProwlarrImportCardigannTest do
     end
   end
 
+  describe "Prowlarr's FlareSolverr (#1682)" do
+    setup do
+      DefinitionFixtures.mirror!(DefinitionFixtures.definition())
+      :ok
+    end
+
+    defp flaresolverr_proxy(id, tags, host) do
+      id
+      |> proxy("FlareSolverr", tags)
+      |> Map.put("fields", [field("host", host), field("requestTimeout", 60)])
+    end
+
+    test "the preview offers Prowlarr's host unticked; ticked, the import saves it",
+         %{conn: conn} do
+      stub_api([tracker(1, tags: [3])], [flaresolverr_proxy(1, [3], @flaresolverr)])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_import(lv)
+
+      assert has_dialog_element?(
+               lv,
+               "#import-flaresolverr",
+               "Prowlarr uses FlareSolverr at #{@flaresolverr}"
+             )
+
+      assert has_dialog_element?(lv, "label", "Save it as Cinder's FlareSolverr URL")
+
+      assert has_dialog_element?(
+               lv,
+               "input#import-flaresolverr-save[type=checkbox][name='flaresolverr[save]']"
+             )
+
+      refute has_dialog_element?(lv, "#import-flaresolverr-save[checked]")
+
+      # A change keeps the tick across the re-render.
+      lv
+      |> target()
+      |> render_change("import_change", form_params(lv, %{"flaresolverr[save]" => "true"}, []))
+
+      assert has_dialog_element?(lv, "#import-flaresolverr-save[checked]")
+
+      submit(lv, %{"flaresolverr[save]" => "true"})
+
+      assert FlareSolverrUrl.get() == @flaresolverr
+      assert has_dialog_element?(lv, "#import-report-flaresolverr", "FlareSolverr URL saved.")
+
+      assert has_dialog_element?(
+               lv,
+               "#import-close[aria-describedby~='import-report-flaresolverr']"
+             )
+
+      refute has_dialog_element?(lv, "#import-report-1 li", "FlareSolverr URL not set")
+      assert [%{flaresolverr: true}] = Indexers.list()
+      assert lv |> element("#indexers-flaresolverr-line") |> render() =~ @flaresolverr
+    end
+
+    test "a batch refused after the tick saved the URL shows the URL and drops the offer",
+         %{conn: conn} do
+      # The commit reads Prowlarr again; by then a row named like the ticked one exists, so the
+      # batch is refused after the URL saved.
+      {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+      indexers = fn ->
+        if Agent.get_and_update(calls, &{&1, &1 + 1}) == 1 do
+          {:ok, _row} =
+            Indexers.create(
+              nil,
+              %{
+                name: "Tracker 1",
+                type: :newznab,
+                base_url: "https://taken.example",
+                api_path: "/api"
+              },
+              %{}
+            )
+        end
+
+        {:ok, [tracker(1, tags: [3])]}
+      end
+
+      stub_api(indexers, [flaresolverr_proxy(1, [3], @flaresolverr)])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_import(lv)
+      submit(lv, %{"flaresolverr[save]" => "true"})
+
+      assert FlareSolverrUrl.get() == @flaresolverr
+      assert Enum.map(Indexers.list(), & &1.name) == ["Tracker 1"]
+      assert has_element?(lv, "#indexer-dialog")
+      assert lv |> element("#indexers-flaresolverr-line") |> render() =~ @flaresolverr
+      refute has_dialog_element?(lv, "#import-flaresolverr")
+    end
+
+    test "unticked, nothing is saved and the report names the URL not set", %{conn: conn} do
+      stub_api([tracker(1, tags: [3])], [flaresolverr_proxy(1, [3], @flaresolverr)])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_import(lv)
+      submit(lv, %{})
+
+      assert FlareSolverrUrl.get() == nil
+      refute has_dialog_element?(lv, "#import-report-flaresolverr")
+      assert has_dialog_element?(lv, "#import-report-1 li", "FlareSolverr URL not set")
+
+      refute has_dialog_element?(
+               lv,
+               "#import-close[aria-describedby~='import-report-flaresolverr']"
+             )
+
+      refute has_dialog_element?(lv, "#import-close[aria-describedby~='false']")
+    end
+
+    test "with a URL already saved there is no offer, and a forged tick saves nothing",
+         %{conn: conn} do
+      :ok = FlareSolverrUrl.put("http://kept.lan:8191")
+      stub_api([tracker(1, tags: [3])], [flaresolverr_proxy(1, [3], @flaresolverr)])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_import(lv)
+
+      refute has_dialog_element?(lv, "#import-flaresolverr")
+      refute dialog(lv) =~ "flaresolverr[save]"
+
+      submit(lv, %{}, [{"flaresolverr[save]", "true"}])
+
+      assert FlareSolverrUrl.get() == "http://kept.lan:8191"
+      assert has_dialog_element?(lv, "#import-report-1", "Tracker 1: created")
+      refute has_dialog_element?(lv, "#import-report-flaresolverr")
+    end
+
+    test "with no FlareSolverr in Prowlarr there is no offer", %{conn: conn} do
+      stub_api([tracker(1)])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_import(lv)
+
+      assert has_dialog_element?(lv, "#import-row-1")
+      refute has_dialog_element?(lv, "#import-flaresolverr")
+    end
+  end
+
   describe "a Cardigann row that cannot go direct" do
     for {name, setup, text} <- [
           {"definition not available", :absent,
@@ -312,6 +450,9 @@ defmodule CinderWeb.SettingsProwlarrImportCardigannTest do
       Gettext.with_locale(CinderWeb.Gettext, "fr", fn ->
         assert ProwlarrImportText.notes(%{notes: [{:took_default, "Tri"}]}) ==
                  ["Tri a pris sa valeur par défaut"]
+
+        assert ProwlarrImportText.notes(%{notes: [:flaresolverr_url_not_set]}) ==
+                 ["URL de FlareSolverr non définie"]
 
         assert ProwlarrImportText.created(%{
                  name: "T",

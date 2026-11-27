@@ -202,7 +202,9 @@ defmodule Cinder.Acquisition.Indexer do
   (`Cinder.Acquisition.Indexer.NewznabAnswer`), and a Cardigann grab reads the label back for
   `Cinder.Download.Client.DownloadCheck` (#1672).
 
-  With `retry: false` no answer is retried: a Cardigann grab's requests (#1672).
+  With `retry: false` no answer is retried: a Cardigann grab's requests (#1672). With `keep:`, a
+  function of the response, an answer it is true for is not retried either: a Cardigann
+  request's Cloudflare challenge (#1682), which a resend after 2 s meets again.
 
   With `redact_path: true` the request's URL path stays out of `Cinder.HTTPPolicy`'s request
   telemetry (`Cinder.HTTPPolicy.redact_path/1`): a Cardigann path can hold a setting's value.
@@ -211,10 +213,12 @@ defmodule Cinder.Acquisition.Indexer do
           {:ok, Req.Response.t()} | {:error, atom()}
   def request(context, request_options, opts \\ []) do
     retry? = Keyword.get(opts, :retry, true)
+    keep = Keyword.get(opts, :keep, fn _response -> false end)
 
     case send_once(context, request_options, opts) do
-      {:ok, %Req.Response{status: status}} when retry? and status in @retry_statuses ->
-        retry(context, request_options, opts)
+      {:ok, %Req.Response{status: status} = response}
+      when retry? and status in @retry_statuses ->
+        if keep.(response), do: {:ok, response}, else: retry(context, request_options, opts)
 
       answer ->
         answer

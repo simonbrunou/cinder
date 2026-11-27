@@ -37,6 +37,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
 
   Answers, by the first rule that matches:
 
+  - a Cloudflare or DDoS-Guard challenge
+    (`Cinder.Acquisition.Indexer.Cardigann.FlareSolverr.challenge?/1`, #1682), whatever the
+    status: with the indexer's FlareSolverr toggle off, `:cloudflare_challenge`; with it on and
+    no URL saved, `:flaresolverr_url_not_set`; otherwise one FlareSolverr solve and one replay of
+    the same hop with the clearance and no retry, whose answer these rules read again, a second
+    challenge reading `:cloudflare_challenge` (`FlareSolverr.step/5`). A challenge gets no
+    retry. While a clearance is stored, each request to a credential host sends its user agent
+    and its cookies (`FlareSolverr.headers/4`);
   - a 3xx with a `Location`: with the definition's `followredirect` on, or the path's own
     (#1679), the next hop through `HTTPPolicy.untrusted_redirect_target/3`, at most
     `max_redirects/0` hops, past which the answer is `:too_many_redirects`; with it off,
@@ -44,7 +52,6 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
     turns a POST into a GET with no body; a 307 or 308 keeps both, and the secret check reads
     the body again before that hop (`redirected/2`), and a login's body (`secret_body?`) goes
     on it only to a credential host;
-  - a 403 or 503 whose `server` header names Cloudflare: `:challenge` (#1682 handles it);
   - a 2xx: `{:ok, body, uri}`, `uri` the URL that answered, which links resolve against. A body
     whose `content-encoding` is `gzip` or `x-gzip` is inflated first, up to `max_bytes/0` of
     output, past which the answer is `:too_large`; a gzip body that does not inflate whole, or
@@ -57,7 +64,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   """
 
   alias Cinder.Acquisition.Indexer
-  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Jar, Query}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, FlareSolverr, Jar, Query}
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.HTTPPolicy
 
@@ -80,7 +87,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
           optional(:charset) => Cinder.Acquisition.Indexer.Cardigann.Charset.t(),
           optional(:certificate_pins) => {String.t(), [<<_::160>>]} | nil,
           optional(:resolver) => HTTPPolicy.resolver() | nil,
-          optional(:req_options) => keyword() | nil
+          optional(:req_options) => keyword() | nil,
+          optional(:flaresolverr) => FlareSolverr.config() | nil,
+          optional(:login?) => boolean()
         }
 
   @doc "The largest body in bytes one request reads: 2 MiB."
@@ -173,17 +182,36 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   end
 
   defp hop(target, out, request, jar, hops) do
-    case send_request(target, request, out, jar) do
-      {:ok, %Req.Response{status: status} = response} when status in 300..399 ->
-        redirect(target, response, out, request, kept(jar, target, response, request), hops)
+    started_ms = System.monotonic_time(:millisecond)
 
+    case send_request(target, request, out, jar) do
       {:ok, response} ->
-        {answer(response, target, request), kept(jar, target, response, request)}
+        jar = kept(jar, target, response, request)
+        step = FlareSolverr.step(response, target, out, request, started_ms)
+        stepped(step, response, target, out, request, jar, hops)
 
       {:error, tag} ->
         {{:error, tag}, jar}
     end
   end
+
+  # What `FlareSolverr.step/5` answered for a hop's response: read it, replay the hop once with
+  # the clearance and no retry, or fail.
+  defp stepped(:pass, response, target, out, request, jar, hops),
+    do: answered(response, target, out, request, jar, hops)
+
+  defp stepped({:replay, request}, _response, target, out, _request, jar, hops),
+    do: hop(target, %{out | retry: false}, request, jar, hops)
+
+  defp stepped({:error, kind}, _response, _target, _out, _request, jar, _hops),
+    do: {{:error, kind}, jar}
+
+  defp answered(%Req.Response{status: status} = response, target, out, request, jar, hops)
+       when status in 300..399,
+       do: redirect(target, response, out, request, jar, hops)
+
+  defp answered(response, target, _out, request, jar, _hops),
+    do: {answer(response, target, request), jar}
 
   defp kept(nil, _target, _response, _request), do: nil
 
@@ -371,11 +399,20 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   # --- the secret check ---
 
   defp secret_check(url, uri, request, body) do
-    if (request.secret_referenced? or holds_secret?(url, request) or
-          (is_binary(body) and holds_secret?(body, request))) and
-         not credential_host?(uri, request.credential_hosts),
-       do: {:error, :secret_host},
-       else: :ok
+    if carries_secret?(url, body, request) and not credential_host?(uri, request.credential_hosts),
+      do: {:error, :secret_host},
+      else: :ok
+  end
+
+  @doc """
+  Whether a request to `url` with the form body `body` (nil for none) carries a secret under
+  `request`, as the secret check reads it: the definition's templates reference a secret setting
+  (`secret_referenced?`), or the URL or the body holds a secret value in a form the check reads.
+  """
+  @spec carries_secret?(String.t(), binary() | nil, request()) :: boolean()
+  def carries_secret?(url, body, request) do
+    request.secret_referenced? or holds_secret?(url, request) or
+      (is_binary(body) and holds_secret?(body, request))
   end
 
   # Each invalid sequence reads as U+FFFD first: `String.downcase/1` leaves the character after a
@@ -455,6 +492,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
         )
 
     site = site_headers(Keyword.get(opts, :site_headers, []), target, request)
+    own = own ++ clearance_headers(target, request, own)
 
     options =
       HTTPPolicy.request_options(
@@ -468,12 +506,32 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
       |> then(fn options -> if is_binary(body), do: [{:body, body} | options], else: options end)
 
     Indexer.request(request.context, options,
+      keep: &FlareSolverr.challenge?/1,
       raw_body: true,
       max_bytes: Keyword.get(opts, :max_bytes, @max_bytes),
       timeout_ms: Keyword.get(opts, :timeout_ms, @request_timeout_ms),
       redact_path: true,
       retry: Keyword.get(opts, :retry, true)
     )
+  end
+
+  # The clearance of a FlareSolverr solve (#1682): its user agent and its cookies, the request's
+  # own cookies winning on a name.
+  defp clearance_headers(target, request, own) do
+    case FlareSolverr.clearance(request) do
+      nil ->
+        []
+
+      clearance ->
+        taken =
+          for {"cookie", value} <- own,
+              part <- String.split(value, ";"),
+              [name | _value] = String.split(part, "=", parts: 2),
+              into: MapSet.new(),
+              do: String.trim(name)
+
+        FlareSolverr.headers(clearance, target.uri, request.credential_hosts, taken)
+    end
   end
 
   # The site's headers go only to a credential host; with none, `request` needs no
@@ -544,16 +602,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
   defp normalized(host), do: host |> String.downcase() |> String.trim_trailing(".")
 
   defp answer(%Req.Response{status: status} = response, target, request) do
-    cond do
-      status in [403, 503] and cloudflare?(response) ->
-        {:error, :challenge}
-
-      status in 200..299 ->
-        with {:ok, body} <- decoded(response),
-             do: {:ok, %{body: body, uri: target.uri, content_type: content_type(response)}}
-
-      true ->
-        NewznabAnswer.classify(status, response.headers, nil, request.now)
+    if status in 200..299 do
+      with {:ok, body} <- decoded(response),
+           do: {:ok, %{body: body, uri: target.uri, content_type: content_type(response)}}
+    else
+      NewznabAnswer.classify(status, response.headers, nil, request.now)
     end
   end
 
@@ -567,12 +620,6 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Fetch do
 
   defp body(%Req.Response{body: body}) when is_binary(body), do: body
   defp body(_response), do: ""
-
-  defp cloudflare?(response) do
-    response
-    |> Req.Response.get_header("server")
-    |> Enum.any?(&String.contains?(String.downcase(&1), "cloudflare"))
-  end
 
   @doc """
   The body of a 2xx `response` as the moduledoc says: inflated when its `content-encoding` is

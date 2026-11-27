@@ -153,6 +153,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Jar do
     end
   end
 
+  @doc """
+  Whether `name` and `value` make a cookie the jar keeps, by the moduledoc's pair rules: a name
+  that is not blank, no control character, `;` or `,` in either, under 4 KiB together. Names and
+  values are not trimmed here.
+  """
+  @spec cookie?(term(), term()) :: boolean()
+  def cookie?(name, value) when is_binary(name) and is_binary(value),
+    do: pair(name <> "=" <> value) == [{name, value}]
+
+  def cookie?(_name, _value), do: false
+
   # A pair kept when its name is not blank and neither holds a control character, a `;` or a
   # `,`, and it fits `@max_cookie_bytes`.
   defp pair(pair) do

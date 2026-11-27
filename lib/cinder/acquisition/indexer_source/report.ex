@@ -28,7 +28,8 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
       or nil when the answer stated no wait (#1653). Native's Newznab and Torznab adapters
       report the end `Cinder.Acquisition.Indexer.NewznabAnswer.limit_until/2` gives, never nil.
     - `:rejected_credentials`: a failure, not a skip.
-    - `:challenge`: a Cloudflare challenge or a FlareSolverr failure.
+    - `:challenge`: a challenge page. No search emits it since #1682 gave Cardigann's
+      challenge the kinds below.
     - `:crashed`: the indexer's search raised, threw or exited, or its process died.
     - Cardigann's (#1671): `:parser_failed`, a parser worker that crashed, ran out of memory or
       time, or refused a selector on the page; `:regex_limit` and `:filter_output_cap`, a regex
@@ -41,6 +42,11 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
       does not parse; `:xml_dtd`, an XML body that holds a DTD, which Cinder refuses before any
       entity expands; `:no_results_list`, a JSON body whose rows path selects no array of
       objects while `rows.missingAttributeEqualsNoResults` is off.
+    - Cardigann's FlareSolverr step (#1682): `:cloudflare_challenge`, a Cloudflare or DDoS-Guard
+      challenge Cinder did not solve; `:flaresolverr_url_not_set`, a challenge met with the
+      indexer's FlareSolverr toggle on and no FlareSolverr URL saved; `:flaresolverr_failed`, a
+      FlareSolverr call that gave no clearance; `:flaresolverr_off_host`, a FlareSolverr answer
+      from a host outside the definition's own hosts.
 
   This set is closed: `put/4` raises `ArgumentError` on any other outcome, so a new reason needs
   a change here first. Every reason is an atom or a tuple of atoms, integers and `DateTime`s, and
@@ -88,6 +94,10 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
           | :invalid_xml
           | :xml_dtd
           | :no_results_list
+          | :cloudflare_challenge
+          | :flaresolverr_url_not_set
+          | :flaresolverr_failed
+          | :flaresolverr_off_host
   @type outcome ::
           :asked
           | {:not_asked, not_asked_reason()}
@@ -116,7 +126,11 @@ defmodule Cinder.Acquisition.IndexerSource.Report do
     :invalid_json,
     :invalid_xml,
     :xml_dtd,
-    :no_results_list
+    :no_results_list,
+    :cloudflare_challenge,
+    :flaresolverr_url_not_set,
+    :flaresolverr_failed,
+    :flaresolverr_off_host
   ]
 
   @rank %{not_asked: 0, asked: 1, skipped: 2, failed: 3}

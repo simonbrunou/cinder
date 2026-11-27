@@ -19,6 +19,7 @@ defmodule CinderWeb.SettingsCardigannTest do
   alias Cinder.ConfigCase
   alias Cinder.Indexers
   alias Cinder.Indexers.{ConfiguredIndexer, Definitions}
+  alias Cinder.Indexers.Definitions.Copy
   alias Cinder.Repo
   alias Plug.Conn.Query
 
@@ -106,6 +107,9 @@ defmodule CinderWeb.SettingsCardigannTest do
   defp change(lv, typed), do: lv |> target() |> render_change("change", form_params(lv, typed))
 
   defp stored_row(id), do: Repo.get!(ConfiguredIndexer, id)
+
+  # Every stored copy's bytes stop parsing, so an Edit opens the cut-down form.
+  defp unloadable_copy!, do: Repo.update_all(Copy, set: [bytes: <<0xFF, 0xFE>>])
   defp secrets(id), do: elem(Indexers.fetch_with_secrets(id), 1).secrets
 
   describe "the add list" do
@@ -921,6 +925,127 @@ defmodule CinderWeb.SettingsCardigannTest do
              "#indexer-#{row.id}-switch[aria-label='Switch to newer.yml for #{row.name}']",
              "Switch to newer.yml"
            )
+  end
+
+  # A site with no text or password setting renders no `secrets[...]` input, so its form posts no
+  # `secrets` map: each form still saves (#1682, where 1337x, Prowlarr's FlareSolverr site, has
+  # selects only).
+  describe "a site with no secret setting" do
+    @sort %{
+      "name" => "sort",
+      "type" => "select",
+      "label" => "Sort",
+      "default" => "date",
+      "options" => %{"date" => "Date", "size" => "Size"}
+    }
+
+    @public definition("tracker", %{"settings" => [@sort]})
+
+    setup do
+      mirror!(@public)
+      :ok
+    end
+
+    test "Add creates it", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      open_add(lv)
+      pick(lv, "tracker.yml")
+      refute form_params(lv, %{}) |> Map.has_key?("secrets")
+
+      submit(lv, %{"indexer[name]" => "Public"})
+
+      assert [%{name: "Public"}] = Indexers.list()
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "Edit saves it", %{conn: conn} do
+      row = cardigann!(@public)
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-edit") |> render_click()
+      submit(lv, %{"indexer[name]" => "Renamed", "indexer[settings][sort]" => "size"})
+
+      assert %{name: "Renamed", settings: %{"sort" => "size"}} = stored_row(row.id)
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "Edit of a row whose running copy no longer loads saves its name", %{conn: conn} do
+      row = cardigann!(@public)
+      unloadable_copy!()
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-edit") |> render_click()
+      assert has_dialog_element?(lv, "#indexer-form-broken")
+      submit(lv, %{"indexer[name]" => "Renamed"})
+
+      assert stored_row(row.id).name == "Renamed"
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "Edit of a row whose running copy no longer loads keeps its FlareSolverr toggle",
+         %{conn: conn} do
+      # Toggle on and no URL saved: a save that read the toggle would ask for a URL.
+      row = cardigann!(@public, %{}, %{flaresolverr: true})
+      unloadable_copy!()
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-edit") |> render_click()
+
+      # The form holds the name, priority and Enabled only, as its alert says.
+      assert has_dialog_element?(lv, "#indexer-form-broken")
+      refute has_dialog_element?(lv, "#indexer-form-flaresolverr")
+      refute has_dialog_element?(lv, "#indexer-form-flaresolverr-help")
+
+      params =
+        lv
+        |> form_params(%{"indexer[name]" => "Renamed"})
+        |> put_in(["indexer", "flaresolverr"], "false")
+
+      lv |> target() |> render_submit("save", params)
+
+      assert %{name: "Renamed", flaresolverr: true} = stored_row(row.id)
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "Edit of a row whose running copy no longer loads saves what the browser posts",
+         %{conn: conn} do
+      # Toggle on and no URL saved; the cut-down form posts no toggle, so the save must not ask
+      # for a URL.
+      row = cardigann!(@public, %{}, %{flaresolverr: true})
+      unloadable_copy!()
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-edit") |> render_click()
+
+      params = form_params(lv, %{"indexer[name]" => "Renamed"})
+      refute Map.has_key?(params["indexer"], "flaresolverr")
+      lv |> target() |> render_submit("save", params)
+
+      assert %{name: "Renamed", flaresolverr: true} = stored_row(row.id)
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "Switch moves it to the replacing copy", %{conn: conn} do
+      row = cardigann!(@public)
+      newer = definition("newer", %{"replaces" => ["tracker"], "settings" => [@sort]})
+      assert {:ok, {:loaded, _}} = apply_files([{"v11", "newer.yml", newer}])
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-switch") |> render_click()
+      submit(lv)
+
+      assert stored_row(row.id).definition == "newer.yml"
+      refute has_element?(lv, "#indexer-dialog")
+    end
+
+    test "a save whose secrets is not a map still changes nothing", %{conn: conn} do
+      row = cardigann!(@public)
+      {:ok, lv, _html} = live(conn, ~p"/settings")
+      lv |> element("#indexer-#{row.id}-edit") |> render_click()
+
+      params =
+        lv |> form_params(%{"indexer[name]" => "Forged"}) |> Map.put("secrets", "x")
+
+      lv |> target() |> render_submit("save", params)
+
+      assert stored_row(row.id).name == row.name
+      assert has_element?(lv, "#indexer-dialog")
+    end
   end
 
   # A running copy that no longer loads reads red, which outranks the held and replaced codes:

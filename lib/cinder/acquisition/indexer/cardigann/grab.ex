@@ -172,6 +172,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     Charset,
     Fetch,
     Filters,
+    FlareSolverr,
     Headers,
     Jar,
     Login,
@@ -226,7 +227,11 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
       :infohash_not_found,
       :bad_headers,
       :definition_error,
-      :login_failed
+      :login_failed,
+      :cloudflare_challenge,
+      :flaresolverr_url_not_set,
+      :flaresolverr_failed,
+      :flaresolverr_off_host
     ]
   end
 
@@ -931,23 +936,54 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
     state = state |> Map.put_new(:trusted?, true) |> Map.merge(%{max_bytes: max_bytes, out: out})
 
     case Fetch.request_target(url, state.request, out.body) do
-      {:ok, target} -> hop(target, state, 0)
-      {:error, reason} -> {{{:error, link_refusal(reason)}, false}, state}
+      {:ok, target} ->
+        # A replay's request and deadline hold for its own redirects only: the next fetch
+        # starts from the grab's own, so it can solve a challenge of its own.
+        {result, after_fetch} = hop(target, state, 0)
+        {result, %{after_fetch | request: state.request, deadline_at: state.deadline_at}}
+
+      {:error, reason} ->
+        {{{:error, link_refusal(reason)}, false}, state}
     end
   end
 
   defp hop(target, state, hops) do
     trusted = state.trusted? and credential?(target.uri, state)
+    started_ms = System.monotonic_time(:millisecond)
 
     case send_get(target, state) do
       {:ok, response} ->
         state = keep_cookies(state, target.uri, response)
-        answered(response, target, %{state | trusted?: trusted}, hops)
+        step = FlareSolverr.step(response, target, state.out, hop_request(state), started_ms)
+        stepped(step, response, target, {state, trusted}, hops)
 
       {:error, reason} ->
         {{{:error, request_error(reason, state)}, trusted}, state}
     end
   end
+
+  # What `FlareSolverr.step/5` answered for a hop's response, with the hop's own trust: only a
+  # read answer keeps that trust in the state.
+  defp stepped(:pass, response, target, {state, trusted}, hops),
+    do: answered(response, target, %{state | trusted?: trusted}, hops)
+
+  defp stepped({:replay, request}, _response, target, {state, _trusted}, hops),
+    do: hop(target, replayed(state, request), hops)
+
+  defp stepped({:error, kind}, _response, _target, {state, trusted}, _hops),
+    do: {{{:error, step_error(kind)}, trusted}, state}
+
+  # An address the check before the FlareSolverr call refuses reads as the grab's own link
+  # refusals do, bare; every other kind of the step is a `failure_tags/0` tag.
+  defp step_error(kind) when kind in [:forbidden_address, :dns], do: kind
+  defp step_error(kind), do: {:cardigann_grab, kind}
+
+  defp hop_request(state),
+    do: Map.put(state.request, :context, context(state.deadline_at, state.opts))
+
+  # The replay runs under the solve's budget end, which `FlareSolverr.step/5` put in its context.
+  defp replayed(state, request),
+    do: %{state | request: request, deadline_at: request.context.deadline_at}
 
   defp answered(%Req.Response{status: status} = response, target, state, hops)
        when status in @redirect_statuses do

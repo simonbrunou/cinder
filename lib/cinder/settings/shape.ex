@@ -9,7 +9,7 @@ defmodule Cinder.Settings.Shape do
   # | {:media_server, [%{value, server, name, module, os_env}]}
   # | {:download_client, choice} | {:choice, options} | :resolution | :positive_integer
   # | :lenient_integer | :positive_number | :size_band | :path_root | :root_list
-  # | {:list, :downcase | :groups} | :timezone | :hours
+  # | {:list, :downcase | :groups} | :timezone | :hours | :service_url
   # | {:indexer_source, %{options: [%{value, module, os_env, label}], default}}
 
   alias Cinder.Acquisition.{AnimePreferences, Parser}
@@ -24,7 +24,8 @@ defmodule Cinder.Settings.Shape do
     :root_list,
     :timezone,
     :hours,
-    :resolution
+    :resolution,
+    :service_url
   ]
 
   @doc "Whether a value of this shape can be rejected on its own."
@@ -48,6 +49,10 @@ defmodule Cinder.Settings.Shape do
   def message(:timezone), do: "Enter a valid IANA timezone, such as Europe/Paris."
   def message(:hours), do: "Enter a non-negative whole number of hours."
   def message(:resolution), do: "Choose a cutoff included in the preferred resolutions list."
+
+  def message(:service_url),
+    do: "Enter an http or https URL with no user name, query or fragment."
+
   def message({:download_client, _choice}), do: "Choose a listed download client."
   def message({:indexer_source, _spec}), do: "Choose a listed indexer source."
   def message(_shape), do: nil
@@ -130,6 +135,7 @@ defmodule Cinder.Settings.Shape do
   def invalid?(:resolution, value),
     do: rejects?(value, &(String.downcase(&1) not in Parser.resolutions()))
 
+  def invalid?(:service_url, value), do: rejects?(value, &(not service_url?(&1)))
   def invalid?(_shape, _value), do: false
 
   defp rejects?(value, bad?) do
@@ -316,6 +322,21 @@ defmodule Cinder.Settings.Shape do
   end
 
   def valid_timezone?(_zone), do: false
+
+  # A configured service's base URL, as a configured indexer's base URL is checked: http or
+  # https with a host and a port in range, no user info, query or fragment.
+  @doc false
+  def service_url?(text) when is_binary(text) do
+    with true <- String.valid?(text),
+         {:ok, %URI{scheme: scheme, host: host, port: port} = uri} <- URI.new(text) do
+      scheme in ["http", "https"] and is_binary(host) and host != "" and port in 1..65_535 and
+        is_nil(uri.userinfo) and is_nil(uri.query) and is_nil(uri.fragment)
+    else
+      _invalid -> false
+    end
+  end
+
+  def service_url?(_text), do: false
 
   # The option of a media server or download client choice whose value is `value`, or nil.
   @doc false

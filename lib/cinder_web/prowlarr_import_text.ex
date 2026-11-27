@@ -137,13 +137,17 @@ defmodule CinderWeb.ProwlarrImportText do
 
   @doc """
   The lines naming what a direct Cardigann row, or the indexer the import created from it, took
-  in Prowlarr's place: each select that took its default.
+  in Prowlarr's place: each select that took its default, and a FlareSolverr toggle created on
+  while Cinder has no FlareSolverr URL (#1682).
   """
   @spec notes(%{notes: list()}) :: [String.t()]
-  def notes(%{notes: notes}) do
-    for {:took_default, label} <- notes,
-        do: gettext("%{setting} took its default value", setting: label)
-  end
+  def notes(%{notes: notes}), do: Enum.flat_map(notes, &note/1)
+
+  defp note({:took_default, label}),
+    do: [gettext("%{setting} took its default value", setting: label)]
+
+  defp note(:flaresolverr_url_not_set), do: [gettext("FlareSolverr URL not set")]
+  defp note(_note), do: []
 
   @doc "The text of an error code a refused commit gave a row."
   @spec row_error(term()) :: String.t()

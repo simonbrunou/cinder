@@ -91,13 +91,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   alias Cinder.Acquisition.Indexer.Newznab.Items
   alias Cinder.Acquisition.Indexer.NewznabAnswer
   alias Cinder.Acquisition.IndexerSource.Native
-  alias Cinder.Acquisition.IndexerSource.Native.IndexerStatus
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerClearances, IndexerStatus}
   alias Cinder.Acquisition.IndexerSource.Report
   alias Cinder.HTTPPolicy
   alias Cinder.Indexers.CardigannSettings
   alias Cinder.Indexers.ConfiguredIndexer
   alias Cinder.Indexers.Definitions
   alias Cinder.Indexers.Definitions.CredentialHosts
+  alias Cinder.Indexers.FlareSolverrUrl
 
   # The longest slot spacing a `requestDelay` sets, so a large one cannot arm a lease timer
   # past what `Process.send_after/3` takes.
@@ -187,12 +188,27 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
             }),
           now: now,
           charset: Charset.of_definition(definition),
-          certificate_pins: Fetch.certificate_pins(definition, base_url)
+          certificate_pins: Fetch.certificate_pins(definition, base_url),
+          flaresolverr: flaresolverr(indexer, base_url)
         }
       end,
       delay_ms: delay_ms(definition.request_delay)
     }
   end
+
+  # What `Cardigann.FlareSolverr` reads (#1682): off with the toggle off; else the saved URL, or
+  # `:no_url`, the base URL a request carrying a secret solves on, and the indexer's clearance
+  # row, read before each request and written after each solve.
+  defp flaresolverr(%ConfiguredIndexer{flaresolverr: true} = indexer, base_url) do
+    %{
+      mode: if(url = FlareSolverrUrl.get(), do: {:url, url}, else: :no_url),
+      base_url: HTTPPolicy.without_fragment(base_url),
+      read: fn -> IndexerClearances.read(indexer, Native.now()) end,
+      store: &IndexerClearances.store(indexer, &1, Native.now())
+    }
+  end
+
+  defp flaresolverr(_indexer, _base_url), do: %{mode: :off}
 
   # The stored secrets of declared settings that are not blank and differ from the copy's
   # default (`Cinder.Indexers.Definitions.Hold`'s rule), by key.

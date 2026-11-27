@@ -13,12 +13,13 @@
   indexer (#1657).** `IndexerSource.Native.IndexerState.list/1` lists every configured indexer,
   disabled ones and ones whose secrets do not decrypt included, with one state from what Native
   recorded, in this order: disabled, credentials that do not decrypt, not supported (a type with
-  no adapter, or the FlareSolverr toggle on), credentials rejected, a limit backoff that has not
-  ended, a failure backoff that has not ended, failures or a limit whose backoff has ended, usable
-  (a success recorded with no failure or limit after it), and never checked. Under the native
-  source the dashboard's indexer row shows `Native.health/0`, which sends no request: red with
-  no indexer added or none enabled, green when every enabled indexer is usable, else yellow
-  while one is usable and red when none is, naming the first 5 that are not and how many more.
+  no adapter, or the FlareSolverr toggle on for a type other than Cardigann, #1682), credentials
+  rejected, a limit backoff that has not ended, a failure backoff that has not ended, failures or
+  a limit whose backoff has ended, usable (a success recorded with no failure or limit after
+  it), and never checked. Under the native source the dashboard's indexer row shows
+  `Native.health/0`, which sends no request: red with no indexer added or none enabled, green
+  when every enabled indexer is usable, else yellow while one is usable and red when none is,
+  naming the first 5 that are not and how many more.
   Under it, one row per enabled indexer shows its state, with times in the household's time
   zone: red for credentials rejected, not supported or not decrypting, yellow while it waits,
   green when usable. Each wait counts from the instant the check judged the states. A failure

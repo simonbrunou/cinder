@@ -185,6 +185,12 @@ defmodule CinderWeb.DefinitionText do
   # The Test outcomes of a login that met its image captcha (#1681).
   def failure(:captcha_required), do: gettext("Login needs a captcha")
   def failure(:captcha_expired), do: gettext("The captcha expired: show a new one")
+
+  # A Cloudflare or DDoS-Guard challenge and the FlareSolverr call it led to (#1682).
+  def failure(:cloudflare_challenge), do: gettext("Cloudflare challenge")
+  def failure(:flaresolverr_url_not_set), do: gettext("FlareSolverr URL not set")
+  def failure(:flaresolverr_failed), do: gettext("FlareSolverr failed")
+  def failure(:flaresolverr_off_host), do: gettext("FlareSolverr answered from another site")
   def failure(_reason), do: nil
 
   @doc """
@@ -216,8 +222,17 @@ defmodule CinderWeb.DefinitionText do
   (`Cinder.Acquisition.Indexer.Cardigann.Grab.failure_tags/0`).
   """
   @spec grab_failure(term()) :: String.t()
-  def grab_failure(tag) when tag in [:parser_failed, :regex_limit, :filter_output_cap],
-    do: failure(tag)
+  def grab_failure(tag)
+      when tag in [
+             :parser_failed,
+             :regex_limit,
+             :filter_output_cap,
+             :cloudflare_challenge,
+             :flaresolverr_url_not_set,
+             :flaresolverr_failed,
+             :flaresolverr_off_host
+           ],
+      do: failure(tag)
 
   def grab_failure(:secret_host), do: failure(:secret_host)
   def grab_failure(:no_link), do: gettext("The details page held no download link")

@@ -7,9 +7,10 @@
   configured source, so every install searches through Prowlarr until `native` is stored,
   which the "Indexer source" select of
   `/settings` can do (#1662). `IndexerSource.Native` asks each enabled configured indexer
-  whose secrets decrypt and whose FlareSolverr toggle is off, unless it is backing off or its
-  credentials were rejected (#1654), in a process of its own, through the adapter its type
-  maps to in the `:indexer_adapters` app env, under one 90 s deadline for the whole search.
+  whose secrets decrypt and that is Cardigann or has its FlareSolverr toggle off (#1682),
+  unless it is backing off or its credentials were rejected (#1654), in a process of its own,
+  through the adapter its type maps to in the `:indexer_adapters` app env, under one 90 s
+  deadline for the whole search.
   It kills a search still running 1 s past that deadline. It reports an indexer whose type
   maps to no adapter as not supported, and with no enabled configured indexer whose secrets
   decrypt it answers `{:error, :no_indexers}`. #1653 maps the Newznab and Torznab types.

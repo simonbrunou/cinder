@@ -107,7 +107,12 @@ defmodule Cinder.Acquisition.IndexerSource.ReportTest do
       {:failed, {:limit, nil}},
       {:failed, :rejected_credentials},
       {:failed, :challenge},
-      {:failed, :crashed}
+      {:failed, :crashed},
+      # #1682's FlareSolverr step.
+      {:failed, :cloudflare_challenge},
+      {:failed, :flaresolverr_url_not_set},
+      {:failed, :flaresolverr_failed},
+      {:failed, :flaresolverr_off_host}
     ]
 
     @invalid [

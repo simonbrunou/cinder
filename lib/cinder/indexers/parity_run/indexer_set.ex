@@ -9,12 +9,12 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
   By default, every configured indexer that is enabled, linked to a Prowlarr indexer
   (`configured_indexers.prowlarr_indexer_id`, written by the Prowlarr import of #1673) and whose
   state (`Cinder.Acquisition.IndexerSource.Native.IndexerState.list/1`) is not
-  `{:not_supported, _}`. An indexer behind FlareSolverr reads "not supported" there, so it stays
-  out. `resolve/1`'s `select` (the run's `indexers:` option) names the set instead, by configured
-  indexer id or name: every indexer it names is in it, whatever its state or link, so a missing
-  map entry reaches the report. A name or id that matches no configured indexer refuses the run
-  with `:unknown_indexer`. In either set, an indexer whose secrets do not decrypt refuses the run
-  with `:undecryptable_indexer`.
+  `{:not_supported, _}`. A Newznab or Torznab indexer with its FlareSolverr toggle on reads "not
+  supported" there, so it stays out; a Cardigann one is in the set (#1682). `resolve/1`'s `select`
+  (the run's `indexers:` option) names the set instead, by configured indexer id or name: every
+  indexer it names is in it, whatever its state or link, so a missing map entry reaches the report.
+  A name or id that matches no configured indexer refuses the run with `:unknown_indexer`. In either
+  set, an indexer whose secrets do not decrypt refuses the run with `:undecryptable_indexer`.
 
   The map holds `prowlarr_indexer_id => id` for each indexer of the set that has a link.
 

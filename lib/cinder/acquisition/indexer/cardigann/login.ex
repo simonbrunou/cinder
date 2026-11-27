@@ -41,7 +41,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
   that keeps its body goes only to one too, since a filtered or multipart value can hide a
   secret from the check. Each request sends `login.headers`, else `search.headers`
   (`Cinder.Acquisition.Indexer.Cardigann.Headers`), only to a credential host. Each request is
-  one call of the caller's `hold`, so a search spaces them as its own (`run/2`).
+  one call of the caller's `hold`, so a search spaces them as its own (`run/2`). Each request
+  is a login's (`login?: true` in its request map), so a challenge one meets is solved on the
+  indexer's base URL, never on the login's own URL or body
+  (`Cinder.Acquisition.Indexer.Cardigann.FlareSolverr.handed/4`, #1682).
 
   ## The answer
 
@@ -175,7 +178,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Login do
     request =
       copy.request.(opts.context, now)
       |> Map.merge(Map.get(opts, :request, %{}))
-      |> Map.merge(%{secret_referenced?: false, follow_redirects?: true})
+      |> Map.merge(%{secret_referenced?: false, follow_redirects?: true, login?: true})
 
     with {:ok, _uri} <- base_uri(copy),
          {:ok, headers} <- headers(copy.definition, variables, now) do

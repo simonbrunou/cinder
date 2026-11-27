@@ -168,6 +168,7 @@ msgstr ""
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/issue_components.ex
 #: lib/cinder_web/components/prowlarr_import_components.ex
+#: lib/cinder_web/flaresolverr_dialog.ex
 #: lib/cinder_web/live/library_adoption_live.ex
 #: lib/cinder_web/live/library_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
@@ -472,6 +473,7 @@ msgid "Downloads"
 msgstr ""
 
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/flaresolverr_dialog.ex
 #: lib/cinder_web/live/movie_detail_live.ex
 #: lib/cinder_web/live/profiles_live.ex
 #: lib/cinder_web/live/series_detail_components.ex
@@ -958,6 +960,7 @@ msgstr ""
 
 #: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
+#: lib/cinder_web/flaresolverr_dialog.ex
 #: lib/cinder_web/live/series_detail_components.ex
 #: lib/cinder_web/live/users_live.ex
 #, elixir-autogen
@@ -9773,4 +9776,115 @@ msgstr ""
 #: lib/cinder_web/definition_text.ex
 #, elixir-autogen, elixir-format, fuzzy
 msgid "a definition switched meanwhile"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cloudflare challenge"
+msgstr ""
+
+#: lib/cinder_web/domain_labels.ex
+#, elixir-autogen, elixir-format
+msgid "Enter an http or https URL with no user name, query or fragment."
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#: lib/cinder_web/domain_labels.ex
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format
+msgid "FlareSolverr URL"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#: lib/cinder_web/prowlarr_import_text.ex
+#, elixir-autogen, elixir-format
+msgid "FlareSolverr URL not set"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "FlareSolverr answered from another site"
+msgstr ""
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "FlareSolverr failed"
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format
+msgid "%{count} enabled indexer uses FlareSolverr."
+msgid_plural "%{count} enabled indexers use FlareSolverr."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder calls FlareSolverr only when the site answers with a Cloudflare or DDoS-Guard challenge."
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Clear it"
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format
+msgid "Edit the FlareSolverr URL"
+msgstr ""
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Enter FlareSolverr's URL, or turn FlareSolverr off."
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "FlareSolverr URL cleared."
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "FlareSolverr URL saved."
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format
+msgid "FlareSolverr's browser runs each site's JavaScript and can reach your local network. Run it where it cannot."
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "FlareSolverr: %{url}"
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "FlareSolverr: not set"
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Prowlarr uses FlareSolverr at %{url}"
+msgstr ""
+
+#: lib/cinder_web/components/prowlarr_import_components.ex
+#, elixir-autogen, elixir-format
+msgid "Save it as Cinder's FlareSolverr URL"
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Set"
+msgstr ""
+
+#: lib/cinder_web/flaresolverr_dialog.ex
+#, elixir-autogen, elixir-format
+msgid "Set the FlareSolverr URL"
+msgstr ""
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Use FlareSolverr"
 msgstr ""
