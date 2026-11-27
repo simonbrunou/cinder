@@ -1,7 +1,8 @@
 defmodule Cinder.Indexers.ParityRun.IndexerSet do
   @moduledoc """
   The configured indexers a parity run compares (`Cinder.Indexers.ParityRun`, #1624 point 9),
-  their Prowlarr map, and the corpus kinds each one's caps take.
+  their Prowlarr map, the corpus kinds each one's caps take, and whether its TV search takes a
+  TVDB id (`caps/3`).
 
   ## The set
 
@@ -19,7 +20,7 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
 
   ## The kinds
 
-  `kinds/3` asks the indexer's own adapter how it plans one representative seam call per kind,
+  `caps/3` asks the indexer's own adapter how it plans one representative seam call per kind,
   and keeps a kind when the plan sends a request: `Cinder.Acquisition.Indexer.Newznab.plan/3`
   for a Newznab or Torznab indexer, `Cinder.Acquisition.Indexer.Cardigann.Query.plan/4` over
   the running copy (`Cinder.Acquisition.Indexer.Cardigann.copy/1`) for a Cardigann one.
@@ -30,13 +31,17 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
   cells then read uncovered or inconclusive rather than not asked.
 
   A Newznab plan reads the stored caps, and fetches them through the run's budget when they are
-  missing or stale; it fetches at most once per indexer, since a failed fetch keeps every kind.
+  missing or stale. A failed fetch keeps every kind and ends the indexer's plans, and a fetch
+  that succeeds stores the row its later plans read, so it fetches once per indexer while that
+  row stays usable. A later plan that finds no usable row fetches again: for an indexer deleted
+  during the run, whose caps no row keeps, each plan fetches.
   """
 
   alias Cinder.Acquisition.Indexer.{Cardigann, Newznab}
   alias Cinder.Acquisition.Indexer.Cardigann.Query
+  alias Cinder.Acquisition.Indexer.Newznab.Caps
   alias Cinder.Acquisition.IndexerSource.Native
-  alias Cinder.Acquisition.IndexerSource.Native.IndexerState
+  alias Cinder.Acquisition.IndexerSource.Native.{IndexerCaps, IndexerState}
   alias Cinder.Indexers
   alias Cinder.Indexers.ConfiguredIndexer
 
@@ -107,27 +112,39 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
   end
 
   @doc """
-  The corpus kinds among `kinds` that `indexer`'s caps take, in `kinds`' order; see the
-  moduledoc. `context` is the adapter context of `t:Cinder.Acquisition.Indexer.context/0`, the
-  run's budget included.
+  What one read of `indexer`'s caps tells the run. `kinds` holds the corpus kinds among `kinds`
+  that its caps take, in `kinds`' order (see the moduledoc). `tvdb_search` says whether its caps'
+  TV search lists `tvdbid`, the test Prowlarr's `HttpIndexerBase.Fetch(TvSearchCriteria)` makes
+  before it sends a TV search with a TVDB id (#1933). It is `nil` when the plan cannot read the
+  caps, when the running copy does not run, or when a Newznab or Torznab indexer's stored caps
+  row is no longer usable when read again after the plans: that read fetches nothing. `context`
+  is the adapter context of `t:Cinder.Acquisition.Indexer.context/0`, the run's budget
+  included.
   """
-  @spec kinds(ConfiguredIndexer.t(), [atom()], map()) :: [atom()]
-  def kinds(%ConfiguredIndexer{type: :cardigann} = indexer, kinds, _context) do
+  @spec caps(ConfiguredIndexer.t(), [atom()], map()) :: %{
+          kinds: [atom()],
+          tvdb_search: boolean() | nil
+        }
+  def caps(%ConfiguredIndexer{type: :cardigann} = indexer, kinds, _context) do
     case Cardigann.copy(indexer) do
       {:ok, copy} ->
         planner = fn query -> Query.plan(copy.definition, copy.config, query, Native.now()) end
-        Enum.filter(kinds, &takes?(&1, planner))
+
+        %{
+          kinds: Enum.filter(kinds, &takes?(&1, planner)),
+          tvdb_search: Query.mode?(copy.definition, "tv-search", "tvdbid")
+        }
 
       {:not_supported, _feature} ->
-        kinds
+        unread(kinds)
     end
   end
 
-  def kinds(%ConfiguredIndexer{type: type} = indexer, kinds, context)
+  def caps(%ConfiguredIndexer{type: type} = indexer, kinds, context)
       when type in [:newznab, :torznab] do
     case Newznab.plan(indexer, {:search, @imdb}, context) do
       {:failed, _tag} ->
-        kinds
+        unread(kinds)
 
       first ->
         planner = fn
@@ -135,11 +152,23 @@ defmodule Cinder.Indexers.ParityRun.IndexerSet do
           query -> Newznab.plan(indexer, query, context)
         end
 
-        Enum.filter(kinds, &takes?(&1, planner))
+        %{kinds: Enum.filter(kinds, &takes?(&1, planner)), tvdb_search: newznab_tvdbid?(indexer)}
     end
   end
 
-  def kinds(%ConfiguredIndexer{}, kinds, _context), do: kinds
+  def caps(%ConfiguredIndexer{}, kinds, _context), do: unread(kinds)
+
+  @doc "The answer of `caps/3` for an indexer whose caps the run did not read."
+  @spec unread([atom()]) :: %{kinds: [atom()], tvdb_search: nil}
+  def unread(kinds), do: %{kinds: kinds, tvdb_search: nil}
+
+  # The caps row the plans above read or stored; a fetch here would spend the budget again.
+  defp newznab_tvdbid?(indexer) do
+    case IndexerCaps.read(indexer, fn -> {:error, :not_stored} end) do
+      {:ok, caps} -> Caps.param?(caps, "tv-search", "tvdbid")
+      {:error, _reason} -> nil
+    end
+  end
 
   defp takes?(kind, planner) do
     Enum.any?(Map.fetch!(@probes, kind), fn query ->

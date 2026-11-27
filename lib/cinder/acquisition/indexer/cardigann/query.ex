@@ -353,7 +353,9 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
       values: Map.put(values, "Q", andmatch)
     }
 
-  defp mode?(definition, mode, parameter) do
+  @doc "Whether the definition's `caps.modes` list `parameter` under `mode`."
+  @spec mode?(map(), String.t(), String.t()) :: boolean()
+  def mode?(definition, mode, parameter) do
     case List.keyfind(definition.caps.modes, mode, 0) do
       {^mode, parameters} -> parameter in parameters
       nil -> false

@@ -55,8 +55,10 @@ defmodule Cinder.Indexers.ParityRun do
      request, whose Native answer was a limit or an HTTP 429, or whose Prowlarr indexer shows a
      backoff set by a failure after the search started, is stopped for the rest of the run, and
      the search records the stop. A search with no indexer of the set left has no try.
-  5. Reads each indexer's kinds and runs its link check (`Cinder.Indexers.ParityRun.LinkCheck`),
-     then reads Prowlarr's history over the run and compares.
+  5. Reads each indexer's kinds and whether its TV search takes a TVDB id
+     (`Cinder.Indexers.ParityRun.IndexerSet.caps/3`), runs its link check
+     (`Cinder.Indexers.ParityRun.LinkCheck`), then reads Prowlarr's history over the run and
+     compares.
   6. Runs each search the engine lists in `retry` once more, through both sides, once
      `retry_spacing_s` has passed since its first try ended, reads the history again and
      compares the two tries. A stop in a retry makes the indexer inconclusive from that search
@@ -466,22 +468,28 @@ defmodule Cinder.Indexers.ParityRun do
 
   # --- the engine's input ---
 
-  # Each indexer's kinds and link check, read once after the first tries. A stopped indexer, or
-  # any once the deadline has passed, is sent nothing more: it keeps every kind and its link
-  # check is not run.
+  # Each indexer's kinds, `tvdb_search` and link check, read once after the first tries. A
+  # stopped indexer, or any once the deadline has passed, is sent nothing more: it keeps every
+  # kind, its `tvdb_search` is nil and its link check is not run.
   defp engine_indexers(searches, ctx) do
     fetch_opts = Keyword.get(ctx.opts, :fetch_opts, [])
 
     Enum.map(ctx.indexers, fn indexer ->
-      {kinds, link_check} =
+      {caps, link_check} =
         if Map.has_key?(ctx.stopped, indexer.id) or mono() >= ctx.deadline_at do
-          {Corpus.kinds(), :not_run}
+          {IndexerSet.unread(Corpus.kinds()), :not_run}
         else
-          {IndexerSet.kinds(indexer, Corpus.kinds(), adapter_context(indexer, ctx)),
+          {IndexerSet.caps(indexer, Corpus.kinds(), adapter_context(indexer, ctx)),
            LinkCheck.check(indexer, searches, ctx.budget, fetch_opts)}
         end
 
-      %{id: indexer.id, name: indexer.name, kinds: kinds, link_check: link_check}
+      %{
+        id: indexer.id,
+        name: indexer.name,
+        kinds: caps.kinds,
+        tvdb_search: caps.tvdb_search,
+        link_check: link_check
+      }
     end)
   end
 

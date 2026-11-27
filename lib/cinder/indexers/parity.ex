@@ -18,7 +18,8 @@ defmodule Cinder.Indexers.Parity do
     `kinds` lists the corpus kinds (`Cinder.Indexers.Parity.Picks.kinds/0`) its caps can take,
     `:movie_imdb` only when its movie search lists `imdbid`; a kind outside that list gets no
     cell and keeps the verdict from pass. `link_check` is `:passed`,
-    `{:failed, tag}` or `:not_run`.
+    `{:failed, tag}` or `:not_run`. An optional `tvdb_search` says whether its TV search caps
+    list `tvdbid`: `true`, `false`, or `nil` when the run could not read them.
   - `prowlarr_map`: `%{prowlarr_id => configured_id}` (`configured_indexers.prowlarr_indexer_id`).
   - `history` and `statuses`: `ProwlarrReads.history/3` and `status/1` answers for the window;
     `statuses` may hold several reads (before and after the run).
@@ -54,13 +55,14 @@ defmodule Cinder.Indexers.Parity do
   - **Coverage** (point 13, amendment change 2), per search and indexer: covered when Native's
     report says `:asked` and Prowlarr's history holds, inside the window from the Prowlarr side's
     first call to 5 s after it finished, at least one successful entry per query that search
-    sent the indexer (two for each `search_tv/3` call with a TVDB id, else one, over the calls
-    Native asked it in), no failed entry, no entry Prowlarr answered from its cache (a retry
-    of the same search inside its cache time gets one), no Prowlarr call errored, and no status
-    read shows a
-    Prowlarr backoff that overlaps the window. A cell, one indexer and one kind, exists for each
-    kind in `kinds`, and for a kind where the indexer left evidence it was asked (a history
-    entry, or a Native outcome other than `{:not_asked, :caps}`; for `:movie_imdb` an id-scoped
+    sent the indexer (one per call Native asked it in; for a `search_tv/3` call with a TVDB id,
+    one when `tvdb_search` is `false`, since Prowlarr skips the id-scoped query of an indexer
+    whose caps lack `tvdbid` (#1933), else two), no failed entry, no entry Prowlarr answered
+    from its cache (a retry of the same search inside its cache time gets one), no Prowlarr call
+    errored, and no status read shows a Prowlarr backoff that overlaps the window. A cell, one
+    indexer and one kind, exists for each kind in `kinds`, and for a kind where the indexer left
+    evidence it was asked (a history entry, or a Native outcome other than
+    `{:not_asked, :caps}`; for `:movie_imdb` an id-scoped
     Native row). It is covered when at least one search of its kind ran and the indexer was
     covered in each. A cell whose kind has no search is uncovered, unless the kind is undrawn:
     it is then not asked, for no candidate in the library, and keeps no verdict from pass.
@@ -292,19 +294,19 @@ defmodule Cinder.Indexers.Parity do
     cond do
       stopped?(ctx, cid, index) -> {:inconclusive, elem(ctx.stops[cid], 1)}
       not cell?(ctx, cid, search) -> :not_asked
-      true -> asked_status(cid, search, try, native_report, window, ctx)
+      true -> asked_status(cid, try, native_report, window, ctx)
     end
   end
 
   defp stopped?(ctx, cid, index),
     do: match?({at, _reason} when at <= index, Map.get(ctx.stops, cid))
 
-  defp asked_status(cid, search, try, native_report, window, ctx) do
+  defp asked_status(cid, try, native_report, window, ctx) do
     pids = Map.get(ctx.pids_by_cid, cid, [])
 
     with :ok <- mapped(pids),
          :ok <- native_asked(native_report, cid),
-         :ok <- prowlarr_asked(cid, pids, search, try, window, ctx) do
+         :ok <- prowlarr_asked(cid, pids, try, window, ctx) do
       :covered
     else
       {:uncovered, _reason} = uncovered -> uncovered
@@ -326,7 +328,7 @@ defmodule Cinder.Indexers.Parity do
   defp outcome_tag(reason) when is_atom(reason), do: reason
   defp outcome_tag(reason) when is_tuple(reason), do: elem(reason, 0)
 
-  defp prowlarr_asked(cid, [pid], search, try, window, ctx) do
+  defp prowlarr_asked(cid, [pid], try, window, ctx) do
     entries = entries_in(ctx.history, [pid], window)
 
     cond do
@@ -339,7 +341,7 @@ defmodule Cinder.Indexers.Parity do
       Enum.any?(entries, &Map.get(&1, :cached, false)) ->
         {:uncovered, :prowlarr_cached}
 
-      Enum.count(entries) < expected_queries(cid, search, try) ->
+      Enum.count(entries) < expected_queries(cid, ctx, try) ->
         {:uncovered, :prowlarr_not_asked}
 
       backoff?(ctx.statuses, pid, window) ->
@@ -359,15 +361,20 @@ defmodule Cinder.Indexers.Parity do
     end)
   end
 
-  # The queries Prowlarr sent the indexer in this search: one per call Native asked it in, two
-  # for a TV search with a TVDB id (`Cinder.Acquisition.IndexerSource.Prowlarr.search_tv/3`).
-  defp expected_queries(cid, _search, try) do
+  # The queries Prowlarr sent the indexer in this search: one per call Native asked it in, and
+  # for a TV search with a TVDB id one per query of
+  # `Cinder.Acquisition.IndexerSource.Prowlarr.search_tv/3` that Prowlarr sends the indexer. It
+  # skips the id-scoped one, with no history entry, for an indexer whose caps lack `tvdbid`
+  # (#1933): `tvdb_search: false`. Two when `tvdb_search` is `true`, `nil` or missing.
+  defp expected_queries(cid, ctx, try) do
+    tv_queries = if ctx.indexers[cid][:tvdb_search] == false, do: 1, else: 2
+
     try.native.calls
     |> Enum.filter(
       &match?(%{outcome: :asked}, Map.get(Rows.report(&1.outcome).indexers, {"native", cid}))
     )
     |> Enum.map(fn
-      %{callback: :search_tv, args: [tvdb_id | _]} when not is_nil(tvdb_id) -> 2
+      %{callback: :search_tv, args: [tvdb_id | _]} when not is_nil(tvdb_id) -> tv_queries
       _call -> 1
     end)
     |> Enum.sum()

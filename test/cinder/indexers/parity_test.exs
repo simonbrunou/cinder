@@ -295,6 +295,58 @@ defmodule Cinder.Indexers.ParityTest do
     {s, indexers, history}
   end
 
+  # #1933: Prowlarr 3.1's `HttpIndexerBase.Fetch(TvSearchCriteria)` skips a TV search with a
+  # TVDB id for an indexer whose caps lack `tvdbid`, and writes no history entry for it.
+  defp with_tvdb_search(indexers, values),
+    do: Enum.map(indexers, &Map.put(&1, :tvdb_search, Map.fetch!(values, &1.id)))
+
+  # The Office season search with one history entry per indexer: the free-text query alone.
+  defp office_one_query do
+    p_rows = [office_row(:prowlarr, query_origins: [:free_text])]
+    n_rows = [office_row(:native, query_origins: [:free_text])]
+    {s, indexers, history} = office_season(p_rows, n_rows)
+    {s, indexers, Enum.reject(history, &(&1.id in [2, 4]))}
+  end
+
+  describe "the Prowlarr queries of a search_tv call with a TVDB id" do
+    test "one query covers an indexer whose caps lack tvdbid, and is one short for one whose caps list it" do
+      {s, indexers, history} = office_one_query()
+      indexers = with_tvdb_search(indexers, %{@alpha => false, @bravo => true})
+
+      result = Parity.compare(run([s], indexers: indexers, history: history))
+      assert_line(result.report, "Alpha (#1) season: covered")
+      refute {:no_evidence, @alpha} in result.reasons
+      assert {:cell_uncovered, @bravo, :season, :prowlarr_not_asked} in result.reasons
+    end
+
+    test "two queries cover an indexer whose caps list tvdbid" do
+      p_rows = [office_row(:prowlarr, query_origins: [:id_scoped, :free_text])]
+
+      n_rows = [
+        office_row(:native, query_origins: [:id_scoped]),
+        office_row(:native, query_origins: [:free_text])
+      ]
+
+      {s, indexers, history} = office_season(p_rows, n_rows)
+      indexers = with_tvdb_search(indexers, %{@alpha => true, @bravo => true})
+
+      result = Parity.compare(run([s], indexers: indexers, history: history))
+      assert_line(result.report, "Alpha (#1) season: covered")
+      assert_line(result.report, "Bravo (#2) season: covered")
+    end
+
+    # A run that could not read the caps keeps the rule from before #1933: two queries.
+    test "an indexer whose caps were not read, or whose entry has no such field, expects two" do
+      {s, indexers, history} = office_one_query()
+
+      for indexers <- [with_tvdb_search(indexers, %{@alpha => nil, @bravo => nil}), indexers] do
+        result = Parity.compare(run([s], indexers: indexers, history: history))
+        assert {:cell_uncovered, @alpha, :season, :prowlarr_not_asked} in result.reasons
+        assert {:cell_uncovered, @bravo, :season, :prowlarr_not_asked} in result.reasons
+      end
+    end
+  end
+
   describe "rows" do
     test "two identical rows on one side and one on the other is a row difference" do
       try =

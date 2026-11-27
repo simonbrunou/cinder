@@ -145,10 +145,10 @@ defmodule Cinder.Indexers.ParityRunTest do
   end
 
   # Prowlarr's search: answers each request with `answer.(params, ids)` and writes one
-  # successful history entry per asked indexer id, dated now in whole seconds, as Prowlarr's
-  # `HistoryService` and `STJUtcConverter` write it (`b0b5774`). Reports
-  # `{:prowlarr_search, params, ids}` to the test process.
-  defp prowlarr_search(history, answer) do
+  # successful history entry per asked indexer id for which `queried?.(params, id)` holds, dated
+  # now in whole seconds, as Prowlarr's `HistoryService` and `STJUtcConverter` write it
+  # (`b0b5774`). Reports `{:prowlarr_search, params, ids}` to the test process.
+  defp prowlarr_search(history, answer, queried? \\ fn _params, _id -> true end) do
     test_pid = self()
 
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
@@ -158,7 +158,12 @@ defmodule Cinder.Indexers.ParityRunTest do
       send(test_pid, {:prowlarr_search, params, ids})
       results = answer.(params, ids)
       now = DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
-      added = for id <- ids, do: entry(id, now, Enum.count(results, &(&1["indexerId"] == id)))
+
+      added =
+        for id <- ids,
+            queried?.(params, id),
+            do: entry(id, now, Enum.count(results, &(&1["indexerId"] == id)))
+
       Agent.update(history, &(added ++ &1))
 
       Req.Test.json(conn, results)
@@ -516,6 +521,84 @@ defmodule Cinder.Indexers.ParityRunTest do
     assert "  #{name} anime_episodes: uncovered (no_search)" in lines
     refute report =~ "not drawn"
     refute report =~ "no candidate"
+  end
+
+  # --- the Prowlarr queries of a TV search with a TVDB id (#1933) ---
+
+  @office "The.Office.S01.1080p.WEB-DL-OK"
+
+  # A Torrent9-shaped indexer, whose tv-search lists `q`, `season` and `ep` but not `tvdbid`,
+  # and Prowlarr as 3.1's `HttpIndexerBase.Fetch(TvSearchCriteria)` treats it: the
+  # `{TvdbId:..}` search asks it nothing and writes no history entry, the title search finds
+  # the season.
+  test "a TV search with a TVDB id covers an indexer whose caps lack tvdbid with one Prowlarr query",
+       %{history: history, statuses: statuses} do
+    [indexer] =
+      Cinder.CardigannFixtures.setup!(
+        [{"t9.yml", Cinder.CardigannFixtures.torrent9_like()}],
+        [{"t9.yml", Cinder.CardigannFixtures.torrent9_base(), %{}}]
+      )
+
+    indexer = link!(indexer, 7)
+    series = series_fixture(%{title: "The Office", year: nil, tvdb_id: 73_244})
+    season = season_fixture(series, %{season_number: 1})
+    episode_fixture(season, %{episode_number: 1})
+    episode_fixture(season, %{episode_number: 2})
+
+    Cinder.CardigannFixtures.route(%{
+      "t9.test" => fn conn, _query ->
+        case conn.request_path do
+          "/torrent/" <> _id ->
+            Cinder.CardigannFixtures.torrent9_details(link: @magnet)
+
+          _search ->
+            Cinder.CardigannFixtures.torrent9_page([
+              %{title: @office, href: "/torrent/1", size: "1 GB", icon: "tv", date: "01/01/2025"}
+            ])
+        end
+      end
+    })
+
+    id_search? = &String.starts_with?(&1["query"], "{TvdbId:")
+
+    row = %{
+      "title" => @office,
+      "size" => 1_073_741_824,
+      "magnetUrl" => @magnet,
+      "protocol" => "torrent",
+      "indexerId" => 7,
+      "indexer" => "t9",
+      "publishDate" => "2026-11-25T10:30:00Z",
+      "categories" => [%{"id" => 5000}]
+    }
+
+    prowlarr_search(
+      history,
+      fn params, _ids -> if id_search?.(params), do: [], else: [row] end,
+      fn params, _id -> not id_search?.(params) end
+    )
+
+    prowlarr_api(history, statuses)
+
+    report =
+      run!(
+        counts: %{season: 1},
+        indexers: [indexer.id],
+        fetch_opts: [
+          plug: {Req.Test, Cinder.CardigannStub},
+          resolver: fn _host -> {:ok, [@public_address]} end
+        ]
+      )
+
+    assert_received {:result, :ok}
+    queries = receive_all(fn {:prowlarr_search, params, [7]} -> params["query"] end)
+    assert Enum.sort(queries) == ["The Office {Season:1}", "{TvdbId:73244}{Season:1}"]
+    lines = String.split(report, "\n")
+    name = "#{indexer.name} (##{indexer.id})"
+    assert "  #{name} season: covered" in lines, report
+    assert "        history: #{name} 1 queries, 1 results" in lines, report
+    assert "  #{name}: matching rows found, link check passed" in lines, report
+    refute report =~ "prowlarr_not_asked"
   end
 
   # --- the seed ---
@@ -1137,10 +1220,98 @@ defmodule Cinder.Indexers.ParityRunTest do
         }
       end
 
-      assert IndexerSet.kinds(movies, Corpus.kinds(), context.(movies)) == [:movie_imdb]
-      assert IndexerSet.kinds(broken, Corpus.kinds(), context.(broken)) == Corpus.kinds()
+      assert IndexerSet.caps(movies, Corpus.kinds(), context.(movies)).kinds == [:movie_imdb]
+      assert IndexerSet.caps(broken, Corpus.kinds(), context.(broken)).kinds == Corpus.kinds()
       assert Budget.spent(budget, movies.id) == 1
       assert Budget.spent(budget, broken.id) == 1
+    end
+
+    # #1933: Prowlarr sends a TV search with a TVDB id only to an indexer whose caps list it.
+    test "an indexer's tvdb_search reads whether its TV search caps list tvdbid, and fetches no caps of its own" do
+      tv = fn params ->
+        caps(
+          modes: %{"tv-search" => ~s(available="yes" supportedParams="#{params}")},
+          categories: [5000, 5040]
+        )
+      end
+
+      with_id = indexer!(:newznab, "with-id.example")
+      without_id = indexer!(:newznab, "without-id.example")
+      broken = indexer!(:newznab, "broken.example")
+
+      route(%{
+        "with-id.example" => fn _conn, _query -> tv.("q,season,ep,tvdbid") end,
+        "without-id.example" => fn _conn, _query -> tv.("q,season,ep") end,
+        "broken.example" => fn _conn, _query -> {500, "oops"} end
+      })
+
+      ids = [with_id.id, without_id.id, broken.id]
+      budget = Budget.new(ids, 10)
+
+      context = fn indexer ->
+        %{
+          deadline_at: System.monotonic_time(:millisecond) + 5_000,
+          budget: fn -> Budget.take(budget, indexer.id) end
+        }
+      end
+
+      caps = fn indexer -> IndexerSet.caps(indexer, Corpus.kinds(), context.(indexer)) end
+
+      assert %{tvdb_search: true, kinds: [:season, :season_zero, :anime_episodes]} =
+               caps.(with_id)
+
+      assert %{tvdb_search: false, kinds: [:season, :season_zero, :anime_episodes]} =
+               caps.(without_id)
+
+      assert caps.(broken) == %{kinds: Corpus.kinds(), tvdb_search: nil}
+      # One caps fetch each answers both.
+      for id <- ids, do: assert(Budget.spent(budget, id) == 1)
+
+      # An indexer deleted before its caps fetch: each plan fetches the caps, which no row keeps,
+      # and the read of `tvdb_search` fetches nothing more.
+      gone = indexer!(:newznab, "gone.example")
+      route(%{"gone.example" => fn _conn, _query -> tv.("q,season,ep,tvdbid") end})
+      Repo.delete!(gone)
+
+      gone_budget = Budget.new([gone.id], 20)
+
+      gone_context = %{
+        deadline_at: System.monotonic_time(:millisecond) + 5_000,
+        budget: fn -> Budget.take(gone_budget, gone.id) end
+      }
+
+      assert IndexerSet.caps(gone, Corpus.kinds(), gone_context) ==
+               %{kinds: [:season, :season_zero, :anime_episodes], tvdb_search: nil}
+
+      # One fetch per plan: the IMDb probe, then movie_title, season, season_zero, the first
+      # anime probe (it plans a request) and both probes of each book kind.
+      assert Budget.spent(gone_budget, gone.id) == 9
+
+      edited = fn id, modes ->
+        Cinder.CardigannFixtures.torrent9_like(fn definition ->
+          definition |> Map.put("id", id) |> update_in(["caps", "modes"], modes)
+        end)
+      end
+
+      with_tvdbid =
+        edited.("cindertestt9id", &Map.put(&1, "tv-search", ["q", "season", "ep", "tvdbid"]))
+
+      no_tv = edited.("cindertestt9notv", &Map.delete(&1, "tv-search"))
+      base = Cinder.CardigannFixtures.torrent9_base()
+
+      [t9, t9_id, t9_no_tv] =
+        Cinder.CardigannFixtures.setup!(
+          [
+            {"t9.yml", Cinder.CardigannFixtures.torrent9_like()},
+            {"t9id.yml", with_tvdbid},
+            {"t9notv.yml", no_tv}
+          ],
+          [{"t9.yml", base, %{}}, {"t9id.yml", base, %{}}, {"t9notv.yml", base, %{}}]
+        )
+
+      assert %{tvdb_search: false} = IndexerSet.caps(t9, Corpus.kinds(), %{})
+      assert %{tvdb_search: true} = IndexerSet.caps(t9_id, Corpus.kinds(), %{})
+      assert %{tvdb_search: false} = IndexerSet.caps(t9_no_tv, Corpus.kinds(), %{})
     end
 
     test "a Cardigann grab charges the budget per page request and sends nothing it refuses" do
