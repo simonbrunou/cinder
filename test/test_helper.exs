@@ -6,6 +6,11 @@ Cinder.TestPartitions.halt_when_parent_exits()
 {:ok, _} = Cinder.LostTests.halt_on_sigterm()
 ExUnit.after_suite(&Cinder.LostTests.after_suite/1)
 
+# When `:logger` removes `ExUnit.CaptureServer`'s handler, as a log call that holds its formatter
+# past 5000 ms makes it do, this prints one line naming that call and adds the handler back while
+# a log capture is open, so later `capture_log` calls capture again (#1716).
+:ok = Cinder.CaptureServerGuard.install()
+
 # A positive wait only costs time when the test is already failing, so the default is generous:
 # on the 3-core Forgejo CI runner a message a test waits for can take over a second (#636).
 # `Cinder.MutationFailures` writes each failure block to the file `scripts/mutation-check` names

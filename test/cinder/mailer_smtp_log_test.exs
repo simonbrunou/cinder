@@ -59,9 +59,16 @@ defmodule Cinder.MailerSmtpLogTest do
     refute log =~ @sentinel
   end
 
-  # OTP's ssl sets `ssl_logger`'s own level when it starts (`ssl_app:start/2`).
+  # OTP's ssl sets `ssl_logger`'s own level when it starts (`ssl_app:start/2`), and
+  # `Cinder.CaptureServerGuard.install/0`, which test/test_helper.exs calls, sets
+  # `logger_backend`'s to `:debug`.
   test "boot sets a module level on gen_smtp's :mimemail alone, at :info" do
-    levels = Enum.reject(:logger.get_module_level(), &match?({:ssl_logger, _}, &1))
+    levels =
+      Enum.reject(
+        :logger.get_module_level(),
+        &(match?({:ssl_logger, _}, &1) or &1 == {:logger_backend, :debug})
+      )
+
     assert levels == [{:mimemail, :info}]
   end
 end
