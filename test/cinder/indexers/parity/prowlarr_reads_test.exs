@@ -46,6 +46,9 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
           %{
             "query" => "Dune 2021",
             "queryType" => "search",
+            "categories" => "2000",
+            "source" => "Prowlarr",
+            "host" => "media.example.com",
             "queryResults" => Keyword.get(opts, :results, "12"),
             "url" => "https://indexer.example/api?t=search&apikey=#{@key}&r=#{@key}",
             "elapsedTime" => "300",
@@ -78,7 +81,18 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
               200,
               page(1, 500, 1200, [
                 entry(9, 3, "2026-11-25T12:30:00Z"),
-                entry(8, 3, "2026-11-25T11:00:00Z", results: "7", data: %{"cached" => "1"})
+                entry(8, 3, "2026-11-25T11:00:00Z",
+                  results: "7",
+                  data: %{
+                    "cached" => "1",
+                    "query" => "",
+                    "queryType" => "tvsearch",
+                    "categories" => "",
+                    "tvdbId" => "76885",
+                    "season" => "1",
+                    "limit" => "100"
+                  }
+                )
               ])
             )
 
@@ -87,7 +101,11 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
               conn,
               200,
               page(2, 500, 1200, [
-                entry(7, 5, "2026-11-25T10:00:00Z", successful: false, results: ""),
+                entry(7, 5, "2026-11-25T10:00:00Z",
+                  successful: false,
+                  results: "",
+                  data: %{"categories" => "2000,5070", "offset" => "100"}
+                ),
                 entry(6, 5, "2026-11-25T09:59:59Z")
               ])
             )
@@ -103,7 +121,13 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
                  date: ~U[2026-11-25 11:00:00Z],
                  successful: true,
                  query_results: 7,
-                 cached: true
+                 cached: true,
+                 query: "",
+                 query_type: "tvsearch",
+                 categories: [],
+                 ids: %{"tvdbId" => "76885", "season" => "1"},
+                 source: "Prowlarr",
+                 paging: %{"limit" => "100"}
                },
                %{
                  id: 7,
@@ -111,7 +135,13 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
                  date: ~U[2026-11-25 10:00:00Z],
                  successful: false,
                  query_results: nil,
-                 cached: false
+                 cached: false,
+                 query: "Dune 2021",
+                 query_type: "search",
+                 categories: [2000, 5070],
+                 ids: %{},
+                 source: "Prowlarr",
+                 paging: %{"offset" => "100"}
                }
              ]
 
@@ -123,6 +153,7 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
 
       refute inspect(entries, limit: :infinity, printable_limit: :infinity) =~ @key
       refute inspect(entries, limit: :infinity, printable_limit: :infinity) =~ "indexer.example"
+      refute inspect(entries, limit: :infinity, printable_limit: :infinity) =~ "media.example.com"
     end
 
     test "stops at the page that reaches totalRecords, and at an empty page" do
@@ -242,7 +273,23 @@ defmodule Cinder.Indexers.Parity.ProwlarrReadsTest do
         update_in(good, ["data"], &Map.delete(&1, "queryResults")),
         put_in(good, ["data", "cached"], "true"),
         put_in(good, ["data", "cached"], 1),
-        update_in(good, ["data"], &Map.delete(&1, "cached"))
+        update_in(good, ["data"], &Map.delete(&1, "cached")),
+        update_in(good, ["data"], &Map.delete(&1, "query")),
+        put_in(good, ["data", "query"], nil),
+        update_in(good, ["data"], &Map.delete(&1, "queryType")),
+        put_in(good, ["data", "queryType"], 2),
+        update_in(good, ["data"], &Map.delete(&1, "categories")),
+        put_in(good, ["data", "categories"], 2000),
+        put_in(good, ["data", "categories"], "2000,"),
+        put_in(good, ["data", "categories"], "2000, 5070"),
+        put_in(good, ["data", "categories"], "movies"),
+        put_in(good, ["data", "tvdbId"], 76_885),
+        put_in(good, ["data", "season"], nil),
+        put_in(good, ["data", "author"], ["Philip K. Dick"]),
+        update_in(good, ["data"], &Map.delete(&1, "source")),
+        put_in(good, ["data", "source"], nil),
+        put_in(good, ["data", "limit"], 100),
+        put_in(good, ["data", "offset"], nil)
       ]
 
       for record <- bad, records <- [[record], [good, record]] do

@@ -536,6 +536,71 @@ defmodule Cinder.Acquisition.IndexerSource.ProwlarrTest do
     assert {:error, :response_too_large} = Prowlarr.search("tt1375666")
   end
 
+  # The parity check reads from `requests/2` which queries a recorded call sent (#1859): each call
+  # sends exactly the requests it lists, in order.
+  test "requests/2 lists the query, type and categories each search callback sends, in order" do
+    parent = self()
+
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      send(parent, {:sent, Map.take(conn.params, ["query", "type", "categories"])})
+      Req.Test.json(conn, [])
+    end)
+
+    calls = [
+      {:search, ["tt0119282"]},
+      {:search_movie, ["tt0119282", "Hercules 1997", [categories: [5070]]]},
+      {:search_tv, [76_885, "Cowboy Bebop", 1]},
+      {:search_tv, [nil, "Cowboy Bebop", 0]},
+      {:search_movie_query, ["Dune 2021", []]},
+      {:search_movie_query, ["Dune", [categories: [5070]]]},
+      {:search_tv_query, ["Cowboy Bebop", [categories: [5070, 5000]]]},
+      {:search_tv_query, ["Cowboy Bebop", []]},
+      {:search_ebook, ["Philip K. Dick", "Beyond {Lies} the Wub", []]},
+      {:search_ebook, [nil, "Beyond Lies the Wub", [categories: [7000]]]},
+      {:search_ebook_query, ["9781775414742", []]},
+      {:search_audiobook, ["Andy Weir", "Project Hail Mary", []]},
+      {:search_audiobook_query, ["Project Hail Mary Andy Weir", []]}
+    ]
+
+    for {callback, args} <- calls do
+      assert {:ok, []} = apply(Prowlarr, callback, args)
+
+      expected =
+        for request <- Prowlarr.requests(callback, args) do
+          params = %{"query" => request.query, "type" => request.type}
+
+          if request.categories == [],
+            do: params,
+            else: Map.put(params, "categories", Enum.join(request.categories, ","))
+        end
+
+      assert expected != []
+      assert drain_sent([]) == expected, "#{callback} #{inspect(args)}"
+    end
+
+    assert Prowlarr.requests(:search_tv, [76_885, "Cowboy Bebop", 1]) == [
+             %{query: "{TvdbId:76885}{Season:1}", type: "tvsearch", categories: []},
+             %{query: "Cowboy Bebop {Season:1}", type: "tvsearch", categories: []}
+           ]
+
+    assert Prowlarr.requests(:search_ebook, ["Philip K. Dick", "Beyond {Lies} the Wub", []]) == [
+             %{
+               query: "{Author:Philip K. Dick} {Title:Beyond Lies the Wub}",
+               type: "book",
+               categories: [7020]
+             }
+           ]
+  end
+
+  # Every `{:sent, params}` in the mailbox, in the order the stub sent them.
+  defp drain_sent(acc) do
+    receive do
+      {:sent, params} -> drain_sent([params | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
+  end
+
   describe "fetch_download/3" do
     # The options a client builds, with the test seams `Cinder.Download.Client.Fetch` reads.
     defp fetch_opts(extra \\ []) do

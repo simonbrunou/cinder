@@ -74,9 +74,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   def audiobook_category, do: @audiobook_category
 
   @impl true
-  def search(imdb_id) do
-    search_query("{ImdbId:#{imdb_id}}", "movie", [])
-  end
+  def search(imdb_id), do: send_one(:search, [imdb_id])
 
   @doc """
   A standard movie search: `search/1` of `imdb_id`, the one request Prowlarr has always sent.
@@ -88,7 +86,7 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
 
   @impl true
   def search_tv(nil, title, season) do
-    case search_query(tv_query(nil, title, season), "tvsearch", []) do
+    case send_one(:search_tv, [nil, title, season]) do
       {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
       {:error, _reason} = error -> error
     end
@@ -101,8 +99,9 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   # Keep per-result provenance so callers can title-guard the free-text half without
   # rejecting AKA-titled releases that genuinely came from the TVDB-scoped query.
   def search_tv(tvdb_id, title, season) do
-    case {search_query(tv_query(tvdb_id, title, season), "tvsearch", []),
-          search_query(tv_query(nil, title, season), "tvsearch", [])} do
+    [by_id, by_title] = requests(:search_tv, [tvdb_id, title, season])
+
+    case {search_query(by_id), search_query(by_title)} do
       {{:ok, by_id}, {:ok, by_title}} ->
         releases =
           tag_query_origin(by_id, :id_scoped) ++ tag_query_origin(by_title, :free_text)
@@ -146,10 +145,10 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   `moviesearch` queries over a month with no results (#1627).
   """
   @impl true
-  def search_movie_query(query, opts), do: search_query(query, "search", movie_categories(opts))
+  def search_movie_query(query, opts), do: send_one(:search_movie_query, [query, opts])
 
   @impl true
-  def search_tv_query(query, opts), do: search_query(query, "tvsearch", opts)
+  def search_tv_query(query, opts), do: send_one(:search_tv_query, [query, opts])
 
   @doc """
   Structured book search (`type=book`).
@@ -165,12 +164,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   rather than free text.
   """
   @impl true
-  def search_ebook(author, title, opts) do
-    case search_query(book_query(author, title), "book", categories(opts)) do
-      {:ok, releases} -> {:ok, tag_query_origin(releases, :id_scoped)}
-      {:error, _reason} = error -> error
-    end
-  end
+  def search_ebook(author, title, opts),
+    do: tagged(send_one(:search_ebook, [author, title, opts]), :id_scoped)
 
   @doc """
   Free-text book search (`type=search`).
@@ -180,12 +175,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   match it against release names as a title string. Results are tagged `:free_text`.
   """
   @impl true
-  def search_ebook_query(query, opts) do
-    case search_query(query, "search", categories(opts)) do
-      {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
-      {:error, _reason} = error -> error
-    end
-  end
+  def search_ebook_query(query, opts),
+    do: tagged(send_one(:search_ebook_query, [query, opts]), :free_text)
 
   @doc """
   Structured audiobook search (`type=book`) — the audiobook sibling of `search_ebook/3`. Reuses
@@ -194,23 +185,67 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
   audio. Results are tagged `:id_scoped`.
   """
   @impl true
-  def search_audiobook(author, title, opts) do
-    case search_query(book_query(author, title), "book", audiobook_categories(opts)) do
-      {:ok, releases} -> {:ok, tag_query_origin(releases, :id_scoped)}
-      {:error, _reason} = error -> error
-    end
-  end
+  def search_audiobook(author, title, opts),
+    do: tagged(send_one(:search_audiobook, [author, title, opts]), :id_scoped)
 
   @doc """
   Free-text audiobook search (`type=search`) — the audiobook sibling of `search_ebook_query/2`.
   Used for the ASIN/ISBN probe and the `"Title Author"` fallback. Results are tagged `:free_text`.
   """
   @impl true
-  def search_audiobook_query(query, opts) do
-    case search_query(query, "search", audiobook_categories(opts)) do
-      {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
-      {:error, _reason} = error -> error
-    end
+  def search_audiobook_query(query, opts),
+    do: tagged(send_one(:search_audiobook_query, [query, opts]), :free_text)
+
+  defp tagged({:ok, releases}, origin), do: {:ok, tag_query_origin(releases, origin)}
+  defp tagged({:error, _reason} = error, _origin), do: error
+
+  @typedoc "One `/api/v1/search` request: its `query`, its `type` and the `categories` it sends."
+  @type request :: %{query: String.t(), type: String.t(), categories: [integer()]}
+
+  @doc """
+  The `/api/v1/search` requests a search callback sends, in order, for `args` as the callback
+  takes them: one each, but two for `search_tv/3` with a TVDB id, the id-scoped one first. Each
+  search function of this module builds its requests from this function and sends no other,
+  none at all inside `restricted/2` when its ids are `[]`, so the parity check
+  (`Cinder.Indexers.Parity`) reads from it which queries a recorded call could have sent.
+  `categories` is `[]` when the request sends none.
+  """
+  @spec requests(atom(), list()) :: [request()]
+  def requests(:search, [imdb_id]), do: [request("{ImdbId:#{imdb_id}}", "movie", [])]
+  def requests(:search_movie, [imdb_id, _query, _opts]), do: requests(:search, [imdb_id])
+
+  def requests(:search_tv, [nil, title, season]),
+    do: [request(tv_query(nil, title, season), "tvsearch", [])]
+
+  def requests(:search_tv, [tvdb_id, title, season]),
+    do: [
+      request(tv_query(tvdb_id, title, season), "tvsearch", []),
+      request(tv_query(nil, title, season), "tvsearch", [])
+    ]
+
+  def requests(:search_movie_query, [query, opts]),
+    do: [request(query, "search", movie_categories(opts))]
+
+  def requests(:search_tv_query, [query, opts]), do: [request(query, "tvsearch", opts)]
+
+  def requests(:search_ebook, [author, title, opts]),
+    do: [request(book_query(author, title), "book", categories(opts))]
+
+  def requests(:search_ebook_query, [query, opts]),
+    do: [request(query, "search", categories(opts))]
+
+  def requests(:search_audiobook, [author, title, opts]),
+    do: [request(book_query(author, title), "book", audiobook_categories(opts))]
+
+  def requests(:search_audiobook_query, [query, opts]),
+    do: [request(query, "search", audiobook_categories(opts))]
+
+  defp request(query, type, opts),
+    do: %{query: query, type: type, categories: Keyword.get(opts, :categories, [])}
+
+  defp send_one(callback, args) do
+    [request] = requests(callback, args)
+    search_query(request)
   end
 
   defp movie_categories(opts), do: Keyword.put_new(opts, :categories, [@movie_category])
@@ -324,10 +359,8 @@ defmodule Cinder.Acquisition.IndexerSource.Prowlarr do
     end
   end
 
-  defp search_query(query, type, opts) do
-    params =
-      [query: query, type: type]
-      |> add_categories(Keyword.get(opts, :categories, []))
+  defp search_query(%{query: query, type: type, categories: categories}) do
+    params = add_categories([query: query, type: type], categories)
 
     case Process.get(@restriction_key) do
       nil -> send_search(params)

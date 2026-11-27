@@ -25,6 +25,7 @@ defmodule Cinder.Indexers.ParityRunTest do
   alias Cinder.Indexers.ParityRun
   alias Cinder.Indexers.ParityRun.{Budget, Corpus, IndexerSet, LinkCheck}
   alias Cinder.Indexers.ProwlarrApi.HTTP
+  alias Cinder.ProwlarrHistoryFixtures
   alias Cinder.Repo
 
   @key "SYNTHETICKEY123"
@@ -162,7 +163,7 @@ defmodule Cinder.Indexers.ParityRunTest do
       added =
         for id <- ids,
             queried?.(params, id),
-            do: entry(id, now, Enum.count(results, &(&1["indexerId"] == id)))
+            do: entry(id, now, Enum.count(results, &(&1["indexerId"] == id)), params)
 
       Agent.update(history, &(added ++ &1))
 
@@ -170,7 +171,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     end)
   end
 
-  defp entry(indexer_id, date, count) do
+  defp entry(indexer_id, date, count, params) do
     %{
       "id" => System.unique_integer([:positive]),
       "indexerId" => indexer_id,
@@ -178,13 +179,28 @@ defmodule Cinder.Indexers.ParityRunTest do
       "downloadId" => nil,
       "successful" => true,
       "eventType" => "indexerQuery",
-      "data" => %{
-        "query" => "q",
-        "queryResults" => Integer.to_string(count),
-        "url" => "https://indexer.example/api?apikey=#{@key}",
-        "cached" => "0"
-      }
+      "data" =>
+        Map.merge(written(params), %{
+          "queryResults" => Integer.to_string(count),
+          "url" => "https://indexer.example/api?apikey=#{@key}",
+          "host" => "cinder.example",
+          "source" => "Prowlarr",
+          "cached" => "0"
+        })
     }
+  end
+
+  # What Prowlarr 3.1's `HistoryService` writes for a search request's `query`, `type` and
+  # `categories` (`Cinder.ProwlarrHistoryFixtures`).
+  defp written(params) do
+    %{"query" => query, "type" => type} = params
+    {term, fields} = ProwlarrHistoryFixtures.written(query, type)
+
+    Map.merge(fields, %{
+      "query" => term,
+      "queryType" => type,
+      "categories" => Map.get(params, "categories", "")
+    })
   end
 
   # Prowlarr's history and status reads: the entries the search stub wrote, and the statuses

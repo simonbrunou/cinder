@@ -205,23 +205,12 @@ defmodule Cinder.Indexers.Parity.Rows do
   @doc """
   The categories Prowlarr's adapter sends with a call (`Cinder.Acquisition.IndexerSource.Prowlarr`):
   none for `search/1` and `search_tv/3`, the call's own `categories` for the free-text and book
-  calls, else that call's default.
+  calls, else that call's default. Each request of a call sends the same ones
+  (`Prowlarr.requests/2`).
   """
   @spec searched_categories(atom(), list()) :: [integer()]
-  def searched_categories(:search_movie_query, [_query, opts]),
-    do: Keyword.get(opts, :categories, [Prowlarr.movie_category()])
-
-  def searched_categories(:search_tv_query, [_query, opts]),
-    do: Keyword.get(opts, :categories, [])
-
-  def searched_categories(callback, args) when callback in [:search_ebook, :search_ebook_query],
-    do: Keyword.get(List.last(args), :categories, [Prowlarr.ebook_category()])
-
-  def searched_categories(callback, args)
-      when callback in [:search_audiobook, :search_audiobook_query],
-      do: Keyword.get(List.last(args), :categories, [Prowlarr.audiobook_category()])
-
-  def searched_categories(_callback, _args), do: []
+  def searched_categories(callback, args),
+    do: callback |> Prowlarr.requests(args) |> hd() |> Map.fetch!(:categories)
 
   defp in_categories(rows, categories) do
     Enum.filter(rows, fn row ->

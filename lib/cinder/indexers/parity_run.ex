@@ -75,15 +75,14 @@ defmodule Cinder.Indexers.ParityRun do
 
   ## Live pollers and Prowlarr's history
 
-  The engine counts each indexer's Prowlarr history entries inside each search's window and
-  cannot tell the run's queries apart from another client's (#1859). Cinder has no switch that
-  pauses its pollers, and this run sets none, so an operator cannot keep them out of a window
-  while Prowlarr is the configured indexer source: a poller's search that reaches Prowlarr
-  meanwhile adds entries to that window, as does any other application searching through the
-  same Prowlarr. The only way is the configured source: every Cinder search reads it
-  (`Cinder.Acquisition.IndexerSource.configured/0`), so while the built-in source is configured,
-  no poller's search reaches Prowlarr. The run itself passes each side's source explicitly and
-  does not read that setting.
+  Prowlarr's history does not tell the run's `/api/v1/search` requests from a live poller's. The
+  engine reads only the entries of each search's window that match a request of the run's calls
+  there (`Cinder.Indexers.Parity.HistoryMatch`, #1859), so a live poller's query, or another
+  application's through the same Prowlarr, counts only when it holds the same request, on an
+  indexer of the run, in that window. Cinder has no switch that pauses its pollers, and this run sets none.
+  To keep every poller's search away from Prowlarr, configure the built-in source: every Cinder
+  search reads the configured source (`Cinder.Acquisition.IndexerSource.configured/0`). The run
+  itself passes each side's source explicitly and does not read that setting.
   """
 
   alias Cinder.Acquisition.{AudiobookRelease, EbookRelease, HouseholdPolicy, Release}

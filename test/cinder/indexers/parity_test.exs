@@ -3,10 +3,11 @@ defmodule Cinder.Indexers.ParityTest do
   use ExUnit.Case, async: true
 
   alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Acquisition.IndexerSource.Report
+  alias Cinder.Acquisition.IndexerSource.{Prowlarr, Report}
   alias Cinder.Catalog.Series
   alias Cinder.Indexers.Parity
   alias Cinder.Indexers.Parity.Picks
+  alias Cinder.ProwlarrHistoryFixtures
 
   @gb 1_000_000_000
   @t0 ~U[2026-11-25 10:00:00Z]
@@ -104,17 +105,55 @@ defmodule Cinder.Indexers.ParityTest do
   defp movie_search(label, tries),
     do: search(label, :movie_title, %{context: movie_context()}, tries)
 
-  # A successful history entry per indexer, inside the Prowlarr side's window.
+  # What Prowlarr's history writes for the movie call's request (`@movie_call`): its term, type,
+  # categories and ids, as `ProwlarrReads.history/3` keeps them.
+  @movie_query %{query: "Dune 2021", query_type: "search", categories: [2000], ids: %{}}
+
+  # A successful history entry per indexer, inside the Prowlarr side's window, of the movie call's
+  # request unless `query:` names the fields of another.
   defp history(pids, opts \\ []) do
     for {pid, n} <- Enum.with_index(pids) do
-      %{
-        id: n + 1,
-        indexer_id: pid,
-        date: Keyword.get(opts, :date, DateTime.add(@t0, 2)),
-        successful: Keyword.get(opts, :successful, true),
-        query_results: 2
-      }
+      Map.merge(
+        %{
+          id: n + 1,
+          indexer_id: pid,
+          date: Keyword.get(opts, :date, DateTime.add(@t0, 2)),
+          successful: Keyword.get(opts, :successful, true),
+          query_results: 2,
+          source: "Prowlarr",
+          paging: %{}
+        },
+        Keyword.get(opts, :query, @movie_query)
+      )
     end
+  end
+
+  # The history entries Prowlarr writes for `calls`, one per request of each call and Prowlarr
+  # indexer of `pids`, with the fields `ProwlarrReads.history/3` keeps
+  # (`Cinder.ProwlarrHistoryFixtures`).
+  defp prowlarr_entries(calls, pids) do
+    entries =
+      for %{callback: callback, args: args} <- calls,
+          request <- Prowlarr.requests(callback, args),
+          pid <- pids,
+          do: Map.put(written(request), :indexer_id, pid)
+
+    for {entry, n} <- Enum.with_index(entries, 1),
+        do:
+          Map.merge(entry, %{
+            id: n,
+            date: DateTime.add(@t0, 2),
+            successful: true,
+            query_results: 1,
+            cached: false,
+            source: "Prowlarr",
+            paging: %{}
+          })
+  end
+
+  defp written(%{query: query, type: type, categories: categories}) do
+    {term, ids} = ProwlarrHistoryFixtures.written(query, type)
+    %{query: term, query_type: type, categories: categories, ids: ids}
   end
 
   defp run(searches, attrs \\ []) do
@@ -281,16 +320,32 @@ defmodule Cinder.Indexers.ParityTest do
       %{id: @bravo, name: "Bravo", kinds: [:season], link_check: :passed}
     ]
 
-    # A search_tv call with a TVDB id sends each indexer two queries.
+    # A search_tv call with a TVDB id sends each indexer two queries: by id (ids 1 and 3), then by
+    # title (2 and 4), each written as Prowlarr's history writes it.
+    by_id = %{query: "", query_type: "tvsearch", ids: %{"tvdbId" => "123", "season" => "1"}}
+    by_title = %{query: "The Office", query_type: "tvsearch", ids: %{"season" => "1"}}
+
     history =
-      for {pid, n} <- [{11, 1}, {11, 2}, {12, 3}, {12, 4}],
-          do: %{
-            id: n,
-            indexer_id: pid,
-            date: DateTime.add(@t0, 2),
-            successful: true,
-            query_results: 1
-          }
+      for {pid, n, query} <- [
+            {11, 1, by_id},
+            {11, 2, by_title},
+            {12, 3, by_id},
+            {12, 4, by_title}
+          ],
+          do:
+            Map.merge(
+              %{
+                id: n,
+                indexer_id: pid,
+                date: DateTime.add(@t0, 2),
+                successful: true,
+                query_results: 1,
+                categories: [],
+                source: "Prowlarr",
+                paging: %{}
+              },
+              query
+            )
 
     {s, indexers, history}
   end
@@ -305,7 +360,65 @@ defmodule Cinder.Indexers.ParityTest do
     p_rows = [office_row(:prowlarr, query_origins: [:free_text])]
     n_rows = [office_row(:native, query_origins: [:free_text])]
     {s, indexers, history} = office_season(p_rows, n_rows)
-    {s, indexers, Enum.reject(history, &(&1.id in [2, 4]))}
+    {s, indexers, Enum.reject(history, &(&1.id in [1, 3]))}
+  end
+
+  # A live poller's anime query on the same Prowlarr indexers, as Prowlarr writes it: it matches
+  # no request of the run's movie call (#1859).
+  @poller_query %{query: "Dragon Ball Z Kai", query_type: "search", categories: [5070], ids: %{}}
+
+  describe "another client's history entries (#1859)" do
+    test "a stray entry opens no cell its indexer's caps exclude, where the run's own entry does" do
+      try =
+        movie_try(
+          [row("Dune.2021.1080p.WEB-DL-AAA", :prowlarr, @alpha)],
+          [row("Dune.2021.1080p.WEB-DL-AAA", :native, @alpha)],
+          native_outcomes: [{@alpha, :asked}, {@bravo, {:not_asked, :caps}}]
+        )
+
+      indexers = [
+        %{id: @alpha, name: "Alpha", kinds: [:movie_title], link_check: :passed},
+        %{id: @bravo, name: "Bravo", kinds: [], link_check: :passed}
+      ]
+
+      compare = fn bravo_query ->
+        history = history([11]) ++ Enum.map(history([12], query: bravo_query), &%{&1 | id: 2})
+        Parity.compare(run([movie_search("Dune", [try])], indexers: indexers, history: history))
+      end
+
+      stray = compare.(@poller_query)
+      assert_line(stray.report, "Bravo (#2) movie_title: not_asked")
+      refute Enum.any?(stray.reasons, &match?({:cell_uncovered, @bravo, _, _}, &1)), stray.report
+      refute_line(stray.report, "history: Bravo (#2)")
+
+      # The control: the run's own query on Bravo is evidence it was asked, and opens the cell.
+      own = compare.(@movie_query)
+      assert_line(own.report, "history: Bravo (#2) 1 queries, 2 results")
+
+      assert {:cell_uncovered, @bravo, :movie_title, {:native_not_asked, :caps}} in own.reasons,
+             own.report
+    end
+
+    test "a stray entry counts toward no cell's asked total, and a failed one fails none" do
+      compare = fn history ->
+        Parity.compare(run([movie_search("Dune", [matching_try()])], history: history))
+      end
+
+      # Alpha's own query left no entry; a poller's did. Bravo's own succeeded, a poller's failed.
+      strays =
+        Enum.map(history([11], query: @poller_query), &%{&1 | id: 3}) ++
+          Enum.map(history([12], query: @poller_query, successful: false), &%{&1 | id: 4})
+
+      result = compare.(Enum.map(history([12]), &%{&1 | id: 2}) ++ strays)
+      assert {:cell_uncovered, @alpha, :movie_title, :prowlarr_not_asked} in result.reasons
+      assert_line(result.report, "Bravo (#2) movie_title: covered")
+      refute_line(result.report, "history: Alpha (#1)")
+      assert_line(result.report, "history: Bravo (#2) 1 queries, 2 results")
+
+      # The control: with Alpha's own entry and no stray, both are covered.
+      control = compare.(history([11, 12]))
+      assert control.verdict == :pass, control.report
+    end
   end
 
   describe "the Prowlarr queries of a search_tv call with a TVDB id" do
@@ -344,6 +457,49 @@ defmodule Cinder.Indexers.ParityTest do
         assert {:cell_uncovered, @alpha, :season, :prowlarr_not_asked} in result.reasons
         assert {:cell_uncovered, @bravo, :season, :prowlarr_not_asked} in result.reasons
       end
+    end
+
+    # #1859: Prowlarr writes one entry per page it fetches, so two entries of the title query do
+    # not stand in for the id query that wrote none.
+    test "each request needs its own entry: two pages of the title query leave the id query unasked" do
+      p_rows = [office_row(:prowlarr, query_origins: [:id_scoped, :free_text])]
+      n_rows = [office_row(:native, query_origins: [:id_scoped, :free_text])]
+      {s, indexers, history} = office_season(p_rows, n_rows)
+      indexers = with_tvdb_search(indexers, %{@alpha => true, @bravo => true})
+
+      # Alpha's id entry (1) gone, its title entry (2) written twice; Bravo's two kept.
+      [title] = Enum.filter(history, &(&1.id == 2))
+      paged = Enum.reject(history, &(&1.id == 1)) ++ [%{title | id: 5}]
+
+      result = Parity.compare(run([s], indexers: indexers, history: paged))
+      assert {:cell_uncovered, @alpha, :season, :prowlarr_not_asked} in result.reasons
+      assert_line(result.report, "Bravo (#2) season: covered")
+    end
+
+    # #1859: Prowlarr's Newznab request generator sets the shared search type to `search` when no
+    # id parameter applies to an indexer, so any indexer's entry of the title query can read so.
+    test "an entry whose search type Prowlarr rewrote to search still matches, and other fields still count" do
+      p_rows = [office_row(:prowlarr, query_origins: [:id_scoped, :free_text])]
+      n_rows = [office_row(:native, query_origins: [:id_scoped, :free_text])]
+      {s, indexers, history} = office_season(p_rows, n_rows)
+      indexers = with_tvdb_search(indexers, %{@alpha => true, @bravo => true})
+
+      rewritten =
+        Enum.map(history, fn entry ->
+          if entry.query == "The Office", do: %{entry | query_type: "search"}, else: entry
+        end)
+
+      result = Parity.compare(run([s], indexers: indexers, history: rewritten))
+      assert_line(result.report, "Alpha (#1) season: covered")
+      assert_line(result.report, "Bravo (#2) season: covered")
+
+      # The control: the same entries of another season match no request of the search.
+      other_season =
+        Enum.map(rewritten, &%{&1 | ids: Map.put(&1.ids, "season", "2")})
+
+      result = Parity.compare(run([s], indexers: indexers, history: other_season))
+      assert {:cell_uncovered, @alpha, :season, :prowlarr_not_asked} in result.reasons
+      assert {:cell_uncovered, @bravo, :season, :prowlarr_not_asked} in result.reasons
     end
   end
 
@@ -642,13 +798,15 @@ defmodule Cinder.Indexers.ParityTest do
       history =
         history([11], successful: false) ++
           [
-            %{
+            Map.merge(@movie_query, %{
               id: 9,
               indexer_id: 12,
               date: DateTime.add(@t0, 2),
               successful: true,
-              query_results: 0
-            }
+              query_results: 0,
+              source: "Prowlarr",
+              paging: %{}
+            })
           ]
 
       result = Parity.compare(run([movie_search("Dune", [try])], history: history))
@@ -790,9 +948,7 @@ defmodule Cinder.Indexers.ParityTest do
         %{id: @bravo, name: "Bravo", kinds: [], link_check: :passed}
       ]
 
-      history = [
-        %{id: 1, indexer_id: 11, date: DateTime.add(@t0, 2), successful: true, query_results: 1}
-      ]
+      history = history([11])
 
       result =
         Parity.compare(run([movie_search("Dune", [try])], indexers: indexers, history: history))
@@ -835,7 +991,13 @@ defmodule Cinder.Indexers.ParityTest do
               indexer_id: pid,
               date: DateTime.add(@t0, 102),
               successful: true,
-              query_results: 1
+              query_results: 1,
+              query: "",
+              query_type: "movie",
+              categories: [],
+              ids: %{"imdbId" => "tt1160419"},
+              source: "Prowlarr",
+              paging: %{}
             }
 
       Parity.compare(
@@ -1248,16 +1410,7 @@ defmodule Cinder.Indexers.ParityTest do
     # Alpha's Prowlarr query failed in history, so Alpha is not covered; its Prowlarr row is the
     # pooled pick there.
     defp uncovered_alpha_history,
-      do: [
-        %{
-          id: 1,
-          indexer_id: 11,
-          date: DateTime.add(@t0, 2),
-          successful: false,
-          query_results: nil
-        },
-        %{id: 2, indexer_id: 12, date: DateTime.add(@t0, 2), successful: true, query_results: 1}
-      ]
+      do: history([11], successful: false) ++ Enum.map(history([12]), &%{&1 | id: 2})
 
     test "a pooled difference that goes without the uncovered indexers makes the search inconclusive" do
       try =
@@ -1494,17 +1647,8 @@ defmodule Cinder.Indexers.ParityTest do
         for {id, name} <- [{@alpha, "Alpha"}, {@bravo, "Bravo"}],
             do: %{id: id, name: name, kinds: [kind], link_check: :passed}
 
-      # Four queries an indexer: as many as any of these callers sends it in one try.
-      history =
-        for {pid, n} <- Enum.with_index(List.duplicate(11, 4) ++ List.duplicate(12, 4), 1),
-            do: %{
-              id: n,
-              indexer_id: pid,
-              date: DateTime.add(@t0, 2),
-              successful: true,
-              query_results: 1,
-              cached: false
-            }
+      # Each query of each try's Prowlarr side, written for both indexers.
+      history = prowlarr_entries(Enum.flat_map(tries, & &1.prowlarr.calls), [11, 12])
 
       search = search("#{kind}", kind, kind_case(kind).target, tries, opts)
       {Parity.compare(run([search], indexers: indexers, history: history)), search}
@@ -1605,6 +1749,55 @@ defmodule Cinder.Indexers.ParityTest do
       assert p_top != n_top
       assert result.verdict == :fail, result.report
       assert_line(result.report, "confirmed difference: pick of Alpha (#1) alone")
+    end
+
+    # #1859: an indexer whose caps lack book-search is asked the free-text query alone, on both
+    # sides, so the structured request needs no entry of its own.
+    test "ebook: an indexer Native did not ask in the structured call needs no entry of that call" do
+      [{structured, s_args}, {free_text, f_args}] = kind_case(:ebook).calls
+      [_a, b] = Tuple.to_list(kind_case(:ebook).titles)
+      p_rows = kind_rows(:ebook, :prowlarr, [{b, @bravo}])
+      n_rows = kind_rows(:ebook, :native, [{b, @bravo}])
+      skipped = native_report([{@alpha, {:not_asked, :caps}}, {@bravo, :asked}])
+      asked = native_report([{@alpha, :asked}, {@bravo, :asked}])
+      later = DateTime.add(@t0, 30)
+
+      try = %{
+        prowlarr:
+          side([call(structured, s_args, {:ok, p_rows}), call(free_text, f_args, {:ok, []})], []),
+        native:
+          side(
+            [
+              call(structured, s_args, {:ok, n_rows, skipped}, later),
+              call(free_text, f_args, {:ok, [], asked}, later)
+            ],
+            []
+          )
+      }
+
+      indexers =
+        for {id, name} <- [{@alpha, "Alpha"}, {@bravo, "Bravo"}],
+            do: %{id: id, name: name, kinds: [:ebook], link_check: :passed}
+
+      # Prowlarr wrote no structured entry for Alpha either.
+      history =
+        try.prowlarr.calls
+        |> prowlarr_entries([11, 12])
+        |> Enum.reject(&(&1.indexer_id == 11 and &1.query_type == "book"))
+
+      compare = fn history ->
+        s = search("ebook", :ebook, kind_case(:ebook).target, [try])
+        Parity.compare(run([s], indexers: indexers, history: history))
+      end
+
+      result = compare.(history)
+      assert_line(result.report, "Alpha (#1) ebook: covered")
+      assert_line(result.report, "Bravo (#2) ebook: covered")
+
+      # The control: Bravo, asked in both calls, needs an entry of each.
+      result = compare.(Enum.reject(history, &(&1.query_type == "book")))
+      assert_line(result.report, "Alpha (#1) ebook: covered")
+      assert {:cell_uncovered, @bravo, :ebook, :prowlarr_not_asked} in result.reasons
     end
 
     test "anime_episodes: a group wait is compared by its episodes and its end" do

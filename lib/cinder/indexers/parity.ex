@@ -52,21 +52,28 @@ defmodule Cinder.Indexers.Parity do
     them, and Native's asks them by the "Title Year" text (#1632). An indexer with `:movie_imdb`
     that answers with free-text rows then shows as a difference, and so do the id-scoped rows of
     an indexer that `kinds` lists without it.
+  - **The run's history entries** (#1859). Prowlarr's history does not tell the run's
+    `/api/v1/search` requests from a live poller's, so every rule below reads only the entries
+    of a try's Prowlarr window, from the Prowlarr side's first call to 5 s after it finished,
+    that match a request one of that side's calls lists
+    (`Cinder.Indexers.Parity.HistoryMatch`: the same term, ids and categories, and the same
+    search type or `search`). The match does not check which indexers a call was restricted to.
+    An entry another client wrote, such as a live poller's, opens no cell and counts toward none,
+    unless it holds the same request as one of those calls, on an indexer of the run.
   - **Coverage** (point 13, amendment change 2), per search and indexer: covered when Native's
-    report says `:asked` and Prowlarr's history holds, inside the window from the Prowlarr side's
-    first call to 5 s after it finished, at least one successful entry per query that search
-    sent the indexer (one per call Native asked it in; for a `search_tv/3` call with a TVDB id,
-    one when `tvdb_search` is `false`, since Prowlarr skips the id-scoped query of an indexer
-    whose caps lack `tvdbid` (#1933), else two), no failed entry, no entry Prowlarr answered
-    from its cache (a retry of the same search inside its cache time gets one), no Prowlarr call
-    errored, and no status read shows a Prowlarr backoff that overlaps the window. A cell, one
-    indexer and one kind, exists for each kind in `kinds`, and for a kind where the indexer left
-    evidence it was asked (a history entry, or a Native outcome other than
-    `{:not_asked, :caps}`; for `:movie_imdb` an id-scoped
-    Native row). It is covered when at least one search of its kind ran and the indexer was
-    covered in each. A cell whose kind has no search is uncovered, unless the kind is undrawn:
-    it is then not asked, for no candidate in the library, and keeps no verdict from pass.
-    Every other indexer and kind is listed apart, not asked.
+    report says `:asked` and the run's history entries hold a successful one for each request
+    that search sent the indexer (those of each call Native asked it in,
+    `Cinder.Acquisition.IndexerSource.Prowlarr.requests/2`, but not a TV request with a TVDB id
+    when `tvdb_search` is `false`, since Prowlarr skips it for an indexer whose caps lack
+    `tvdbid` (#1933)), no failed entry, no entry Prowlarr answered from its cache (a retry of the
+    same search inside its cache time gets one), no Prowlarr call errored, and no status read
+    shows a Prowlarr backoff that overlaps the window. A cell, one indexer and one kind, exists
+    for each kind in `kinds`, and for a kind where the indexer left evidence it was asked (one of
+    the run's history entries, or a Native outcome other than `{:not_asked, :caps}`; for
+    `:movie_imdb` an id-scoped Native row). It is covered when at least one search of its kind
+    ran and the indexer was covered in each. A cell whose kind has no search is uncovered, unless
+    the kind is undrawn: it is then not asked, for no candidate in the library, and keeps no
+    verdict from pass. Every other indexer and kind is listed apart, not asked.
   - **Stops** (point 7). A budget or 429 stop in any try of a search makes that indexer
     inconclusive in that search and every later one.
   - **Rows** (point 11). Per aligned seam call and covered indexer, the multisets of
@@ -108,7 +115,7 @@ defmodule Cinder.Indexers.Parity do
   """
 
   alias Cinder.Acquisition.IndexerSource.Report
-  alias Cinder.Indexers.Parity.{Picks, Rows, Text}
+  alias Cinder.Indexers.Parity.{HistoryMatch, Picks, Rows, Text}
 
   # How long past a Prowlarr side's end a history entry still counts: `HistoryService` writes it
   # from an async handler after the answer, on Prowlarr's clock.
@@ -230,7 +237,7 @@ defmodule Cinder.Indexers.Parity do
         {cid, cid_status(cid, search, index, try, native_report, window, ctx)}
       end)
 
-    history_counts = history_counts(ctx, window)
+    history_counts = history_counts(ctx, try)
 
     base = %{
       cut: cut,
@@ -334,7 +341,7 @@ defmodule Cinder.Indexers.Parity do
   defp outcome_tag(reason) when is_tuple(reason), do: elem(reason, 0)
 
   defp prowlarr_asked(cid, [pid], try, window, ctx) do
-    entries = entries_in(ctx.history, [pid], window)
+    entries = run_entries(ctx, [pid], try)
 
     cond do
       Enum.any?(try.prowlarr.calls, &(Rows.rows(&1.outcome) == nil)) ->
@@ -346,7 +353,7 @@ defmodule Cinder.Indexers.Parity do
       Enum.any?(entries, &Map.get(&1, :cached, false)) ->
         {:uncovered, :prowlarr_cached}
 
-      Enum.count(entries) < expected_queries(cid, ctx, try) ->
+      unanswered?(expected_requests(cid, ctx, try), entries) ->
         {:uncovered, :prowlarr_not_asked}
 
       backoff?(ctx.statuses, pid, window) ->
@@ -355,6 +362,17 @@ defmodule Cinder.Indexers.Parity do
       true ->
         :ok
     end
+  end
+
+  # The history entries of the Prowlarr indexers `pids` in a try's Prowlarr window that match a
+  # request the try's Prowlarr side sent (`HistoryMatch`, #1859): another client's query in the
+  # window, a live poller's included, is left out.
+  defp run_entries(ctx, pids, try) do
+    sent = Enum.flat_map(try.prowlarr.calls, &HistoryMatch.expected_of_call/1)
+
+    ctx.history
+    |> entries_in(pids, prowlarr_window(try.prowlarr))
+    |> Enum.filter(fn entry -> Enum.any?(sent, &HistoryMatch.matches?(entry, &1)) end)
   end
 
   defp entries_in(_history, _pids, nil), do: []
@@ -366,25 +384,25 @@ defmodule Cinder.Indexers.Parity do
     end)
   end
 
-  # The queries Prowlarr sent the indexer in this search: one per call Native asked it in, and
-  # for a TV search with a TVDB id one per query of
-  # `Cinder.Acquisition.IndexerSource.Prowlarr.search_tv/3` that Prowlarr sends the indexer. It
-  # skips the id-scoped one, with no history entry, for an indexer whose caps lack `tvdbid`
-  # (#1933): `tvdb_search: false`. Two when `tvdb_search` is `true`, `nil` or missing.
-  defp expected_queries(cid, ctx, try) do
-    tv_queries = if ctx.indexers[cid][:tvdb_search] == false, do: 1, else: 2
+  # The requests Prowlarr sent the indexer in this search: those of each call Native asked it in
+  # (`Cinder.Acquisition.IndexerSource.Prowlarr.requests/2`). `native_asked/2` passed, so there
+  # is at least one. Prowlarr skips a TV request with a TVDB id, with no history entry, for an
+  # indexer whose caps lack `tvdbid` (#1933): `tvdb_search: false` leaves it out.
+  defp expected_requests(cid, ctx, try) do
+    skips_tvdb? = ctx.indexers[cid][:tvdb_search] == false
 
     try.native.calls
     |> Enum.filter(
       &match?(%{outcome: :asked}, Map.get(Rows.report(&1.outcome).indexers, {"native", cid}))
     )
-    |> Enum.map(fn
-      %{callback: :search_tv, args: [tvdb_id | _]} when not is_nil(tvdb_id) -> tv_queries
-      _call -> 1
-    end)
-    |> Enum.sum()
-    |> max(1)
+    |> Enum.flat_map(&HistoryMatch.expected_of_call/1)
+    |> Enum.reject(&(skips_tvdb? and Map.has_key?(&1.ids, "tvdbId")))
   end
+
+  # A request with no matching entry. One request can write several entries, one per page
+  # Prowlarr fetches, so the entries are matched per request, never counted.
+  defp unanswered?(requests, entries),
+    do: not Enum.all?(requests, fn r -> Enum.any?(entries, &HistoryMatch.matches?(&1, r)) end)
 
   defp backoff?(_statuses, _pid, nil), do: false
 
@@ -399,9 +417,9 @@ defmodule Cinder.Indexers.Parity do
   defp after_window?(%DateTime{} = failure, to), do: DateTime.after?(failure, to)
   defp after_window?(_none, _to), do: false
 
-  defp history_counts(ctx, window) do
+  defp history_counts(ctx, try) do
     Map.new(ctx.cids, fn cid ->
-      entries = entries_in(ctx.history, Map.get(ctx.pids_by_cid, cid, []), window)
+      entries = run_entries(ctx, Map.get(ctx.pids_by_cid, cid, []), try)
       {cid, {length(entries), entries |> Enum.map(&(&1.query_results || 0)) |> Enum.sum()}}
     end)
   end
@@ -436,10 +454,7 @@ defmodule Cinder.Indexers.Parity do
           do: outcome
 
     Enum.any?(outcomes, &(&1 != {:not_asked, :caps})) or
-      Enum.any?(
-        search.tries,
-        &(entries_in(ctx.history, pids, prowlarr_window(&1.prowlarr)) != [])
-      )
+      Enum.any?(search.tries, &(run_entries(ctx, pids, &1) != []))
   end
 
   # Each indexer's cells: `{cid, kind} => status`, and the kinds it was not asked in.
