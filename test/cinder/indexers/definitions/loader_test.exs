@@ -200,9 +200,10 @@ defmodule Cinder.Indexers.Definitions.LoaderTest do
     # #1677's filters and static pattern check, revision 4 Cardigann slice (a) (#1671), revision
     # 5 the grab's download block (#1672), revision 6 the JSON and XML answers, the charsets and
     # the pinned certificates (#1678), revision 7 the remaining search and download keys (#1679),
-    # revision 8 the post, get, form and cookie logins (#1680).
-    test "fingerprint/0 declares schema version 12 and revision 8" do
-      assert Loader.fingerprint() == %{schema_version: 12, revision: 8}
+    # revision 8 the post, get, form and cookie logins (#1680), revision 9 each copy's display name
+    # (#1676).
+    test "fingerprint/0 declares schema version 12 and revision 9" do
+      assert Loader.fingerprint() == %{schema_version: 12, revision: 9}
     end
 
     # #1679's acceptance: every key the slice lifts, in one HTML definition, loads with no code,

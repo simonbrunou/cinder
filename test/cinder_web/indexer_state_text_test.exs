@@ -55,9 +55,12 @@ defmodule CinderWeb.IndexerStateTextTest do
       assert IndexerStateText.cause(:something_new) == "Failed"
     end
 
-    # #1671 adds these codes and #1676 their texts: until then each reads the fallback.
-    test "the Cardigann failure reasons read the fallback until #1676 words them" do
-      for reason <- @cardigann_reasons, do: assert(IndexerStateText.cause(reason) == "Failed")
+    # #1671 adds these codes and #1676 their texts (`CinderWeb.DefinitionText.failure/1`).
+    test "each Cardigann failure reason has its own words" do
+      causes = Enum.map(@cardigann_reasons, &IndexerStateText.cause/1)
+      refute "Failed" in causes
+      assert length(Enum.uniq(causes)) == length(@cardigann_reasons)
+      assert IndexerStateText.cause(:secret_host) =~ "credential"
     end
 
     test "HTTP 410 and 404 name their Prowlarr cause" do

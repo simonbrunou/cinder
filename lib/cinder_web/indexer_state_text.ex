@@ -12,11 +12,13 @@ defmodule CinderWeb.IndexerStateText do
   """
   use Gettext, backend: CinderWeb.Gettext
 
-  alias CinderWeb.LiveHelpers
+  alias CinderWeb.{DefinitionText, LiveHelpers}
 
   @doc """
-  The detail line of an indexer in `state`, judged at `now`, or nil for a state it does not word
-  yet, such as one #1668 adds before #1676 words it.
+  The detail line of an indexer in `state`, judged at `now`, or nil for a state it does not word.
+  A held definition update, a definition removed or replaced upstream and a running copy that no
+  longer loads word their definition code (#1676); a held update's reason comes from
+  `CinderWeb.DefinitionText.hold_reason/1`.
   """
   @spec detail(term(), DateTime.t() | nil) :: String.t() | nil
   def detail(state, now)
@@ -82,6 +84,17 @@ defmodule CinderWeb.IndexerStateText do
   def detail({:not_supported, feature}, _now),
     do: gettext("Not supported: %{feature}", feature: feature(feature))
 
+  def detail({:definition_no_longer_loads, _reason}, _now),
+    do: gettext("Running copy no longer loads on this build")
+
+  def detail({:definition_update_held, reason, _at}, _now),
+    do: gettext("Definition update held: %{reason}", reason: DefinitionText.hold_reason(reason))
+
+  def detail({:removed_upstream, _at}, _now), do: gettext("Removed upstream")
+
+  def detail({:replaced_by, name, _at}, _now) when is_binary(name),
+    do: gettext("Replaced by %{name}", name: name)
+
   def detail(:undecryptable, _now), do: gettext("Credentials can't be decrypted: re-enter them")
   def detail(:disabled, _now), do: gettext("Disabled")
   def detail(_state, _now), do: nil
@@ -107,6 +120,7 @@ defmodule CinderWeb.IndexerStateText do
   @spec test_outcome(term()) :: String.t()
   def test_outcome(:success), do: gettext("worked")
   def test_outcome(:limit), do: gettext("limit reached")
+  def test_outcome(:no_rows), do: gettext("no result on the Test page")
   def test_outcome(outcome), do: cause(outcome)
 
   @doc """
@@ -160,27 +174,18 @@ defmodule CinderWeb.IndexerStateText do
   def cause({:http_status, status}), do: gettext("HTTP %{status}", status: status)
   def cause({:indexer_error, code}), do: gettext("Indexer error %{code}", code: code)
   def cause({:query_error, code}), do: gettext("Query refused (code %{code})", code: code)
-  def cause(_other), do: gettext("Failed")
+  def cause(other), do: DefinitionText.failure(other) || gettext("Failed")
 
   defp failures(count),
     do: ngettext("%{count} failure in a row", "%{count} failures in a row", count)
 
   @doc """
   The name of a feature code, as "Not supported: %{feature}" shows it: an indexer state's, and
-  a definition load result's in the Prowlarr import (`CinderWeb.ProwlarrImportText`).
+  a definition load result's in the Prowlarr import (`CinderWeb.ProwlarrImportText`). The words
+  come from `CinderWeb.DefinitionText.feature/1`.
   """
   @spec feature(term()) :: String.t()
-  def feature(:flaresolverr), do: "FlareSolverr"
-  def feature(:newznab), do: "Newznab"
-  def feature(:torznab), do: "Torznab"
-  def feature(:cardigann), do: "Cardigann"
-  def feature(feature) when is_atom(feature), do: Atom.to_string(feature)
-
-  # A load result's code that names its kind and the one it uses, such as `{:login, "form"}`.
-  def feature({kind, used}) when is_atom(kind) and (is_atom(used) or is_binary(used)),
-    do: "#{feature(kind)} #{used}"
-
-  def feature(feature), do: inspect(feature)
+  def feature(feature), do: DefinitionText.feature(feature)
 
   # "at 14:35", or "on Nov 27 at 14:35" when the instant falls on another household day.
   defp at_phrase(datetime, now) do

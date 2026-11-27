@@ -12,7 +12,7 @@ defmodule CinderWeb.IndexersComponent do
   form's payload never holds an indexer field and `FormState` (`assets/js/form_state.js`), which
   skips buttons, restores nothing onto them. The enable control is a `role="switch"` button.
 
-  "Add indexer" and each Newznab or Torznab row's Edit open a dialog (#1661), rendered with
+  "Add indexer" and each row's Edit open a dialog (#1661), rendered with
   `<.portal>` to `body`, so its form is never inside the host form. Add's step 1 searches the
   types by name and description; step 2, and Edit, render the form of `CinderWeb.IndexerDialog`,
   which keeps the typed non-secret values across re-renders and saves through `Cinder.Indexers`.
@@ -23,6 +23,25 @@ defmodule CinderWeb.IndexersComponent do
   runs, the save starts none. A refused save moves focus to the first field it refused. Each
   dialog wraps focus, closes on Escape, and gives focus back to the button that opened it when it
   goes, or to "Add indexer" once the edited indexer's row is gone.
+
+  Cardigann sites (#1676) come from the definitions mirror (`Cinder.Indexers.Definitions`). Add's
+  step 1 lists them after Newznab and Torznab, read when the dialog opens: a site whose copy loads
+  opens the Cardigann form of `CinderWeb.CardigannDialog`, one that reads not supported, fails or
+  is not checked yet is greyed with no click, and with no set loaded the list says so. A
+  Cardigann row's Edit opens the same form on the copy it runs. A row whose pin holds an update
+  for a credential rule offers Accept update, whose confirm names the held copy's reason and new
+  credential hosts and sends the hash it showed. It reads `Definitions.indexer_actions/0`, not
+  the row's code, so a disabled row or one whose running copy reads red offers it too, and it
+  gives focus back to the row's Edit. Test is disabled for a row whose running copy reads not
+  supported or no longer loads. The parts render through `CinderWeb.CardigannComponents`.
+
+  The definitions line under the table shows the set state (`Definitions.set_state/1`), the last
+  check and Update now, which calls `Definitions.Updater.update_now/1` and is disabled with a
+  spinner while a run is in progress (`Updater.running?/1`). The host subscribes to
+  `Updater.topic/0` before the first render and forwards each run's end with
+  `send_update(CinderWeb.IndexersComponent, id: id, definitions_update: outcome)`; the line, the
+  rows and an open add list read the store again, and the line says how the run ended. Accept
+  smaller set reads the refused commit from the store, accepts it and starts a run.
 
   "Import from Prowlarr" opens the import dialog (#1674) in the same portal, wider: its state is
   a `CinderWeb.ProwlarrImportDialog`, its content `CinderWeb.ProwlarrImportComponents`. Opening
@@ -76,11 +95,17 @@ defmodule CinderWeb.IndexersComponent do
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, TestRunner}
   alias Cinder.Indexers
-  alias CinderWeb.{IndexerDialog, IndexerStateText, ProwlarrImportDialog}
+  alias Cinder.Indexers.Definitions
+  alias Cinder.Indexers.Definitions.{Hold, Updater}
+  alias CinderWeb.{CardigannDialog, DefinitionText, IndexerDialog, IndexerStateText}
+  alias CinderWeb.ProwlarrImportDialog
+
+  import CinderWeb.CardigannComponents,
+    only: [accept_step: 1, cardigann_form: 1, definition_entries: 1, definitions_line: 1]
 
   import CinderWeb.ProwlarrImportComponents, only: [import_step: 1]
 
-  # The types the Add and Edit dialogs handle; Cardigann's form comes with #1676.
+  # The generic types of the add list; its Cardigann sites come from the definitions mirror.
   @kinds [:newznab, :torznab]
 
   @impl true
@@ -92,6 +117,17 @@ defmodule CinderWeb.IndexersComponent do
 
   def update(%{refresh: true}, socket), do: {:ok, socket |> load_rows() |> notify_host()}
 
+  # The end of a definitions update run (`Updater.subscribe/0`, forwarded by the host): the
+  # line, the rows' definition codes and an open add list read the store again.
+  def update(%{definitions_update: outcome}, socket) do
+    {:ok,
+     socket
+     |> load_definitions(DefinitionText.run_outcome(outcome))
+     |> load_rows()
+     |> refresh_picker()
+     |> notify_host()}
+  end
+
   def update(assigns, socket) do
     socket = assign(socket, assigns)
 
@@ -101,6 +137,7 @@ defmodule CinderWeb.IndexersComponent do
         {:ok,
          socket
          |> assign(notice: nil, dialog: nil, opener: nil, testing: TestRunner.running())
+         |> load_definitions(nil)
          |> load_rows()}
   end
 
@@ -143,8 +180,13 @@ defmodule CinderWeb.IndexersComponent do
   # states: a write between the two reads leaves a row's version older than its state, and its
   # next save is refused as stale. `:disabled` wins over `:undecryptable` in the state, so the
   # Test button and the detail read `secrets_readable` themselves.
+  # A Cardigann row's definition code (`Definitions.indexer_codes/0`) and its held update
+  # (`Definitions.indexer_actions/0`) come apart from the state, so a disabled row, whose state
+  # is `:disabled`, still offers Accept update.
   defp load_rows(socket) do
     stored = Map.new(Indexers.list(), &{&1.id, &1})
+    codes = Definitions.indexer_codes()
+    actions = Definitions.indexer_actions()
     now = Native.now()
 
     rows =
@@ -153,7 +195,9 @@ defmodule CinderWeb.IndexersComponent do
 
         Map.merge(entry, %{
           lock_version: row && row.lock_version,
-          secrets_readable: entry.state != :undecryptable and row != nil and row.secrets_readable
+          secrets_readable: entry.state != :undecryptable and row != nil and row.secrets_readable,
+          definition_code: Map.get(codes, entry.id),
+          definition_actions: Map.get(actions, entry.id, %{held: nil})
         })
       end
 
@@ -164,6 +208,31 @@ defmodule CinderWeb.IndexersComponent do
   end
 
   defp only_source?, do: IndexerSource.configured() == Native
+
+  # The definitions line: the set state, the last check, whether a run is in progress, and the
+  # words of the last run's end, kept until the next one.
+  defp load_definitions(socket, notice) do
+    now = Native.now()
+
+    line = %{
+      state: Definitions.set_state(now),
+      checked_at: Definitions.last_checked_at(),
+      running?: Updater.running?(),
+      now: now,
+      notice: notice || (socket.assigns[:definitions] && socket.assigns.definitions.notice)
+    }
+
+    assign(socket, definitions: line)
+  end
+
+  defp picker do
+    if Definitions.loaded(), do: Definitions.picker(), else: :not_loaded
+  end
+
+  defp refresh_picker(%{assigns: %{dialog: %{step: :pick}}} = socket),
+    do: assign(socket, dialog: %{socket.assigns.dialog | picker: picker()})
+
+  defp refresh_picker(socket), do: socket
 
   # A reset replaces every row's element, and the focus on a switch or a Delete goes with it, so
   # rows that keep their order are patched in place: a gone row is deleted, a kept row is
@@ -202,6 +271,7 @@ defmodule CinderWeb.IndexersComponent do
       last_test_line: row.last_test && IndexerStateText.last_test(row.last_test, now),
       testing?: MapSet.member?(testing, row.id),
       testable?: testable?(row, testing),
+      accept?: acceptable?(row.definition_actions),
       confirm: delete_confirm(row, rows, only_source?),
       focus_after_delete: focus_after_delete(row, rows)
     })
@@ -247,7 +317,49 @@ defmodule CinderWeb.IndexersComponent do
   end
 
   def handle_event("open_add", _params, socket),
-    do: {:noreply, assign(socket, dialog: %{step: :pick, query: ""}, opener: "indexers-add")}
+    do:
+      {:noreply,
+       assign(socket,
+         dialog: %{step: :pick, query: "", picker: picker()},
+         opener: "indexers-add"
+       )}
+
+  # The file name is client-controlled: only a site of the list read when the dialog opened,
+  # whose copy loads, opens a form, on the copy the mirror holds now.
+  def handle_event(
+        "pick_definition",
+        %{"name" => name},
+        %{assigns: %{dialog: %{step: :pick}}} = socket
+      )
+      when is_binary(name) do
+    with picker when is_list(picker) <- socket.assigns.dialog.picker,
+         %{result: :loads} <- Enum.find(picker, &(&1.name == name)),
+         {:in_mirror, %{definition: %{}, result: :loads} = copy} <- Definitions.import_copy(name) do
+      {:noreply, assign(socket, dialog: CardigannDialog.add(name, copy))}
+    else
+      _other -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("update_definitions", _params, socket) do
+    if socket.assigns.definitions.running?,
+      do: {:noreply, socket},
+      else: {:noreply, start_update(socket, nil)}
+  end
+
+  # The commit comes from the stored refusal, never from the page.
+  def handle_event("accept_smaller_set", _params, socket) do
+    case Definitions.set_state(Native.now()) do
+      {kind, %{commit: commit}} when kind in [:shrank, :first_too_small] ->
+        :ok = accept_smaller(commit)
+
+        {:noreply,
+         start_update(socket, gettext("Smaller set accepted: updating the definitions."))}
+
+      _other ->
+        {:noreply, load_definitions(socket, nil)}
+    end
+  end
 
   def handle_event("search", %{"query" => query}, %{assigns: %{dialog: %{step: :pick}}} = socket)
       when is_binary(query),
@@ -280,7 +392,7 @@ defmodule CinderWeb.IndexersComponent do
       do: import_submit(socket, params)
 
   def handle_event("back", _params, %{assigns: %{dialog: %{mode: :add}}} = socket),
-    do: {:noreply, assign(socket, dialog: %{step: :pick, query: ""})}
+    do: {:noreply, assign(socket, dialog: %{step: :pick, query: "", picker: picker()})}
 
   def handle_event("close", _params, %{assigns: %{dialog: %{deleted?: true}}} = socket),
     do: {:noreply, socket |> close_dialog("indexers-add") |> load_rows()}
@@ -290,6 +402,10 @@ defmodule CinderWeb.IndexersComponent do
 
   def handle_event("open_edit", %{"id" => raw}, socket) do
     case find_row(socket, raw) do
+      %{type: :cardigann} = row ->
+        {:noreply,
+         assign(socket, dialog: CardigannDialog.edit(row.id), opener: "indexer-#{row.id}-edit")}
+
       %{type: type} = row when type in @kinds ->
         {:noreply,
          assign(socket, dialog: IndexerDialog.edit(row.id), opener: "indexer-#{row.id}-edit")}
@@ -298,6 +414,35 @@ defmodule CinderWeb.IndexersComponent do
         {:noreply, socket}
     end
   end
+
+  # Accept update gives focus back to the row's Edit when it closes: its own button goes once
+  # it succeeds.
+  def handle_event("open_accept", %{"id" => raw}, socket) do
+    with %{} = row <- find_row(socket, raw),
+         true <- acceptable?(row.definition_actions) do
+      {:noreply,
+       assign(socket, dialog: accept_dialog(row, false), opener: "indexer-#{row.id}-edit")}
+    else
+      _other -> {:noreply, socket}
+    end
+  end
+
+  # Only while the confirm shows a held copy: a refusal clears it, and a click queued behind that
+  # refusal falls to the catch-all.
+  def handle_event(
+        "accept_update",
+        _params,
+        %{assigns: %{dialog: %{step: :accept, held: %{blob_sha: _sha}}}} = socket
+      ),
+      do: accept_update(socket)
+
+  def handle_event(
+        "change",
+        params,
+        %{assigns: %{dialog: %{step: :form, type: :cardigann}}} = socket
+      ),
+      do:
+        {:noreply, assign(socket, dialog: CardigannDialog.change(socket.assigns.dialog, params))}
 
   def handle_event("change", params, %{assigns: %{dialog: %{step: :form}}} = socket),
     do: {:noreply, assign(socket, dialog: IndexerDialog.change(socket.assigns.dialog, params))}
@@ -329,7 +474,7 @@ defmodule CinderWeb.IndexersComponent do
   # A refused save sends focus to the first field it refused, in the form's order, as a refused
   # save of the settings form does; a refusal shown above the fields moves none.
   defp focus_refusal(socket, dialog) do
-    case Enum.find(IndexerDialog.field_ids(dialog), fn {field, _id} -> dialog.errors[field] end) do
+    case Enum.find(field_ids(dialog), fn {field, _id} -> dialog.errors[field] end) do
       {_field, id} -> push_event(socket, "focus-invalid", %{id: id})
       nil -> socket
     end
@@ -340,10 +485,11 @@ defmodule CinderWeb.IndexersComponent do
   # `config_version`: `start_test/1` says when it starts none.
   defp save(socket, params) do
     dialog = socket.assigns.dialog
+    form = form_module(dialog)
 
-    case IndexerDialog.save(dialog, socket.assigns.actor, params) do
+    case form.save(dialog, socket.assigns.actor, params) do
       {:ok, row} ->
-        if row.enabled and IndexerDialog.test_on_save?(dialog, row), do: start_test(row.id)
+        if row.enabled and form.test_on_save?(dialog, row), do: start_test(row.id)
 
         notice =
           if dialog.mode == :add,
@@ -382,6 +528,94 @@ defmodule CinderWeb.IndexersComponent do
       id -> push_event(socket, "focus-invalid", %{id: id})
     end
   end
+
+  defp form_module(%{type: :cardigann}), do: CardigannDialog
+  defp form_module(_dialog), do: IndexerDialog
+
+  defp field_ids(dialog), do: form_module(dialog).field_ids(dialog)
+
+  # `Updater.update_now/1` joins a run already in progress. `{:error, :not_running}`: no worker runs.
+  defp start_update(socket, notice) do
+    case Updater.update_now() do
+      {:ok, _started_or_joined} ->
+        socket |> load_definitions(notice) |> assign_running()
+
+      {:error, :not_running} ->
+        load_definitions(
+          socket,
+          gettext("The definitions update isn't running: restart Cinder, then try again.")
+        )
+    end
+  end
+
+  # The run's end can reach the page before `Updater.update_now/1` answers, so the spinner shows only
+  # while the worker still runs it.
+  defp assign_running(socket),
+    do: assign(socket, definitions: %{socket.assigns.definitions | running?: Updater.running?()})
+
+  defp accept_smaller(commit) do
+    case Definitions.accept_smaller_set(commit) do
+      :ok -> :ok
+      {:error, :not_refused} -> :ok
+    end
+  end
+
+  # The confirm reads the held copy, its reason and its new hosts in one read of the pin, and
+  # Confirm sends the hash it showed.
+  defp accept_dialog(row, changed?) do
+    {held, message} =
+      case Definitions.held_update(row.id) do
+        {:ok, held} -> {if(held.reason in Hold.credential_reasons(), do: held), nil}
+        {:error, reason} -> {nil, accept_refusal(row, reason)}
+      end
+
+    %{step: :accept, id: row.id, name: row.name, held: held, changed?: changed?, message: message}
+  end
+
+  defp accept_update(socket) do
+    %{dialog: dialog, actor: actor} = socket.assigns
+
+    row =
+      Enum.find(socket.assigns.rows, &(&1.id == dialog.id)) || %{id: dialog.id, name: dialog.name}
+
+    case Definitions.accept(dialog.id, dialog.held.blob_sha, actor) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(notice: gettext("%{name}: definition update accepted.", name: dialog.name))
+         |> close_dialog(socket.assigns.opener)
+         |> load_rows()
+         |> notify_host()}
+
+      {:error, :stale} ->
+        {:noreply, accept_refused(socket, accept_dialog(row, true))}
+
+      {:error, reason} ->
+        {:noreply,
+         accept_refused(socket, %{dialog | held: nil, message: accept_refusal(row, reason)})}
+    end
+  end
+
+  # A confirm with no held copy left drops its Confirm button, which held focus: focus moves to
+  # Cancel, inside the dialog.
+  defp accept_refused(socket, %{held: nil} = dialog),
+    do:
+      socket
+      |> assign(dialog: dialog)
+      |> push_event("focus-invalid", %{id: "indexer-accept-cancel"})
+
+  defp accept_refused(socket, dialog), do: assign(socket, dialog: dialog)
+
+  defp accept_refusal(_row, :stale), do: gettext("No update is held for this indexer now.")
+  defp accept_refusal(row, :not_found), do: gettext("%{name} no longer exists.", name: row.name)
+
+  defp accept_refusal(_row, :undecryptable),
+    do: IndexerStateText.detail(:undecryptable, nil)
+
+  defp accept_refusal(_row, :fails), do: gettext("The held copy no longer loads.")
+  defp accept_refusal(row, _reason), do: not_saved(row)
+
+  defp acceptable?(%{held: reason}), do: reason in Hold.credential_reasons()
 
   # `{:error, :running}`: a Test of that indexer started before the save still runs, and its
   # answer is dropped for the edit (`Native.test_indexer/1`); the save starts none of its own.
@@ -500,8 +734,16 @@ defmodule CinderWeb.IndexersComponent do
     end
   end
 
+  # A Cardigann row whose running copy reads not supported or no longer loads has nothing a Test
+  # could run (#1625 point 3), as a row whose secrets do not decrypt.
   defp testable?(row, testing),
-    do: row.secrets_readable and not MapSet.member?(testing, row.id)
+    do:
+      row.secrets_readable and not MapSet.member?(testing, row.id) and
+        not red_code?(row.definition_code)
+
+  defp red_code?({:not_supported, _feature}), do: true
+  defp red_code?({:no_longer_loads, _reason}), do: true
+  defp red_code?(_code), do: false
 
   defp delete_confirm(row, rows, only_source?) do
     question =
@@ -519,7 +761,7 @@ defmodule CinderWeb.IndexersComponent do
        else: question
   end
 
-  defp editable?(type), do: type in @kinds
+  defp editable?(type), do: type in [:cardigann | @kinds]
 
   defp kind(type), do: type |> Atom.to_string() |> String.capitalize()
 
@@ -619,6 +861,20 @@ defmodule CinderWeb.IndexersComponent do
                 >
                   {row.last_test_line}
                 </p>
+                <.button
+                  :if={row.accept?}
+                  type="button"
+                  variant="warning"
+                  size="xs"
+                  class="mt-1"
+                  id={"indexer-#{row.id}-accept"}
+                  phx-click="open_accept"
+                  phx-value-id={row.id}
+                  phx-target={@myself}
+                  aria-label={gettext("Accept update for %{name}", name: row.name)}
+                >
+                  {gettext("Accept update")}
+                </.button>
               </td>
               <td class="align-top">
                 <div class="flex flex-wrap items-center gap-2">
@@ -691,6 +947,8 @@ defmodule CinderWeb.IndexersComponent do
 
       <p id="indexers-notice" role="status" class="text-sm">{@notice}</p>
 
+      <.definitions_line line={@definitions} myself={@myself} />
+
       <.portal :if={@dialog} id="indexer-dialog" target="body">
         <div
           id="indexer-dialog-backdrop"
@@ -710,6 +968,7 @@ defmodule CinderWeb.IndexersComponent do
           >
             <.import_step :if={@dialog.step == :import} dialog={@dialog} myself={@myself} />
             <.pick_step :if={@dialog.step == :pick} dialog={@dialog} myself={@myself} />
+            <.accept_step :if={@dialog.step == :accept} dialog={@dialog} myself={@myself} />
             <.form_step :if={@dialog.step == :form} dialog={@dialog} myself={@myself} />
           </.focus_wrap>
         </div>
@@ -722,10 +981,15 @@ defmodule CinderWeb.IndexersComponent do
   attr :myself, :any, required: true
 
   defp pick_step(assigns) do
+    %{query: query, picker: picker} = assigns.dialog
+
     assigns =
       assign(assigns,
-        kinds: matching_kinds(assigns.dialog.query),
-        form: to_form(%{"query" => assigns.dialog.query})
+        kinds: matching_kinds(query),
+        sites:
+          if(is_list(picker), do: CinderWeb.CardigannComponents.entries(picker, query), else: []),
+        not_loaded?: picker == :not_loaded,
+        form: to_form(%{"query" => query})
       )
 
     ~H"""
@@ -760,8 +1024,16 @@ defmodule CinderWeb.IndexersComponent do
             <span class="block text-sm text-base-content/70">{kind.description}</span>
           </button>
         </li>
+        <.definition_entries entries={@sites} myself={@myself} />
       </ul>
-      <p :if={@kinds == []} id="indexer-kinds-none" class="text-sm text-base-content/70">
+      <p :if={@not_loaded?} id="indexer-definitions-none" class="text-sm text-base-content/70">
+        {gettext("Indexer definitions not loaded yet")}
+      </p>
+      <p
+        :if={@kinds == [] and @sites == []}
+        id="indexer-kinds-none"
+        class="text-sm text-base-content/70"
+      >
         {gettext("No indexer type matches.")}
       </p>
       <div class="flex justify-end">
@@ -787,6 +1059,12 @@ defmodule CinderWeb.IndexersComponent do
         <.button type="button" phx-click={close_js(@myself)}>{gettext("Close")}</.button>
       </div>
     </div>
+    """
+  end
+
+  defp form_step(%{dialog: %{type: :cardigann}} = assigns) do
+    ~H"""
+    <.cardigann_form dialog={@dialog} myself={@myself} />
     """
   end
 

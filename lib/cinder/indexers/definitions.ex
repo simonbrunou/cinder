@@ -405,6 +405,7 @@ defmodule Cinder.Indexers.Definitions do
       outcome: outcome,
       detail: detail,
       definition_id: definition.id,
+      name: definition.name,
       privacy: definition.type,
       language: definition.language,
       description: definition.description,
@@ -420,6 +421,7 @@ defmodule Cinder.Indexers.Definitions do
       outcome: :fails,
       detail: :erlang.term_to_binary(reason),
       definition_id: nil,
+      name: nil,
       privacy: nil,
       language: nil,
       description: nil,
@@ -691,8 +693,8 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   @doc """
-  The mirror's file names in name order, each with its definition's display `id`, privacy,
-  language and description, and its load result. A copy with no result under the current
+  The mirror's file names in name order, each with its definition's display `id`, its `title`
+  (the definition's `name`), privacy, language and description, and its load result. A copy with no result under the current
   fingerprint reads `:unchecked` with no display fields: no check ran under it yet, or the check
   raised or timed out. A copy that fails to load has no display fields either.
   """
@@ -700,6 +702,7 @@ defmodule Cinder.Indexers.Definitions do
           %{
             name: String.t(),
             id: String.t() | nil,
+            title: String.t() | nil,
             privacy: String.t() | nil,
             language: String.t() | nil,
             description: String.t() | nil,
@@ -719,12 +722,21 @@ defmodule Cinder.Indexers.Definitions do
   end
 
   defp picker_row(name, nil),
-    do: %{name: name, id: nil, privacy: nil, language: nil, description: nil, result: :unchecked}
+    do: %{
+      name: name,
+      id: nil,
+      title: nil,
+      privacy: nil,
+      language: nil,
+      description: nil,
+      result: :unchecked
+    }
 
   defp picker_row(name, row) do
     %{
       name: name,
       id: row.definition_id,
+      title: row.name,
       privacy: row.privacy,
       language: row.language,
       description: row.description,
@@ -800,19 +812,35 @@ defmodule Cinder.Indexers.Definitions do
 
   @doc """
   The copy the configured indexer `id` runs, as a search reads it (#1671): `{:ok, %{definition:,
-  result:}}`, `definition` the loaded copy and `result` its load result under the current
-  fingerprint (`:unchecked` when none is stored yet, `:loads`, `{:not_supported, codes}` or
+  result:, blob_sha:}}`, `definition` the loaded copy, `blob_sha` its hash, which the edit form
+  carries (#1676), and `result` its load result under the current fingerprint (`:unchecked` when none is stored yet, `:loads`, `{:not_supported, codes}` or
   `{:fails, reason}`). `{:error, :no_pin}` for an indexer with no pin, `{:error, :fails}` for a
   copy that no longer parses.
   """
   @spec running_copy(pos_integer()) ::
-          {:ok, %{definition: map(), result: term()}} | {:error, :no_pin | :fails}
+          {:ok, %{definition: map(), result: term(), blob_sha: String.t()}}
+          | {:error, :no_pin | :fails}
   def running_copy(id) do
     with %Pin{} = pin <- Repo.get(Pin, id) || {:error, :no_pin},
          copy = Repo.get!(Copy, pin.running_copy_id),
          {:ok, definition} <- loaded(copy) do
-      {:ok, %{definition: definition, result: result_of(copy.blob_sha)}}
+      {:ok, %{definition: definition, result: result_of(copy.blob_sha), blob_sha: copy.blob_sha}}
     end
+  end
+
+  @doc """
+  The hash of the copy the configured indexer `id` runs, nil for an indexer with no pin. An edit
+  compares it with the hash its form was rendered from (#1676).
+  """
+  @spec running_blob_sha(pos_integer()) :: String.t() | nil
+  def running_blob_sha(id) do
+    from(p in Pin,
+      join: c in Copy,
+      on: c.id == p.running_copy_id,
+      where: p.configured_indexer_id == ^id,
+      select: c.blob_sha
+    )
+    |> Repo.one()
   end
 
   @typedoc "What `import_copy/1` answers for one file name."
@@ -1054,18 +1082,37 @@ defmodule Cinder.Indexers.Definitions do
   The credential hosts the held copy of the configured indexer `id` names that its running copy
   does not, sorted (`CredentialHosts.hosts/2`), for Accept's confirm. Every host of the held
   copy when the running copy no longer parses, or when the held copy declares a stored secret
-  again (`Hold.declares_again?/3`), since the running copy sent that secret nowhere. Refuses
-  `:not_found` and `:undecryptable` as `accept/3` does, `:stale` with no held copy, and `:fails`
-  for a held copy that does not parse.
+  again (`Hold.declares_again?/3`), since the running copy sent that secret nowhere. The hosts
+  are read with each stored secret standing as its own template, since the confirm renders them:
+  a host a secret fills is `{:unknown, raw}`. Refuses `:not_found` and `:undecryptable` as
+  `accept/3` does, `:stale` with no held copy, and `:fails` for a held copy that does not parse.
   """
   @spec held_hosts(pos_integer()) ::
           {:ok, [CredentialHosts.host()]}
           | {:error, :not_found | :undecryptable | :stale | :fails}
   def held_hosts(id) do
+    with {:ok, %{hosts: hosts}} <- held_update(id), do: {:ok, hosts}
+  end
+
+  @doc """
+  The held definition update of the configured indexer `id`, from one read of its pin, for
+  Accept's confirm (#1676): `{:ok, %{blob_sha:, reason:, hosts:}}`, the held copy's hash, the
+  hold's reason, and the hosts `held_hosts/1` lists. Refuses as `held_hosts/1` does.
+  """
+  @spec held_update(pos_integer()) ::
+          {:ok, %{blob_sha: String.t(), reason: term(), hosts: [CredentialHosts.host()]}}
+          | {:error, :not_found | :undecryptable | :stale | :fails}
+  def held_update(id) do
     with {:ok, row, settings, pin} <- held_indexer(id),
          {:ok, held} <- held_any(pin),
-         {:ok, held_definition} <- loaded(held) do
-      stored = %{stored_url: row.base_url, settings: Map.merge(settings.plain, settings.secrets)}
+         {:ok, hosts} <- added_hosts(row, settings, pin, held) do
+      {:ok, %{blob_sha: held.blob_sha, reason: hold_of(pin), hosts: hosts}}
+    end
+  end
+
+  defp added_hosts(row, settings, pin, held) do
+    with {:ok, held_definition} <- loaded(held) do
+      stored = %{stored_url: row.base_url, settings: shown_values(settings)}
 
       running = Loader.load(Repo.get!(Copy, pin.running_copy_id).bytes)
 
@@ -1083,8 +1130,38 @@ defmodule Cinder.Indexers.Definitions do
     end
   end
 
+  # The stored values the confirms' hosts are read under. The pages render those hosts, so each
+  # stored secret stands as its own template: a host it fills reads as `{:unknown, raw}`, and a
+  # secret that holds a URL as `{:unknown, "{{ .Config.<key> }}"}` (`CredentialHosts.hosts/2`).
+  # Hold's rules still read the real values.
+  defp shown_values(settings) do
+    masked =
+      Map.new(settings.secrets, fn {key, value} ->
+        template = "{{ .Config.#{key} }}"
+        {key, if(is_binary(value) and value =~ "://", do: "https://" <> template, else: template)}
+      end)
+
+    Map.merge(settings.plain, masked)
+  end
+
   defp held_any(%Pin{held_copy_id: nil}), do: {:error, :stale}
   defp held_any(pin), do: {:ok, Repo.get!(Copy, pin.held_copy_id)}
+
+  @doc """
+  When the definitions were last checked: the end of the last update run that succeeded, an
+  unchanged commit included (#1616 rule 12), or the loaded set's `loaded_at` when that is later;
+  nil before any load.
+  """
+  @spec last_checked_at() :: DateTime.t() | nil
+  def last_checked_at do
+    run = Repo.get(UpdateRun, UpdateRun.id())
+    times = [run && run.last_success_at, loaded() && loaded().loaded_at]
+
+    case Enum.reject(times, &is_nil/1) do
+      [] -> nil
+      found -> Enum.max(found, DateTime)
+    end
+  end
 
   defp loaded(copy) do
     case Loader.load(copy.bytes) do
@@ -1122,6 +1199,19 @@ defmodule Cinder.Indexers.Definitions do
       end
     end)
     |> Map.new()
+  end
+
+  @doc """
+  Each pinned configured indexer's held update, by id, whatever its `indexer_codes/0` code
+  (#1676): `held`, the hold's reason as `{:held, reason}` gives it, nil with none. A red code
+  outranks it in `indexer_codes/0`, but Accept update is the way to a copy that runs, so the
+  table reads it here.
+  """
+  @spec indexer_actions() :: %{pos_integer() => %{held: term() | nil}}
+  def indexer_actions do
+    from(p in Pin, join: i in ConfiguredIndexer, on: i.id == p.configured_indexer_id, select: p)
+    |> Repo.all()
+    |> Map.new(&{&1.configured_indexer_id, %{held: hold_of(&1)}})
   end
 
   defp indexer_code(_pin, {:not_supported, [feature | _]}, _name), do: {:not_supported, feature}

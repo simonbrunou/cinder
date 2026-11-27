@@ -164,6 +164,7 @@ msgstr "Impossible de supprimer le dernier administrateur."
 msgid "Can't demote the last admin."
 msgstr "Impossible de rétrograder le dernier administrateur."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/core_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/issue_components.ex
@@ -939,6 +940,7 @@ msgstr "Réinitialiser le mot de passe"
 msgid "Resetting…"
 msgstr "Réinitialisation…"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/live/activity_live.ex
 #: lib/cinder_web/live/book_detail_live.ex
 #: lib/cinder_web/live/movie_detail_live.ex
@@ -963,6 +965,7 @@ msgstr "Rôle"
 msgid "Roles and request quotas."
 msgstr "Rôles et quotas de demandes."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/series_detail_components.ex
 #: lib/cinder_web/live/users_live.ex
@@ -1312,6 +1315,7 @@ msgstr "par épisode"
 msgid "to your account now."
 msgstr "à votre compte dès maintenant."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/components/settings_components.ex
 #, elixir-autogen
@@ -6101,16 +6105,6 @@ msgstr ""
 "Nom IANA utilisé pour déterminer si la date de diffusion locale d’un épisode "
 "est arrivée"
 
-#: lib/cinder_web/live/activity_live.ex
-#, elixir-autogen
-msgid "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
-msgstr ""
-"La maintenance planifiée s’exécute automatiquement. Ces tâches relancent les "
-"recherches échouées, cherchent de meilleures versions, suppriment les "
-"téléchargements partiels inutiles, mettent à jour les séries, sauvegardent "
-"la base de données, recherchent les sous-titres manquants et synchronisent "
-"les listes Plex."
-
 #: lib/cinder_web/live/setup_live.ex
 #, elixir-autogen
 msgid "Choose a torrent or Usenet client."
@@ -6317,6 +6311,7 @@ msgstr "Profil multimédia enregistré."
 msgid "Media profiles"
 msgstr "Profils multimédias"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/live/profiles_live.ex
 #, elixir-autogen, elixir-format
@@ -8304,6 +8299,7 @@ msgstr "Pas encore vérifié : appuyez sur Tester dans les Paramètres"
 msgid "Not found in Prowlarr"
 msgstr "Introuvable dans Prowlarr"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/indexer_state_text.ex
 #: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
@@ -8524,11 +8520,13 @@ msgstr "%{name} ajouté."
 msgid "%{name} saved."
 msgstr "%{name} enregistré."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "1 to 50. A lower number comes first in results."
 msgstr "De 1 à 50. Un nombre plus petit passe en premier dans les résultats."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "A new base URL or any changed credential drops this indexer's grabs still waiting to be sent: movies and episodes search again, books wait for you."
@@ -8546,6 +8544,7 @@ msgstr "Clé API"
 msgid "API path"
 msgstr "Chemin de l’API"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Add indexer"
@@ -8573,17 +8572,20 @@ msgstr "Tout indexeur Usenet avec une clé API"
 msgid "Any torrent indexer with a Torznab API, or Jackett and Prowlarr"
 msgstr "Tout indexeur torrent avec une API Torznab, ou Jackett et Prowlarr"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Back"
 msgstr "Retour"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
 msgid "Base URL"
 msgstr "URL de base"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Cinder tests an enabled indexer when you save it."
@@ -8600,11 +8602,13 @@ msgstr "Fermer"
 msgid "Edit %{name}"
 msgstr "Modifier %{name}"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Edit indexer"
 msgstr "Modifier l’indexeur"
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Enabled"
@@ -8657,6 +8661,7 @@ msgstr "Saisissez les paramètres en paires &nom=valeur, comme &cat=2000."
 msgid "No indexer type matches."
 msgstr "Aucun type d’indexeur ne correspond."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #: lib/cinder_web/prowlarr_import_text.ex
 #, elixir-autogen, elixir-format
@@ -8683,6 +8688,7 @@ msgstr "Retirez de l’URL la requête, à partir du ?."
 msgid "Remove the user name and password from the URL."
 msgstr "Retirez de l’URL le nom d’utilisateur et le mot de passe."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Save and test"
@@ -8708,6 +8714,7 @@ msgstr "Commencez l’URL par http:// ou https://."
 msgid "The saved API key can't be decrypted: type it again, or tick Clear, before you save a key."
 msgstr "La clé API enregistrée ne peut pas être déchiffrée : saisissez-la à nouveau, ou cochez Effacer, avant d’enregistrer une clé."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "This indexer changed in another tab: reload it before saving."
@@ -8718,6 +8725,7 @@ msgstr "Cet indexeur a changé dans un autre onglet : rechargez-le avant d’enr
 msgid "This indexer was deleted in another tab."
 msgstr "Cet indexeur a été supprimé dans un autre onglet."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "This indexer's saved secrets can't be decrypted. Type every secret again, or tick its Clear box, before you save a secret."
@@ -8728,6 +8736,7 @@ msgstr "Les secrets enregistrés de cet indexeur ne peuvent pas être déchiffr�
 msgid "Use a port from 1 to 65535."
 msgstr "Utilisez un port de 1 à 65535."
 
+#: lib/cinder_web/cardigann_components.ex
 #: lib/cinder_web/components/indexers_component.ex
 #, elixir-autogen, elixir-format
 msgid "Kind:"
@@ -9078,3 +9087,869 @@ msgstr "Connexion refusée"
 #, elixir-autogen, elixir-format
 msgid "Login rejected: check the username and password in Settings"
 msgstr "Connexion refusée : vérifiez le nom d'utilisateur et le mot de passe dans les Paramètres"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "%{date} at %{time}"
+msgstr "%{date} à %{time}"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "%{name}: definition update accepted."
+msgstr "%{name} : mise à jour de la définition acceptée."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "%{url}, an address Cinder works out only when it searches"
+msgstr "%{url}, une adresse que Cinder ne calcule qu’au moment de chercher"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "A definition file is larger than Cinder's limit"
+msgstr "Un fichier de définition dépasse la limite de Cinder"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "A download selector holds a secret setting, so the page was not read"
+msgstr "Un sélecteur de téléchargement contient un réglage secret : la page n’a pas été lue"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "A filter chain hit its output cap"
+msgstr "Une chaîne de filtres a atteint sa limite de sortie"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "A regular expression hit its limit"
+msgstr "Une expression régulière a atteint sa limite"
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "A secret is not one the site's definition declares: close the form and open it again."
+msgstr "Un secret ne figure pas dans la définition du site : fermez le formulaire et rouvrez-le."
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "A setting is not one the site's definition declares: close the form and open it again."
+msgstr "Un réglage ne figure pas dans la définition du site : fermez le formulaire et rouvrez-le."
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "A setting's value is not one the site's definition accepts."
+msgstr "La valeur d’un réglage n’est pas acceptée par la définition du site."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Accept smaller set"
+msgstr "Accepter l’ensemble réduit"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Accept the definition update of %{name}?"
+msgstr "Accepter la mise à jour de la définition de %{name} ?"
+
+#: lib/cinder_web/cardigann_components.ex
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Accept update"
+msgstr "Accepter la mise à jour"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Accept update for %{name}"
+msgstr "Accepter la mise à jour de %{name}"
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "An indexer keeps its site, unless the mirror replaces that site's definition."
+msgstr "Un indexeur garde son site, sauf si le miroir remplace la définition de ce site."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cardigann (%{definition})"
+msgstr "Cardigann (%{definition})"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder held it because %{reason}."
+msgstr "Cinder l’a retenue, car %{reason}."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder is too old for current definitions"
+msgstr "Cinder est trop ancien pour les définitions actuelles"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Cinder is too old for current definitions."
+msgstr "Cinder est trop ancien pour les définitions actuelles."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Clear saved %{setting}"
+msgstr "Effacer %{setting} enregistré"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Default: %{default}"
+msgstr "Par défaut : %{default}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Definition update held: %{reason}"
+msgstr "Mise à jour de la définition retenue : %{reason}"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Doesn't load on this version of Cinder"
+msgstr "Ne se charge pas sur cette version de Cinder"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub answered HTTP %{status}"
+msgstr "GitHub a répondu HTTP %{status}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub could not be reached"
+msgstr "GitHub est injoignable"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub did not answer in time"
+msgstr "GitHub n’a pas répondu à temps"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub named a commit Cinder can't read"
+msgstr "GitHub a indiqué un commit que Cinder ne sait pas lire"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub named no master branch"
+msgstr "GitHub n’a indiqué aucune branche master"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "GitHub's answer was too large"
+msgstr "La réponse de GitHub était trop volumineuse"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "HTML responses"
+msgstr "les réponses HTML"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions are up to date."
+msgstr "Les définitions d’indexeurs sont à jour."
+
+#: lib/cinder_web/cardigann_components.ex
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions not loaded yet"
+msgstr "Définitions d’indexeurs pas encore chargées"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions update ended."
+msgstr "La mise à jour des définitions d’indexeurs est terminée."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions update failed: %{error}."
+msgstr "La mise à jour des définitions d’indexeurs a échoué : %{error}."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions updated."
+msgstr "Définitions d’indexeurs mises à jour."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Indexer definitions: %{count} loaded at %{commit}, checked %{time}"
+msgid_plural "Indexer definitions: %{count} loaded at %{commit}, checked %{time}"
+msgstr[0] "Définitions d’indexeurs : %{count} chargée au commit %{commit}, vérifiée %{time}"
+msgstr[1] "Définitions d’indexeurs : %{count} chargées au commit %{commit}, vérifiées %{time}"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "It sends this indexer's credentials to no new host."
+msgstr "Elle n’envoie les identifiants de cet indexeur à aucun nouvel hôte."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "It would send this indexer's credentials to:"
+msgstr "Elle enverrait les identifiants de cet indexeur à :"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "JSON responses"
+msgstr "les réponses JSON"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "No update is held for this indexer now."
+msgstr "Aucune mise à jour n’est retenue pour cet indexeur désormais."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Not checked yet"
+msgstr "Pas encore vérifiée"
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "Pick one of the site's addresses."
+msgstr "Choisissez une des adresses du site."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Private"
+msgstr "Privé"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Public"
+msgstr "Public"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Refused: a credential would go to a host the definition does not name"
+msgstr "Refusé : un identifiant partirait vers un hôte que la définition ne nomme pas"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Removed upstream"
+msgstr "Supprimée en amont"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Replaced by %{name}"
+msgstr "Remplacée par %{name}"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "Running copy no longer loads on this build"
+msgstr "La copie en service ne se charge plus sur cette version"
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, sync Plex watchlists, and update indexer definitions."
+msgstr "La maintenance planifiée s’exécute automatiquement. Ces tâches relancent les recherches échouées, cherchent de meilleures versions, suppriment les téléchargements partiels inutiles, mettent à jour les séries, sauvegardent la base de données, recherchent les sous-titres manquants, synchronisent les listes Plex et mettent à jour les définitions d’indexeurs."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Semi-private"
+msgstr "Semi-privé"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "Smaller set accepted: updating the definitions."
+msgstr "Ensemble réduit accepté : mise à jour des définitions en cours."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "TV searches by IMDb id"
+msgstr "les recherches TV par identifiant IMDb"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The VERSIONS file can't be read"
+msgstr "Le fichier VERSIONS est illisible"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definition is not checked yet"
+msgstr "La définition n'est pas encore vérifiée"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definition's download headers could not be sent"
+msgstr "Les en-têtes de téléchargement de la définition n’ont pas pu être envoyés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definition's templates failed"
+msgstr "Les modèles de la définition ont échoué"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive has an unexpected layout"
+msgstr "L’archive des définitions a une structure inattendue"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive has no VERSIONS file"
+msgstr "L’archive des définitions n’a pas de fichier VERSIONS"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive holds a link or a file outside its folder"
+msgstr "L’archive des définitions contient un lien ou un fichier hors de son dossier"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive holds too many files"
+msgstr "L’archive des définitions contient trop de fichiers"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive is damaged"
+msgstr "L’archive des définitions est endommagée"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions archive unpacks to more than Cinder's limit"
+msgstr "L’archive des définitions décompressée dépasse la limite de Cinder"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "The definitions update isn't running: restart Cinder, then try again."
+msgstr "La mise à jour des définitions ne tourne pas : redémarrez Cinder, puis réessayez."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The details page could not be read"
+msgstr "La page de détails est illisible"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The details page held no download link"
+msgstr "La page de détails ne contenait aucun lien de téléchargement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The details page was too large"
+msgstr "La page de détails était trop volumineuse"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The grab failed"
+msgstr "La récupération a échoué"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The grab ran past its time limit"
+msgstr "La récupération a dépassé son délai"
+
+#: lib/cinder_web/components/indexers_component.ex
+#, elixir-autogen, elixir-format
+msgid "The held copy no longer loads."
+msgstr "La copie retenue ne se charge plus."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The indexer's address is not allowed"
+msgstr "L’adresse de l’indexeur n’est pas autorisée"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The info hash or the title is missing where the definition reads them"
+msgstr "Le hash d’info ou le titre manque là où la définition les lit"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The page parser crashed, timed out or ran out of memory"
+msgstr "L’analyseur de pages a planté, expiré ou manqué de mémoire"
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "The saved secrets can't be decrypted: type each one again, or tick its Clear box, before you save."
+msgstr "Les secrets enregistrés ne peuvent pas être déchiffrés : saisissez-les de nouveau, ou cochez leur case Effacer, avant d’enregistrer."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The site's pre-download request failed"
+msgstr "La requête du site avant le téléchargement a échoué"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The update crashed"
+msgstr "La mise à jour a planté"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The update failed"
+msgstr "La mise à jour a échoué"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "The upstream answer holds only %{count} definition, too few for a first load."
+msgid_plural "The upstream answer holds only %{count} definitions, too few for a first load."
+msgstr[0] "La réponse en amont ne contient que %{count} définition, trop peu pour un premier chargement."
+msgstr[1] "La réponse en amont ne contient que %{count} définitions, trop peu pour un premier chargement."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The upstream answer holds too few definitions, so it was not applied."
+msgstr "La réponse en amont contient trop peu de définitions, elle n’a donc pas été appliquée."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "The upstream answer shrank by %{percent}%."
+msgstr "La réponse en amont a diminué de %{percent} %."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The upstream answer shrank, so it was not applied."
+msgstr "La réponse en amont a diminué, elle n’a donc pas été appliquée."
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "This site's definition changed while the form was open: close it and open it again."
+msgstr "La définition de ce site a changé pendant que le formulaire était ouvert : fermez-le et rouvrez-le."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "This site's definition no longer loads on this version of Cinder: only the name, priority and Enabled can change."
+msgstr "La définition de ce site ne se charge plus sur cette version de Cinder : seuls le nom, la priorité et Activé peuvent changer."
+
+#: lib/cinder_web/indexer_form_text.ex
+#, elixir-autogen, elixir-format
+msgid "This site's definition no longer loads, so Cinder can't check these settings."
+msgstr "La définition de ce site ne se charge plus, Cinder ne peut donc pas vérifier ces réglages."
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "This update changed while you were reading: check it again."
+msgstr "Cette mise à jour a changé pendant votre lecture : vérifiez-la de nouveau."
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "Too many redirects"
+msgstr "Trop de redirections"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Update failing since %{date}"
+msgstr "Mise à jour en échec depuis %{date}"
+
+#: lib/cinder_web/live/activity_live.ex
+#, elixir-autogen, elixir-format
+msgid "Update indexer definitions"
+msgstr "Mettre à jour les définitions d’indexeurs"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Update now"
+msgstr "Mettre à jour"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "XML responses"
+msgstr "les réponses XML"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a .NET-only regular expression"
+msgstr "une expression régulière propre à .NET"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a JSON path Cinder can't read"
+msgstr "un chemin JSON que Cinder ne sait pas lire"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a custom query separator"
+msgstr "un séparateur de requête personnalisé"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a custom query separator on the download pre-request"
+msgstr "un séparateur de requête personnalisé dans la requête avant le téléchargement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a date layout Cinder can't read"
+msgstr "un format de date que Cinder ne sait pas lire"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a definition not checked yet"
+msgstr "une définition pas encore vérifiée"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a definition that no longer loads"
+msgstr "une définition qui ne se charge plus"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a download pre-request path selector"
+msgstr "un sélecteur de chemin dans la requête avant le téléchargement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a feature this version of Cinder doesn't have"
+msgstr "une fonction absente de cette version de Cinder"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a filter"
+msgstr "un filtre"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a malformed pinned certificate"
+msgstr "un certificat épinglé mal formé"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a missing definition"
+msgstr "une définition manquante"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a reason this version of Cinder doesn't know"
+msgstr "une raison que cette version de Cinder ne connaît pas"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a regular expression Cinder can't run"
+msgstr "une expression régulière que Cinder ne sait pas exécuter"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a request before the download"
+msgstr "une requête avant le téléchargement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a row filter"
+msgstr "un filtre de lignes"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a selector structure Cinder can't run"
+msgstr "une structure de sélecteur que Cinder ne sait pas exécuter"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a selector the page parser refuses"
+msgstr "un sélecteur que l’analyseur de pages refuse"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a selector with both the %{remove} and %{case} options"
+msgstr "un sélecteur avec les options %{remove} et %{case} à la fois"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "a setting type"
+msgstr "un type de réglage"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an XML selector Cinder can't read"
+msgstr "un sélecteur XML que Cinder ne sait pas lire"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown captcha type"
+msgstr "un type de captcha inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown category"
+msgstr "une catégorie inconnue"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown filter"
+msgstr "un filtre inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown login method"
+msgstr "une méthode de connexion inconnue"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown privacy type"
+msgstr "un type de confidentialité inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown response type"
+msgstr "un type de réponse inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown row filter"
+msgstr "un filtre de lignes inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown search mode"
+msgstr "un mode de recherche inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown search parameter"
+msgstr "un paramètre de recherche inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "an unknown setting type"
+msgstr "un type de réglage inconnu"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "captcha"
+msgstr "le captcha"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "categories on a search path"
+msgstr "les catégories dans un chemin de recherche"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "comments in a selector"
+msgstr "les commentaires dans un sélecteur"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "custom download headers"
+msgstr "les en-têtes de téléchargement personnalisés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "custom search headers"
+msgstr "les en-têtes de recherche personnalisés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "default categories"
+msgstr "les catégories par défaut"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "download selectors that read the earlier response"
+msgstr "les sélecteurs de téléchargement qui lisent la réponse précédente"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "downloads by info hash"
+msgstr "les téléchargements par info hash"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "downloads sent by POST"
+msgstr "les téléchargements envoyés en POST"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "empty search inputs"
+msgstr "les champs de recherche vides"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "encodings other than UTF-8"
+msgstr "les encodages autres que UTF-8"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "escapes in a selector"
+msgstr "les échappements dans un sélecteur"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "field modifiers"
+msgstr "les modificateurs de champ"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "followed redirects"
+msgstr "les redirections suivies"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "followed redirects on a search path"
+msgstr "les redirections suivies dans un chemin de recherche"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "it changes the type of a secret setting"
+msgstr "elle change le type d’un réglage secret"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "it removes a secret setting"
+msgstr "elle supprime un réglage secret"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "it would send credentials to new hosts"
+msgstr "elle enverrait des identifiants à de nouveaux hôtes"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "its certificates changed"
+msgstr "ses certificats ont changé"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "keyword filters"
+msgstr "les filtres de mots-clés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "logins"
+msgstr "les connexions"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "needs a newer Cinder (v%{version})"
+msgstr "nécessite une version plus récente de Cinder (v%{version})"
+
+#: lib/cinder_web/indexer_state_text.ex
+#, elixir-autogen, elixir-format
+msgid "no result on the Test page"
+msgstr "aucun résultat sur la page du test"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "not supported: %{feature}"
+msgstr "non pris en charge : %{feature}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "pinned certificates"
+msgstr "les certificats épinglés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "preprocessing filters"
+msgstr "les filtres de prétraitement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "raw search inputs"
+msgstr "les champs de recherche bruts"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "raw searches"
+msgstr "les recherches brutes"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "request delays"
+msgstr "les délais entre requêtes"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "search error pages"
+msgstr "les pages d’erreur de recherche"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "search paths that don't inherit inputs"
+msgstr "les chemins de recherche qui n’héritent pas des champs"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "searches sent by POST"
+msgstr "les recherches envoyées en POST"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selector templates"
+msgstr "les modèles dans un sélecteur"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selector templates that read the result"
+msgstr "les modèles de sélecteur qui lisent le résultat"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selectors that crash the page parser"
+msgstr "les sélecteurs qui font planter l’analyseur de pages"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selectors that use too much memory"
+msgstr "les sélecteurs qui utilisent trop de mémoire"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selectors too slow to check"
+msgstr "les sélecteurs trop lents à vérifier"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "selectors with too much output"
+msgstr "les sélecteurs qui produisent trop de sortie"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} filter"
+msgstr "le filtre %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} key"
+msgstr "la clé %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} login"
+msgstr "la connexion %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} row filter"
+msgstr "le filtre de lignes %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} row option"
+msgstr "l’option de lignes %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} selector option"
+msgstr "l’option de sélecteur %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the %{name} setting type"
+msgstr "le type de réglage %{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the XML selector :%{name}"
+msgstr "le sélecteur XML :%{name}"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the download block"
+msgstr "le bloc de téléchargement"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the new copy fails to load"
+msgstr "la nouvelle copie ne se charge pas"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "the saved credentials can't be decrypted"
+msgstr "les identifiants enregistrés ne peuvent pas être déchiffrés"
+
+#: lib/cinder_web/definition_text.ex
+#, elixir-autogen, elixir-format
+msgid "The site's login failed before the download"
+msgstr "La connexion au site a échoué avant le téléchargement"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "How to get the cookie"
+msgstr "Comment obtenir le cookie"
+
+#: lib/cinder_web/cardigann_components.ex
+#, elixir-autogen, elixir-format
+msgid "Log in to the site in your browser, open its developer tools (F12), reload a page of the site in the Network tab, and copy the value of that request's Cookie header, everything after \"Cookie: \", into the cookie field."
+msgstr "Connectez-vous au site dans votre navigateur, ouvrez ses outils de développement (F12), rechargez une page du site dans l’onglet Réseau, puis copiez la valeur de l’en-tête Cookie de cette requête, tout ce qui suit « Cookie: », dans le champ du cookie."

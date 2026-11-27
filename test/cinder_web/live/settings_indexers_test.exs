@@ -191,7 +191,7 @@ defmodule CinderWeb.SettingsIndexersTest do
     end
 
     # #1668's definition states, built as `Cinder.HealthTest` builds them.
-    test "a Cardigann definition that no longer loads reads red, a held update yellow, neither with a detail",
+    test "a Cardigann definition that no longer loads reads red, a held update yellow, each with its detail",
          %{conn: conn} do
       ConfigCase.put_env(:indexer_adapters, %{
         newznab: IndexerAdapterMock,
@@ -208,7 +208,12 @@ defmodule CinderWeb.SettingsIndexersTest do
       {:ok, lv, _html} = live(conn, ~p"/settings")
       assert has_element?(lv, "#indexer-#{broken.id}-badge.badge-error", "Needs attention")
       assert has_element?(lv, "#indexer-#{broken.id}", "Cardigann")
-      refute has_element?(lv, "#indexer-#{broken.id}-detail")
+
+      assert has_element?(
+               lv,
+               "#indexer-#{broken.id}-detail",
+               "Running copy no longer loads on this build"
+             )
 
       :ok = Indexers.delete(nil, broken.id)
       second = DefinitionFixtures.definition("tracker", %{"name" => "Second"})
@@ -220,7 +225,12 @@ defmodule CinderWeb.SettingsIndexersTest do
 
       {:ok, lv, _html} = live(conn, ~p"/settings")
       assert has_element?(lv, "#indexer-#{held.id}-badge.badge-warning", "Warning")
-      refute has_element?(lv, "#indexer-#{held.id}-detail")
+
+      assert has_element?(
+               lv,
+               "#indexer-#{held.id}-detail",
+               "Definition update held: the new copy fails to load"
+             )
     end
 
     # Each read patches the kept rows in place, so the new row and the new order have to land

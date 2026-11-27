@@ -101,6 +101,13 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     if code |> Tuple.to_list() |> Enum.all?(&is_atom/1), do: code, else: elem(code, 0)
   end
 
+  @doc """
+  The not-supported codes `copy/1` answers for a copy that does not run, besides a copy's own
+  first code: as the moduledoc's "Which copy runs" lists them.
+  """
+  @spec copy_codes() :: [atom()]
+  def copy_codes, do: [:definition_unchecked, :definition_fails, :definition_missing]
+
   @doc "Fetches a grab's link through `Cinder.Acquisition.Indexer.Cardigann.Grab`."
   @impl Indexer
   defdelegate fetch_download(indexer, url, opts), to: Cinder.Acquisition.Indexer.Cardigann.Grab

@@ -1,14 +1,16 @@
 defmodule CinderWeb.IndexerFormText do
   @moduledoc """
-  Words the refusals of `Cinder.Indexers`' changeset for the Newznab and Torznab form of the
-  indexers dialogs (#1661). The store tags each refusal with a `validation:` code
+  Words the refusals of `Cinder.Indexers`' changeset for the Newznab, Torznab and Cardigann forms
+  of the indexers dialogs (#1661, #1676). The store tags each refusal with a `validation:` code
   (`Cinder.Indexers.ConfiguredIndexer`); this module picks the form field it shows under and
   its translated message (docs/agents/architecture.md "Translation stays in the web layer").
 
   `errors/2` answers `%{field => [message]}`. The fields are the form's: `:name`, `:base_url`,
   `:api_path`, `:additional_parameters`, `:priority`, `:enabled` and `:api_key`. A refusal on a
   field the form does not render goes under `:form`, shown above the fields: so does a
-  `settings` refusal in the Torznab form, which has no additional parameters field. The stale
+  `settings` refusal in the Torznab form, which has no additional parameters field, and each
+  `definition`, `settings` and `secrets` refusal in the Cardigann form (#1676), whose settings
+  come from the site's definition and which has its own words for them. The stale
   save's `lock_version` error is left out: the dialog says it in its own line.
   """
   use Gettext, backend: CinderWeb.Gettext
@@ -23,7 +25,7 @@ defmodule CinderWeb.IndexerFormText do
     errors
     |> Enum.reject(&stale_error?/1)
     |> Enum.map(fn {field, {_message, opts} = error} ->
-      {form_field(field, type), message({field, opts[:validation]}, error)}
+      {form_field(field, type), message({field, opts[:validation]}, error, type)}
     end)
     |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
     |> Map.new(fn {field, messages} -> {field, Enum.uniq(messages)} end)
@@ -45,9 +47,58 @@ defmodule CinderWeb.IndexerFormText do
     do: field == :lock_version and opts[:stale] == true
 
   defp form_field(:settings, :newznab), do: :additional_parameters
+  defp form_field(:secrets, :cardigann), do: :form
   defp form_field(:secrets, _type), do: :api_key
   defp form_field(field, _type) when field in @form_fields, do: field
   defp form_field(_field, _type), do: :form
+
+  defp message(field_validation, error, :cardigann),
+    do: cardigann_message(field_validation) || message(field_validation, error)
+
+  defp message(field_validation, error, _type), do: message(field_validation, error)
+
+  # The Cardigann form's own refusals (#1676): its settings and secrets come from the site's
+  # definition, and the form carries the hash of the copy it rendered.
+  # The mirror or the pin no longer holds the copy the form rendered (#1620 point 4).
+  defp cardigann_message({:definition, validation})
+       when validation in [:definition_changed, :definition_not_in_mirror],
+       do:
+         gettext(
+           "This site's definition changed while the form was open: close it and open it again."
+         )
+
+  defp cardigann_message({:definition, :definition_fails}),
+    do: gettext("This site's definition no longer loads, so Cinder can't check these settings.")
+
+  defp cardigann_message({:definition, :fixed_at_create}),
+    do: gettext("An indexer keeps its site, unless the mirror replaces that site's definition.")
+
+  defp cardigann_message({_base_url, :base_url_links}),
+    do: gettext("Pick one of the site's addresses.")
+
+  defp cardigann_message({field, :settings_keys}) when field in [:settings, :secrets],
+    do:
+      gettext(
+        "A setting is not one the site's definition declares: close the form and open it again."
+      )
+
+  defp cardigann_message({field, validation})
+       when field in [:settings, :secrets] and validation in [:settings_values, :select_option],
+       do: gettext("A setting's value is not one the site's definition accepts.")
+
+  defp cardigann_message({:secrets, :secret_fields}),
+    do:
+      gettext(
+        "A secret is not one the site's definition declares: close the form and open it again."
+      )
+
+  defp cardigann_message({:secrets, :secrets_unreadable}),
+    do:
+      gettext(
+        "The saved secrets can't be decrypted: type each one again, or tick its Clear box, before you save."
+      )
+
+  defp cardigann_message(_field_validation), do: nil
 
   defp message({:name, :unique_name}, _error),
     do: gettext("Another indexer already has this name.")

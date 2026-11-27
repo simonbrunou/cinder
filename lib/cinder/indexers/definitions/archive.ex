@@ -82,6 +82,22 @@ defmodule Cinder.Indexers.Definitions.Archive do
           | :versions_missing
           | :versions_unreadable
 
+  @reasons [
+    :invalid_commit,
+    :archive_corrupt,
+    :archive_entry_limit,
+    :archive_entry_unsafe,
+    :archive_layout,
+    :archive_size_limit,
+    :file_too_large,
+    :versions_missing,
+    :versions_unreadable
+  ]
+
+  @doc "Every refusal `read/2` can answer, as the `reason` type lists them."
+  @spec reasons() :: [reason()]
+  def reasons, do: @reasons
+
   @doc "Reads `zip`, the codeload archive of `commit`. See the moduledoc for each refusal."
   @spec read(binary(), String.t()) :: {:ok, Set.t()} | {:error, reason()}
   def read(zip, commit) when is_binary(zip) and is_binary(commit) do

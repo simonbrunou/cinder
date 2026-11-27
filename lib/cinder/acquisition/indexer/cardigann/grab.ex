@@ -208,6 +208,27 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Grab do
   @spec worker_ms() :: pos_integer()
   def worker_ms, do: Keyword.get(config(), :grab_worker_ms, @worker_ms)
 
+  @doc "Each `tag` of a `{:cardigann_grab, tag}` error this module returns; see the moduledoc."
+  @spec failure_tags() :: [atom()]
+  def failure_tags do
+    [
+      :no_link,
+      :parser_failed,
+      :regex_limit,
+      :filter_output_cap,
+      :secret_host,
+      :deadline,
+      :definition_unchecked,
+      :page_too_large,
+      :bad_page,
+      :before_failed,
+      :infohash_not_found,
+      :bad_headers,
+      :definition_error,
+      :login_failed
+    ]
+  end
+
   @doc "Fetches `url` from `indexer` for a client with fetch options `opts`; see the moduledoc."
   @spec fetch_download(ConfiguredIndexer.t(), String.t(), keyword()) ::
           {:ok, binary()} | {:magnet, String.t()} | {:error, term()}

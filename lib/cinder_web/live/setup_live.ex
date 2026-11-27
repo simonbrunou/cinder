@@ -39,6 +39,7 @@ defmodule CinderWeb.SetupLive do
   alias Cinder.Acquisition.IndexerSource.Native
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, TestRunner}
   alias Cinder.{Health, Settings}
+  alias Cinder.Indexers.Definitions.Updater
   alias CinderWeb.{DomainLabels, IndexersComponent}
 
   # Every probe target the gate reads, checked on "Save & validate".
@@ -52,8 +53,12 @@ defmodule CinderWeb.SetupLive do
     if Settings.setup_complete?() do
       {:ok, push_navigate(socket, to: ~p"/")}
     else
-      # Before the indexers table first reads which Tests run, so no finish falls between the two.
-      if connected?(socket), do: TestRunner.subscribe()
+      # Before the indexers table first reads which Tests run and whether a definitions update
+      # runs, so no finish falls between the read and the subscription.
+      if connected?(socket) do
+        TestRunner.subscribe()
+        Updater.subscribe()
+      end
 
       {:ok,
        socket
@@ -106,6 +111,12 @@ defmodule CinderWeb.SetupLive do
   @impl true
   def handle_info(message, socket) when is_tuple(message) and elem(message, 0) == TestRunner do
     send_update(IndexersComponent, id: "indexers", runner: message)
+    {:noreply, socket}
+  end
+
+  # The end of a definitions update run goes to the indexers table's definitions line (#1676).
+  def handle_info({:definitions_update, outcome}, socket) do
+    send_update(IndexersComponent, id: "indexers", definitions_update: outcome)
     {:noreply, socket}
   end
 

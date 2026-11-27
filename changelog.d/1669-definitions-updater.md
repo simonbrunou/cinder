@@ -10,7 +10,7 @@
   When it starts, before its first download, the job checks again, with no network call, each stored
   definition that has no check result from this Cinder's definition reader, then tries to decide
   again which copy each pinned Cardigann indexer runs and holds. `/activity` lists the job under
-  "Background sweeps" as `Updater` until its label lands.
+  "Background sweeps".
 
 ### Internal
 - **The definitions job's runs (#1669).** `Cinder.Indexers.Definitions.Updater.update_now/1`
@@ -19,7 +19,7 @@
   `{:never_loaded, %{error: tag}}`, with the last run's error tag, until an answer is applied or
   refused. It reads `{:update_failing, ...}` in place of `{:loaded, ...}` once every run since the
   last success has failed and that success, or the set's load when no run succeeded, ended more
-  than 72 hours ago. No page shows these yet.
+  than 72 hours ago.
 - **A definition load check that raises, throws or exits no longer logs its message (#1669).** A
   load check that raises, throws or exits now logs the blob hash with its exception's module or
   `exit` or `throw`, no longer the exception's message and stack trace, which could quote a URL from

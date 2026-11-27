@@ -141,7 +141,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
   #    that reads `.Result` and checks a download selector's `remove`.
   # 8: the `post`, `get`, `form` and `cookie` logins and the `info_cookie` setting type load
   #    (#1680), and `LoadCheck` checks a `login.inputs` key read as a selector.
-  @revision 8
+  # 9: the definitions store keeps each copy's display name with its result (#1676), which the
+  #    boot re-check fills in for every stored copy.
+  @revision 9
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -493,6 +495,10 @@ defmodule Cinder.Indexers.Definitions.Loader do
   """
   @spec fingerprint() :: %{schema_version: pos_integer(), revision: pos_integer()}
   def fingerprint, do: %{schema_version: @schema_version, revision: @revision}
+
+  @doc "The fixed-value slots whose unknown value reads `{:unknown_value, slot}`, in report order."
+  @spec unknown_slots() :: [atom()]
+  def unknown_slots, do: @unknown_slots
 
   @doc "Every feature code in report order, each with its flag: true once the engine builds it."
   @spec features() :: [{term(), boolean()}]

@@ -48,7 +48,7 @@ defmodule Cinder.Indexers.Definitions.Updater do
   require Logger
 
   alias Cinder.Indexers.Definitions
-  alias Cinder.Indexers.Definitions.{Source, UpdateRun}
+  alias Cinder.Indexers.Definitions.{Archive, Source, UpdateRun}
   alias Cinder.Repo
 
   @interval :timer.hours(24)
@@ -84,6 +84,25 @@ defmodule Cinder.Indexers.Definitions.Updater do
   end
 
   @doc """
+  Whether a run is in progress, asked of the worker, which answers while its run goes on in a
+  task. False when no worker runs.
+  """
+  @spec running?(GenServer.server()) :: boolean()
+  def running?(server \\ __MODULE__) do
+    GenServer.call(server, :running?)
+  catch
+    :exit, {:noproc, _call} -> false
+  end
+
+  @doc """
+  The tag of each error a failed run records: the source's (`Source.error_tags/0`, where
+  `:http_status` stands for `{:http_status, status}`), the zip reader's
+  (`Cinder.Indexers.Definitions.Archive.reasons/0`) and `:crashed`.
+  """
+  @spec error_tags() :: [atom()]
+  def error_tags, do: Enum.uniq(Source.error_tags() ++ Archive.reasons() ++ [:crashed])
+
+  @doc """
   The `Cinder.Jobs` snapshot, read from `:persistent_term`, never from the worker: the end of the
   last run (nil before the first) and the delay armed after it (24 hours before the first).
   """
@@ -116,6 +135,8 @@ defmodule Cinder.Indexers.Definitions.Updater do
     do: {:reply, {:ok, :started}, state |> cancel_timer() |> start_run(false)}
 
   def handle_call(:update_now, _from, state), do: {:reply, {:ok, :joined}, state}
+
+  def handle_call(:running?, _from, state), do: {:reply, state.run != nil, state}
 
   @impl true
   def handle_info({:scheduled_run, tag}, %{run: nil, timer: {tag, _timer}} = state),

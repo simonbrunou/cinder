@@ -190,7 +190,7 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(
              lv,
              "p",
-             "These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
+             "These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, sync Plex watchlists, and update indexer definitions."
            )
 
     assert has_element?(lv, "#job-Refresher", "Series metadata refresh")

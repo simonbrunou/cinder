@@ -597,12 +597,15 @@ defmodule Cinder.Indexers.Definitions.UpdaterTest do
         end
       end)
 
+      refute Updater.running?()
       assert Updater.update_now() == {:ok, :started}
       assert_receive {:master_commit, run}, 10_000
+      assert Updater.running?()
       assert Updater.update_now() == {:ok, :joined}
       send(run, :release)
 
       assert await_run() == :unchanged
+      refute Updater.running?()
       assert {86_400_000, _message} = armed()
       refute_received {:master_commit, _pid}
       refute_received {:definitions_update, _outcome}

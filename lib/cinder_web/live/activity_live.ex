@@ -544,6 +544,7 @@ defmodule CinderWeb.ActivityLive do
   defp job_label(Cinder.DatabaseBackup), do: gettext("Back up the database")
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Find missing subtitles")
   defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
+  defp job_label(Cinder.Indexers.Definitions.Updater), do: gettext("Update indexer definitions")
   defp job_label(module), do: module |> Module.split() |> List.last()
 
   # A sweep with an operator switch reports it, so a disabled one can't advertise a schedule it
@@ -1140,7 +1141,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
+            "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, sync Plex watchlists, and update indexer definitions."
           )}
         </p>
         <ul id="activity-jobs" class="space-y-2">

@@ -10,6 +10,7 @@ defmodule CinderWeb.SetupLiveTest do
   alias Cinder.Acquisition.IndexerSource.{Native, Prowlarr}
   alias Cinder.Acquisition.IndexerSource.Native.{IndexerState, IndexerStatus, TestRunner}
   alias Cinder.{ConfigCase, Indexers, Settings}
+  alias Cinder.Indexers.Definitions.UpdateRun
   alias Cinder.Test.Rendezvous
 
   setup :set_mox_global
@@ -620,6 +621,32 @@ defmodule CinderWeb.SetupLiveTest do
   end
 
   describe "the Indexers step" do
+    # #1676: the definitions line renders in the Indexers step as on /settings, and gates nothing.
+    test "shows the definitions not-loaded state, and Finish still opens", %{conn: conn} do
+      conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+      stub_all_services_ok()
+
+      Cinder.Repo.insert!(%UpdateRun{
+        id: UpdateRun.id(),
+        started_at: ~U[2026-11-26 11:00:00Z],
+        ended_at: ~U[2026-11-26 11:00:00Z],
+        outcome: :failed,
+        error: UpdateRun.encode_error({:failed, :transport})
+      })
+
+      {:ok, lv, _html} = live(conn, ~p"/setup")
+
+      assert has_element?(
+               lv,
+               "#setup-form #settings-group-indexer #indexer-definitions-not-loaded",
+               "Indexer definitions not loaded yet"
+             )
+
+      assert has_element?(lv, "#indexer-definitions-error", "GitHub could not be reached")
+      lv |> form("#setup-form", @valid_params_with_books) |> render_submit()
+      assert has_element?(lv, "#finish-setup:not([disabled])")
+    end
+
     test "holds the source select and the indexers table, and reads Add your indexers",
          %{conn: conn} do
       conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())

@@ -6,7 +6,7 @@ defmodule Cinder.Indexers.Definitions.LoadResult do
 
   `outcome` is `:loads`, `:not_supported` or `:fails`. `detail` holds the not-supported codes in
   the loader's order, or the failure reason, as an Erlang term; nil for `:loads`. A copy that
-  parses also stores its display `id`, privacy (its `type`), language, description and the names
+  parses also stores its display `id`, its `name`, privacy (its `type`), language, description and the names
   it lists under `replaces`.
   """
   use Ecto.Schema
@@ -20,6 +20,7 @@ defmodule Cinder.Indexers.Definitions.LoadResult do
     field :outcome, Ecto.Enum, values: [:loads, :not_supported, :fails]
     field :detail, :binary
     field :definition_id, :string
+    field :name, :string
     field :privacy, :string
     field :language, :string
     field :description, :string

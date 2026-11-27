@@ -242,7 +242,7 @@ defmodule CinderWeb.SettingsProwlarrImportCardigannTest do
     for {name, setup, text} <- [
           {"definition not available", :absent,
            "Definition not available: add it through Prowlarr"},
-          {"not supported", :not_supported, "Not supported: html_search"},
+          {"not supported", :not_supported, "Not supported: HTML responses"},
           {"needs a newer Cinder", :newer, "Needs a newer Cinder"},
           {"base URL", :base_url, "Base URL is not one of the definition's links"},
           {"select with no default", :no_default, "Order has no default value"}
@@ -346,9 +346,9 @@ defmodule CinderWeb.SettingsProwlarrImportCardigannTest do
     }
 
     assert ProwlarrImportText.reasons(row) == [
-             "Not supported: login form",
-             "Not supported: filter fuzzytime",
-             "Not supported: selector template"
+             "Not supported: the form login",
+             "Not supported: the fuzzytime filter",
+             "Not supported: selector templates"
            ]
   end
 

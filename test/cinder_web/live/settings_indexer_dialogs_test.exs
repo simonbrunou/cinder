@@ -352,15 +352,13 @@ defmodule CinderWeb.SettingsIndexerDialogsTest do
       refute has_element?(lv, "#indexer-dialog")
     end
 
-    test "a Cardigann row has no Edit button", %{conn: conn} do
+    test "a Cardigann row's Edit opens the Cardigann form (#1676)", %{conn: conn} do
       base = DefinitionFixtures.definition()
       DefinitionFixtures.mirror!(base)
       cardigann = DefinitionFixtures.cardigann!(base)
       {:ok, lv, _html} = live(conn, ~p"/settings")
-      assert has_element?(lv, "#indexer-#{cardigann.id}")
-      refute has_element?(lv, "#indexer-#{cardigann.id}-edit")
-      lv |> target() |> render_click("open_edit", %{"id" => to_string(cardigann.id)})
-      refute has_element?(lv, "#indexer-dialog")
+      lv |> element("#indexer-#{cardigann.id}-edit") |> render_click()
+      assert has_dialog_element?(lv, "#indexer-form-kind", "Cardigann (tracker.yml)")
     end
 
     test "the secret input ignores patches and gets a new id on each open", %{conn: conn} do

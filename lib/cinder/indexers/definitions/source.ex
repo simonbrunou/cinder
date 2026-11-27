@@ -26,6 +26,14 @@ defmodule Cinder.Indexers.Definitions.Source do
           | :no_master_ref
           | :invalid_commit
 
+  @doc """
+  The tag of each `error`: `:http_status` stands for `{:http_status, status}`, the others for
+  themselves.
+  """
+  @spec error_tags() :: [atom()]
+  def error_tags,
+    do: [:http_status, :timeout, :too_large, :transport, :no_master_ref, :invalid_commit]
+
   @doc "Reads the commit `master` names."
   @callback master_commit() :: {:ok, commit()} | {:error, error()}
 

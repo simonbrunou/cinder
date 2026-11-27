@@ -330,10 +330,27 @@ defmodule Cinder.Indexers do
   defp edit(row, lock_version, attrs, secrets) do
     changeset = ConfiguredIndexer.edit_changeset(row, Map.drop(attrs, plain_settings_keys(row)))
 
-    if row.lock_version != lock_version,
-      do: {:error, stale_error(changeset)},
-      else: edit_fields(row, changeset, attrs, secrets)
+    cond do
+      row.lock_version != lock_version -> {:error, stale_error(changeset)}
+      not rendered_copy?(row, attrs) -> {:error, definition_changed(changeset)}
+      true -> edit_fields(row, changeset, attrs, secrets)
+    end
   end
+
+  # A Cardigann edit form carries the hash of the copy it rendered; a save once the indexer runs
+  # another copy, as after an apply or an Accept, is refused (#1676; #1620 point 4). An edit
+  # that names no hash, as a toggle, is not checked.
+  defp rendered_copy?(%ConfiguredIndexer{type: :cardigann} = row, attrs) do
+    case blob_sha(attrs) do
+      nil -> true
+      sha -> Definitions.running_blob_sha(row.id) == sha
+    end
+  end
+
+  defp rendered_copy?(_row, _attrs), do: true
+
+  defp definition_changed(changeset),
+    do: refuse(changeset, :definition, :definition_changed, :update)
 
   # A Cardigann edit's settings merge into the stored ones (`edit_cardigann/4`), so the cast
   # never sees them.

@@ -61,6 +61,14 @@ defmodule Cinder.Indexers.Definitions.Hold do
           | :retyped_credential
   @type outcome :: :unchanged | {:keep, newer()} | {:apply, newer()} | {:hold, reason()}
 
+  @doc """
+  The tag of each `reason`: `:not_supported` stands for `{:not_supported, feature}`, the others
+  for themselves.
+  """
+  @spec reason_tags() :: [atom()]
+  def reason_tags,
+    do: [:undecryptable, :fails, :not_supported | credential_reasons()]
+
   @doc "The reasons an admin may Accept: the credential rules."
   @spec credential_reasons() :: [reason()]
   def credential_reasons, do: [:hosts, :certificates, :removed_credential, :retyped_credential]

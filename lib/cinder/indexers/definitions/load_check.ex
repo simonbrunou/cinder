@@ -124,7 +124,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   @spec codes() :: [tuple() | atom()]
   def codes,
     do:
-      Keyword.values(@codes) ++
+      [:dateparse_layout | Keyword.values(@codes)] ++
         @regex_codes ++ [@json_code, {:xml_selector, :invalid}, @certificate_code]
 
   @doc """

@@ -303,11 +303,12 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
   describe "check/2" do
     test "lists every code it adds, in its order" do
       assert LoadCheck.codes() ==
-               Enum.map(
-                 ~w(comment escape structure template result_template refused crash timeout memory
+               [:dateparse_layout] ++
+                 Enum.map(
+                   ~w(comment escape structure template result_template refused crash timeout memory
                     output_too_large)a,
-                 &{:selector, &1}
-               ) ++
+                   &{:selector, &1}
+                 ) ++
                  [
                    {:regex, :dotnet_only},
                    {:regex, :invalid},
