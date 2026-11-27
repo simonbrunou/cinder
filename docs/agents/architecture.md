@@ -524,3 +524,41 @@ A client that drops the finished job meanwhile answers `:download_not_found`, wh
 download budget; at its end a movie or TV release is blocklisted and a book target held. And
 nothing bounds the hold: the stall reaper reads only a client `:downloading` status, so a mount
 that never answers holds the download, as it holds the import.
+
+## The parser worker is not a security boundary
+
+`Cinder.Indexers.ParserWorker` bounds a lexbor crash and the worker's memory, CPU time, output
+and run time. It is not a security boundary: `start/3` runs `env` with the arguments
+`command_args/1` builds, and neither changes the user, so the worker runs as the app's OS user.
+Code that a crafted input runs inside the worker, through a lexbor memory bug, has that user's
+reach:
+
+- the app VM's environment, through `/proc/<vm pid>/environ`, and with it the secrets the
+  release reads from its environment, `SECRET_KEY_BASE` among them (`config/runtime.exs`);
+- every file the app user can read or write: the database, which the app itself writes, and the
+  release, which the image copies in owned by that user, `nobody` (`Dockerfile`). The stored
+  secrets in the database are encrypted with a key derived from `SECRET_KEY_BASE`
+  ([configuration.md](configuration.md) "Secrets"), so with the environment they are readable
+  too.
+
+Cinder accepts this risk (#1715). It covers each input the worker takes: the indexer pages and
+the definition selectors that `run/3` is handed, and the selectors `check_selectors/2` checks.
+The reason: the image Cinder ships runs as one unprivileged user (`USER nobody` in the
+`Dockerfile`), so the worker cannot switch to a second UID, and user namespaces and Landlock need
+a privilege or a kernel feature that the container or the host has to grant. Two confinements
+need no grant, and Cinder has neither. A seccomp filter, which a process may install once it sets
+`no_new_privs` (seccomp(2)), filters system calls, not paths. A VM marked non-dumpable with
+`prctl(PR_SET_DUMPABLE, 0)` closes its `/proc/<pid>/environ` to a process of the same user, but
+the VM has to make that call itself, since an `execve` of an ordinary program makes the process
+dumpable again. #1715 records the runs.
+
+Revisit the decision once the image or the deploy can grant a sandbox (a second UID, user
+namespaces or an active Landlock), once Cinder can mark its VM non-dumpable, or once a
+memory-safety advisory names lexbor or lazy_html.
+
+Two rules keep the accepted risk from growing:
+
+- No secret goes into the worker's environment, arguments or input. The moduledoc's "The worker"
+  lists what its environment holds, and `test/cinder/indexers/parser_worker_bounds_test.exs`
+  asserts it.
+- A worker is never reused or shared between indexers, as the moduledoc says.
