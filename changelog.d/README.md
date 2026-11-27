@@ -35,6 +35,16 @@ finds each subtitle workspace. #1196 made a recovery try to remove a folder that
 #1281 changed which corrections keep their record for the recovery and left #1156's fragment wrong
 again: about 17 minutes from finding it to the fix, and a second CI run.
 
+Run that search again right before merging, on `origin/main`'s fragments:
+`git grep -n -i <stem> origin/main -- changelog.d/`. A fragment that reached `main` after
+your first search can say something your change makes false, such as that your change is still
+missing. When your branch has no copy of that fragment, adding one in its diff conflicts with
+`main`'s: merge `origin/main` into the branch first, then fix the fragment there. On #1676
+(PR #1921) the merge of `origin/main` after #1910 merged brought `1680-cardigann-logins.md`,
+which said the built-in source can search, Test and grab a Cardigann indexer that signs in
+"though no page adds such an indexer yet", the page #1676 adds. A hunk check of that merge
+found it: one fix commit, a rewrap commit and one more hunk check.
+
 A change that adds a member to a set, such as an indexer type, a download client or a book kind,
 also searches `changelog.d/` for the names of the set's other members, since a sentence that
 lists them can say that only they do something. #1671 (PR #1836) gave Cardigann indexers a Test

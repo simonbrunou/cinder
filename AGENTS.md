@@ -16,8 +16,8 @@ Audiobookshelf.
   "The fence run" alone, and stops there when one fails. Then it runs the suite in
   `CINDER_TEST_PARTITIONS` partitions (default 4), each a process with its own database file and
   its own copy of the build folder.
-  It prints a failed partition's output last and exits non-zero, and `mix test.unchecked
-  --failed` then reads the failures manifest one process would have left.
+  It prints a failed partition's output last and exits non-zero, and
+  `mix test.unchecked --failed` then reads the failures manifest one process would have left.
   `CINDER_TEST_PARTITIONS=1`, a path argument, or a switch outside the
   pass-through list in `Cinder.TestPartitions` (`test/support/test_partitions.ex`) runs one
   process, with no separate fence run.
@@ -135,9 +135,11 @@ A changelog fragment in the PR can go stale with no conflict too. Right before m
 `git diff --name-only <pushed SHA>...origin/main -- . ':(exclude)test'`. When it lists a file a
 fragment of the PR describes, such as code under `lib/` or the `Dockerfile`, or lists
 `changelog.d/README.md`, check that fragment against that file and those rules as `origin/main`
-has them. When a sentence no longer holds, fix it, run `mix test`, push and wait for CI. Then
-check the three conditions and this one again before merging. While #1283 was open, #1281 and
-then #1285 merged and each made a fragment of #1283 stale: each took a fix commit and a CI run.
+has them. Search `origin/main`'s `changelog.d/` again too, as
+[changelog.d/README.md](changelog.d/README.md) says. When a sentence no longer holds, fix it,
+run `mix test`, push and wait for CI. Then check the three conditions and this one again before
+merging. While #1283 was open, #1281 and then #1285 merged and each made a fragment of #1283
+stale: each took a fix commit and a CI run.
 
 A fence, a test that scans the sources ([testing.md](docs/agents/testing.md)), can turn `main`
 red with no conflict too. A PR merged after a fence PR's CI ran can add a line the fence fails,
