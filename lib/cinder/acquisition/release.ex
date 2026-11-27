@@ -7,7 +7,9 @@ defmodule Cinder.Acquisition.Release do
   `query_origins` records identity-scoped and free-text query provenance; it is not proof, because
   a provider may ignore the requested id. The title guards read it to pick a rule per release
   (`free_text_only?/1`, `Cinder.Acquisition.title_guard/2`). `tvdb_id`, when present, is the
-  indexer result's explicit series identity and can preserve AKA-titled matches safely.
+  series identity the indexer reports on the result. The season title guard lets the series' own
+  id preserve an AKA-titled match only on a result that is not `free_text_only?/1`: an indexer
+  can stamp the series' id on an unrelated release.
 
   `protocol` (`:torrent | :usenet`) routes the release to the matching download
   client; it defaults to `:torrent` when the indexer map omits it.

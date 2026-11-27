@@ -1774,6 +1774,40 @@ defmodule Cinder.AcquisitionTest do
                pick_season(series(title: "The Office", year: 2005), 1, [1])
     end
 
+    test "the series' reported TVDB id on a free-text-only result no longer excuses its name" do
+      name = "Totally.Unrelated.Show.S01E01.1080p.WEB-DL-GRP"
+
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, 2, fn 123, "The Office", 1 ->
+        {:ok, [raw_tv(name, tvdb_id: 123, query_origins: [:free_text])]}
+      end)
+
+      assert :no_match = pick_season(series(year: 2005), 1, [1])
+
+      context = season_context(series: series(year: 2005))
+
+      assert {:ok, %ReleaseJudge{rows: [%{release: %Release{title: ^name}} = row]}} =
+               Acquisition.judge_season(context, [1], [])
+
+      assert row.dropped_at == :title_guard
+    end
+
+    test "a link the TVDB-scoped query also returned keeps the reported id's excuse" do
+      # One link, two copies: `deduplicate_tv_releases/1` merges their origins, so the kept copy
+      # counts as id-scoped whichever copy came first.
+      name = "Totally.Unrelated.Show.S01E01.1080p.WEB-DL-GRP"
+
+      for origins <- [[[:free_text], [:id_scoped]], [[:id_scoped], [:free_text]]] do
+        expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+          {:ok, Enum.map(origins, &raw_tv(name, tvdb_id: 123, query_origins: &1))}
+        end)
+
+        picked = pick_season(series(year: 2005), 1, [1])
+
+        assert match?({:ok, [{%Release{title: ^name}, [1]}]}, picked),
+               "origins #{inspect(origins)}: #{inspect(picked)}"
+      end
+    end
+
     test "a numeric title is token-anchored: a year in another show's name can't match" do
       # Regression: substring matching let series "24" accept "Other.Show.2024..." —
       # the scorer then matched on season number alone and imported the wrong show.
@@ -2069,6 +2103,61 @@ defmodule Cinder.AcquisitionTest do
 
       assert [%Release{title: "La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP"}] =
                Acquisition.title_guard(releases, {:series, target, 1, [1]})
+    end
+
+    test "the series' reported TVDB id excuses an unrelated name unless the result is free-text only" do
+      # `[]` reads as nil does (`Release.free_text_only?/1`), as `tv_title_evidence?/2` reads it
+      # for a series with no year.
+      name = "Totally.Unrelated.Show.S01E01.1080p.WEB-DL-GRP"
+
+      for year <- [2005, nil] do
+        releases =
+          for origins <- [[:free_text], [], [:id_scoped], [:id_scoped, :free_text], nil] do
+            Release.new(raw_tv(name, tvdb_id: 123, query_origins: origins))
+          end
+
+        kept =
+          releases
+          |> Acquisition.title_guard({:series, series(year: year), 1, [1]})
+          |> Enum.map(& &1.query_origins)
+
+        assert {year, kept} == {year, [[], [:id_scoped], [:id_scoped, :free_text], nil]}
+      end
+    end
+
+    test "on a free-text-only result the series' reported TVDB id waives the year, not the name" do
+      # The title check drops "The.Office.2021" under 2005, since a year after the title is a
+      # release tag only within one of the series year. A year after the episode code passes it,
+      # so only the final `reject_year_conflicts/2` pass drops that row. A word or a quality tag
+      # between the title and the episode code fails the title check too.
+      cases = [
+        {2005, "The.Office.S01E01.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.S01E01.1080p.WEB-DL-GRP", nil},
+        {2005, "The.Office.S01.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.2005.S01E01.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.2021.S01E01.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.S01E01.2021.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.US.S01E01.1080p.WEB-DL-GRP", 123},
+        {2005, "The.Office.1080p.S01E01.WEB-DL-GRP", 123},
+        {2005, "The.Office.S01E01.1080p.WEB-DL-GRP", 999},
+        {nil, "The.Office.S01E01.1080p.WEB-DL-GRP", 123},
+        {nil, "The.Office.2021.S01E01.1080p.WEB-DL-GRP", 123},
+        {nil, "The.Office.US.S01E01.1080p.WEB-DL-GRP", 123},
+        {nil, "The.Office.S01E01.1080p.WEB-DL-GRP", 999}
+      ]
+
+      kept =
+        Enum.filter(cases, fn {year, name, tvdb_id} ->
+          release = Release.new(raw_tv(name, tvdb_id: tvdb_id, query_origins: [:free_text]))
+          Acquisition.title_guard([release], {:series, series(year: year), 1, [1]}) != []
+        end)
+
+      assert kept == [
+               {2005, "The.Office.S01E01.1080p.WEB-DL-GRP", 123},
+               {2005, "The.Office.S01.1080p.WEB-DL-GRP", 123},
+               {2005, "The.Office.2005.S01E01.1080p.WEB-DL-GRP", 123},
+               {nil, "The.Office.S01E01.1080p.WEB-DL-GRP", 123}
+             ]
     end
 
     test "a title containing a year token still year-verifies against its own decoration year" do

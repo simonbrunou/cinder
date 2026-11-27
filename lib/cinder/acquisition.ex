@@ -209,9 +209,15 @@ defmodule Cinder.Acquisition do
     kept.
   - `{:title_year, title, year}`: a free-text movie search. Everything before the year token has
     to be the title.
-  - `{:series, series, season_number, wanted_numbers}`: a season search. An explicit TVDB id
-    match is proof; otherwise the title run has to open a release tag, and a known year has to
-    agree.
+  - `{:series, series, season_number, wanted_numbers}`: a season search. For a series with no
+    TVDB id, the title run has to open a release tag. For one with a TVDB id, another series'
+    reported id drops a result. The series' own id is proof on a result that is not free-text
+    only (`Cinder.Acquisition.Release.free_text_only?/1`). On a free-text-only one, it waives the
+    year evidence but not the title run. With no reported id, a known-year series asks the title
+    run and a year within one of its own from a result with a list of origins, a series with no
+    year asks the title run of a result whose origins are free text alone, and a result with nil
+    origins passes. Last, a name whose every year is more than one off a known series year is
+    dropped.
   - `{:anime_movie, context}`: the anime movie queries. The anime guard
     (`Cinder.Acquisition.Anime.names_movie?/2`), and for an IMDb-scoped result the `{:imdb,
     context}` spelling as well.
@@ -677,8 +683,12 @@ defmodule Cinder.Acquisition do
   # With a TVDB id (the other clause), a candidate carries the origins of the queries that
   # returned it (the `IndexerSource.search_tv/3` callback's `:query_origins`). Query origin is not
   # identity proof: a provider can ignore the id, and dedup can give one wrong result both origins
-  # (#315). A TVDB id the indexer reports on the result is proof, which `tv_title_match?/2` reads
-  # first: the series' own id passes the result, AKA titles included, and another id drops it.
+  # (#315). `tv_title_match?/2` reads first the TVDB id the indexer reports on the result. Another
+  # series' id drops the result. The series' own id passes a result that is not free-text only
+  # (`Release.free_text_only?/1`: its origins include `:id_scoped`, or are nil or empty), AKA
+  # titles included. A free-text-only result is not proven by it, since an indexer can stamp the
+  # series' id on an unrelated release (#1633): its name needs the series title before a release
+  # tag (`search_title_match?/2`), but no year evidence (`year_verified?/2`).
   # With no reported id (`tv_title_evidence?/2`):
   #
   # - from a result with a list of query origins, whatever the list holds, a known-year series
@@ -700,14 +710,18 @@ defmodule Cinder.Acquisition do
 
   defp tv_title_match?(release, series) do
     case reported_tvdb_identity(release, series) do
-      :same -> true
+      :same -> not Release.free_text_only?(release) or search_title_match?(series, release.title)
       :other -> false
       :unreported -> tv_title_evidence?(release, series)
     end
   end
 
-  # What the indexer's reported TVDB id says about a result: proof either way once both the result
-  # and the target carry one.
+  # What the indexer's reported TVDB id says about a result once both the result and the target
+  # carry one: the same series or another. Each caller decides how far to trust `:same`. The
+  # standard season guard (`tv_title_match?/2`) takes it as proof on a result that is not
+  # free-text only, and still asks a free-text-only result for the series title. The anime guards
+  # take it as proof on a TVDB-scoped result (`tvdb_scoped_episode_named?/2`), and on a free-text
+  # one only once its name leads with the title or an alias (`another_anime_series?/2`).
   defp reported_tvdb_identity(%Release{tvdb_id: tvdb_id}, %{tvdb_id: tvdb_id})
        when is_integer(tvdb_id),
        do: :same
@@ -845,15 +859,16 @@ defmodule Cinder.Acquisition do
 
   # The TVDB-scoped anime episode query is scope, not identity proof either (#699): an indexer can
   # ignore the id, and the anime parser then reads an SxxEyy coordinate out of any name it returns.
-  # The season guard's identity rule holds: the series' own reported TVDB id proves a result under
-  # any name, another series' id disproves it. Otherwise the name has to lead with a title or an
-  # alias in one of the two readings release names need: the anime guard's (a bracketed group, an
-  # absolute number) or the scene fold's ("Frieren.Beyond.Journeys.End.S01E05" for "Frieren:
-  # Beyond Journey's End"). As in the season guard, a year more than one off the series' names a
-  # same-titled other series. As for an IMDb-scoped movie, a series with no title the fold can
-  # spell (native script only) can't check the Latin names releases mostly carry, so the id scope
-  # stays the evidence. A free-text result faced the anime search's own guard, which reads the same
-  # reported id and year (`another_anime_series?/2`, #871) but never lets the id excuse the name.
+  # As the season guard does for an id-scoped result, the series' own reported TVDB id proves a
+  # result under any name, and another series' id disproves it. Otherwise the name has to lead
+  # with a title or an alias in one of the two readings release names need: the anime guard's (a
+  # bracketed group, an absolute number) or the scene fold's ("Frieren.Beyond.Journeys.End.S01E05"
+  # for "Frieren: Beyond Journey's End"). As in the season guard, a year more than one off the
+  # series' names a same-titled other series. As for an IMDb-scoped movie, a series with no title
+  # the fold can spell (native script only) can't check the Latin names releases mostly carry, so
+  # the id scope stays the evidence. A free-text result faced the anime search's own guard, which
+  # reads the same reported id and year (`another_anime_series?/2`, #871) but never lets the id
+  # excuse the name.
   defp anime_episode_named?(%Release{query_origins: origins} = release, context) do
     if :id_scoped in (origins || []),
       do: tvdb_scoped_episode_named?(release, context),
