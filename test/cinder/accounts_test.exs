@@ -5,6 +5,7 @@ defmodule Cinder.AccountsTest do
 
   import Cinder.AccountsFixtures
   alias Cinder.Accounts.{User, UserToken}
+  alias Cloak.Ciphers.AES.GCM
 
   @bootstrap_token "test-bootstrap-token"
 
@@ -1410,10 +1411,29 @@ defmodule Cinder.AccountsTest do
       refute inspect(stored) =~ stored.plex_token
     end
 
-    test "a token encrypted under another key decodes to nil, never to the ciphertext" do
+    test "a token with no Vault key tag decodes to nil, never to the ciphertext" do
       user =
         user_fixture()
         |> Ecto.Changeset.change(plex_token: Base.encode64("not-our-ciphertext"))
+        |> Repo.update!()
+
+      assert Accounts.plex_token(user) == nil
+    end
+
+    test "a token whose Vault key tag matches but was made under another key decodes to nil" do
+      # As `Cinder.SecretCodecTest` builds it: Cloak reaches the GCM check and answers
+      # {:ok, :error}, which the stored value above, with no key tag, never reaches.
+      {:ok, ciphertext} =
+        GCM.encrypt("super-secret-plex-token",
+          key: :crypto.hash(:sha256, "another secret_key_base"),
+          tag: "AES.GCM.V1"
+        )
+
+      assert Cinder.Vault.decrypt(ciphertext) == {:ok, :error}
+
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_token: Base.encode64(ciphertext))
         |> Repo.update!()
 
       assert Accounts.plex_token(user) == nil

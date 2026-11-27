@@ -1,7 +1,8 @@
 defmodule Cinder.SecretCodec do
   @moduledoc """
   The one codec for secrets stored as Base64 `Cinder.Vault` ciphertext: the secret settings
-  (`Cinder.Settings.Crypto`) and the configured indexers' secrets (`Cinder.Indexers.Secrets`).
+  (`Cinder.Settings.Crypto`), the configured indexers' secrets (`Cinder.Indexers.Secrets`), the
+  Plex token (`Cinder.Accounts`) and the download intent's link (`Cinder.Download`).
 
   `decode/1` tells three answers apart and never raises, logs or returns the ciphertext:
   `:absent` for a value never set (`nil`), `{:ok, plaintext}`, and `:unreadable` for anything

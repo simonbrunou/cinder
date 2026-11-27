@@ -13,7 +13,7 @@ defmodule Cinder.Download do
   import Ecto.Query
 
   require Logger
-  alias Cinder.{Acquisition, Books, Catalog, Repo, Settings, Vault}
+  alias Cinder.{Acquisition, Books, Catalog, Repo, SecretCodec, Settings}
 
   alias Cinder.Acquisition.{
     AnimePreferences,
@@ -82,7 +82,7 @@ defmodule Cinder.Download do
        ) do
     release_attrs = %{
       "title" => release.title,
-      "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
+      "download_url_ciphertext" => SecretCodec.encode(url),
       "download_url_origin" => release.download_url_origin
     }
 
@@ -896,12 +896,11 @@ defmodule Cinder.Download do
     end
   end
 
-  defp decrypt_download_url(%{"download_url_ciphertext" => encoded}) do
-    with {:ok, ciphertext} <- Base.decode64(encoded),
-         {:ok, url} when is_binary(url) <- Vault.decrypt(ciphertext) do
-      {:ok, url}
-    else
-      _ -> {:error, :invalid_intent_release}
+  # A nil, empty or non-text link answers like a missing key or one under another key (#1698).
+  defp decrypt_download_url(%{"download_url_ciphertext" => stored}) do
+    case SecretCodec.decode(stored) do
+      {:ok, url} -> {:ok, url}
+      _absent_or_unreadable -> {:error, :invalid_intent_release}
     end
   end
 

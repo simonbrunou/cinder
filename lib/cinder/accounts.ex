@@ -11,6 +11,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Audit.AdminAudit
   alias Cinder.Library.MediaServer
   alias Cinder.Notifier
+  alias Cinder.SecretCodec
   alias Cinder.Settings
   alias Cinder.Util
 
@@ -323,33 +324,26 @@ defmodule Cinder.Accounts do
   end
 
   @doc """
-  Stores the plex.tv auth token the sign-in/link flow just obtained, encrypted at rest with the
-  same `Cinder.Vault` the settings secrets use. It is a credential: it is never logged, rendered
-  or included in the data export, and it only leaves the DB through `plex_token/1`.
+  Stores the plex.tv auth token the sign-in/link flow just obtained, encrypted at rest through
+  `Cinder.SecretCodec`, like the settings secrets. It is a credential: it is never logged,
+  rendered or included in the data export, and it only leaves the DB through `plex_token/1`.
   """
   def store_plex_token(%User{} = user, token) when is_binary(token) and token != "" do
     user
-    |> Ecto.Changeset.change(plex_token: Base.encode64(Cinder.Vault.encrypt!(token)))
+    |> Ecto.Changeset.change(plex_token: SecretCodec.encode(token))
     |> Repo.update()
   end
 
   @doc """
-  The user's decrypted plex.tv token, or `nil` when there is none or it was encrypted under a
-  different `SECRET_KEY_BASE`. Never raises and never returns the ciphertext — the `is_binary`
-  guard matters, since Cloak's AES-GCM decrypt answers `{:ok, :error}` (not an error tuple) when
-  the tag fails to authenticate.
+  The user's decrypted plex.tv token, or `nil` when there is none or it does not decrypt, as
+  when it was encrypted under a different `SECRET_KEY_BASE`. Never raises and never returns the
+  ciphertext.
   """
-  def plex_token(%User{plex_token: nil}), do: nil
-
   def plex_token(%User{plex_token: stored}) do
-    with {:ok, ciphertext} <- Base.decode64(stored),
-         {:ok, token} when is_binary(token) <- Cinder.Vault.decrypt(ciphertext) do
-      token
-    else
-      _ -> nil
+    case SecretCodec.decode(stored) do
+      {:ok, token} -> token
+      _absent_or_unreadable -> nil
     end
-  rescue
-    _ -> nil
   end
 
   @doc "Sets the caller's own opt-in for Plex watchlist sync (off by default)."

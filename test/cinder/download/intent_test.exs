@@ -14,6 +14,7 @@ defmodule Cinder.Download.IntentTest do
   alias Cinder.Download.Intent
   alias Cinder.Download.IntentEpisode
   alias Cinder.Repo
+  alias Cloak.Ciphers.AES.GCM
 
   import Cinder.CatalogFixtures
   import Cinder.PollerHelpers, only: [poll_until: 2]
@@ -791,6 +792,50 @@ defmodule Cinder.Download.IntentTest do
 
     assert {:error, :invalid_intent_release} = Download.reconcile_intent(intent)
     refute Repo.get(Intent, intent.id)
+  end
+
+  # Only a hand-edited row holds these: `reserve_intent/1` always stores a non-empty Base64 link.
+  # Before #1698 nil and 42 raised FunctionClauseError and "" raised MatchError.
+  for {label, stored} <- [{"a nil", nil}, {"an empty", ""}, {"a non-text", 42}] do
+    test "#{label} stored link releases a pre-submission intent with no add" do
+      assert_link_releases_intent(unquote(stored))
+    end
+  end
+
+  test "a link encrypted under another key releases a pre-submission intent with no add" do
+    assert_link_releases_intent(other_key_ciphertext("https://indexer.test/movie.torrent"))
+  end
+
+  defp assert_link_releases_intent(stored) do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    release = Map.put(intent.release, "download_url_ciphertext", stored)
+    intent = intent |> Intent.changeset(%{release: release}) |> Repo.update!()
+    assert Repo.get!(Intent, intent.id).release["download_url_ciphertext"] == stored
+
+    test_pid = self()
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      send(test_pid, :client_add)
+      {:ok, "remote"}
+    end)
+
+    assert {:error, :invalid_intent_release} = Download.reconcile_intent(intent)
+    refute Repo.get(Intent, intent.id)
+    refute_received :client_add
+  end
+
+  # A ciphertext made under another Vault key, as `Cinder.SecretCodecTest` builds it: Cloak reaches
+  # the GCM check and answers {:ok, :error}.
+  defp other_key_ciphertext(plaintext) do
+    {:ok, ciphertext} =
+      GCM.encrypt(plaintext,
+        key: :crypto.hash(:sha256, "another secret_key_base"),
+        tag: "AES.GCM.V1"
+      )
+
+    Base.encode64(ciphertext)
   end
 
   test "transient submission errors retain the key with bounded retry metadata" do
