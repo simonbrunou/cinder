@@ -18,7 +18,8 @@ defmodule Cinder.Indexers.Parity do
     `kinds` lists the corpus kinds (`Cinder.Indexers.Parity.Picks.kinds/0`) its caps can take,
     `:movie_imdb` only when its movie search lists `imdbid`; a kind outside that list gets no
     cell and keeps the verdict from pass. `link_check` is `:passed`,
-    `{:failed, tag}` or `:not_run`. An optional `tvdb_search` says whether its TV search caps
+    `{:failed, tag}`, `:not_run`, or `{:not_run, reason}` with the reason
+    `Cinder.Indexers.ParityRun.LinkCheck` or the run gives (#1954). An optional `tvdb_search` says whether its TV search caps
     list `tvdbid`: `true`, `false`, or `nil` when the run could not read them.
   - `prowlarr_map`: `%{prowlarr_id => configured_id}` (`configured_indexers.prowlarr_indexer_id`).
   - `history` and `statuses`: `ProwlarrReads.history/3` and `status/1` answers for the window;
@@ -746,7 +747,21 @@ defmodule Cinder.Indexers.Parity do
   defp link_tag(:passed), do: :passed
   defp link_tag({:failed, tag}), do: {:failed, Picks.tag(tag)}
   defp link_tag(:not_run), do: :not_run
+
+  defp link_tag({:not_run, {:picks, picks}}) when is_list(picks),
+    do: {:not_run, {:picks, Enum.map(picks, &closed_tag/1)}}
+
+  defp link_tag({:not_run, reason}), do: {:not_run, closed_tag(reason)}
   defp link_tag(_other), do: :other
+
+  # A link check's reason as a closed tag (#1954): atoms and integers, in tuples; anything else
+  # `:other`.
+  defp closed_tag(term) when is_atom(term) or is_integer(term), do: term
+
+  defp closed_tag(term) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.map(&closed_tag/1) |> List.to_tuple()
+
+  defp closed_tag(_term), do: :other
 
   defp mapping_reasons(ctx) do
     seen_pids =

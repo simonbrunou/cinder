@@ -1911,6 +1911,54 @@ defmodule Cinder.Indexers.ParityTest do
         assert_line(result.report, "Alpha (#1) link check: #{Parity.Text.tag(check)}")
       end
     end
+
+    # #1954: a link check that did not run names the reason it carries, on its reason line and
+    # its evidence line; a bare `:not_run` carries none.
+    test "a link check that did not run names the reason it carries" do
+      picks = [{0, :no_match}, {2, {:error, {:http_status, 500}}}, {3, :no_link}]
+
+      for {check, text} <- [
+            {:not_run, "not_run"},
+            {{:not_run, :no_rows}, "not_run (no Native row in any first try)"},
+            {{:not_run, {:picks, picks}},
+             "not_run (pick over its own first-try rows: #0 no_match, #2 error http_status 500, #3 no_link)"},
+            {{:not_run, {:stopped, :budget}}, "not_run (stopped budget)"},
+            {{:not_run, {:stopped, :rate_limited}}, "not_run (stopped rate_limited)"},
+            {{:not_run, :deadline}, "not_run (deadline passed)"}
+          ] do
+        indexers = [
+          %{id: @alpha, name: "Alpha", kinds: [:movie_title], link_check: check},
+          %{id: @bravo, name: "Bravo", kinds: [:movie_title], link_check: :passed}
+        ]
+
+        result = Parity.compare(run([movie_search("Dune", [matching_try()])], indexers: indexers))
+        assert result.reasons == [{:link_check, @alpha, check}]
+        lines = lines(result.report)
+        assert "  Alpha (#1) link check: #{text}" in lines, result.report
+        assert "  Alpha (#1): matching rows found, link check #{text}" in lines, result.report
+      end
+    end
+
+    test "a link check reason that holds input text prints none of it" do
+      dirty = "https://x.example/?apikey=#{@key}"
+
+      for {check, text} <- [
+            {{:not_run, dirty}, "not_run (other)"},
+            {{:not_run, {:stopped, dirty}}, "not_run (stopped other)"},
+            {{:not_run, {:picks, [{0, dirty}, dirty, {dirty, :no_match}]}},
+             "not_run (pick over its own first-try rows: #0 other, other, other no_match)"}
+          ] do
+        indexers = [
+          %{id: @alpha, name: "Alpha", kinds: [:movie_title], link_check: check},
+          %{id: @bravo, name: "Bravo", kinds: [:movie_title], link_check: :passed}
+        ]
+
+        result = Parity.compare(run([movie_search("Dune", [matching_try()])], indexers: indexers))
+        refute result.report =~ @key
+        refute inspect(result, limit: :infinity, printable_limit: :infinity) =~ @key
+        assert "  Alpha (#1) link check: #{text}" in lines(result.report), result.report
+      end
+    end
   end
 
   # #1943: in #1687's second run, Nyaa.si's Native rows held soundtracks and artbooks outside the

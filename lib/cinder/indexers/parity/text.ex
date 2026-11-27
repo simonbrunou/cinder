@@ -16,6 +16,12 @@ defmodule Cinder.Indexers.Parity.Text do
   other lacks, one entry per title and size with its row count: at most #{@max_entries} entries,
   sorted by title and size, then how many more entries and how many such rows in all.
 
+  A link check that did not run and carries a reason (#1954) prints it after `not_run`, in fixed
+  words and closed tags: no Native row of the indexer in any search's first try, the pick over
+  its own first-try rows in each search that held one, by the search's index (`#0 no_match`),
+  the stop and its reason, or the deadline. A bare `:not_run`, which the run no longer gives,
+  prints `not_run` alone.
+
   From the input it prints the seed, search labels, indexer names, titles, sizes, counts, ids,
   times (the window, a wait's end) and closed tags only, beside its own fixed text such as the
   listed differences; never a link, a request URL, a history entry's URL, a key or an error
@@ -130,7 +136,7 @@ defmodule Cinder.Indexers.Parity.Text do
     do: "#{name(ctx, cid)} has no search where both sides returned matching rows"
 
   defp reason({:link_check, cid, check}, ctx, _run),
-    do: "#{name(ctx, cid)} link check: #{tag(check)}"
+    do: "#{name(ctx, cid)} link check: #{link_check(check)}"
 
   defp cells(cells, ctx) do
     for {{cid, kind}, status} <- Enum.sort(cells),
@@ -143,8 +149,24 @@ defmodule Cinder.Indexers.Parity.Text do
   defp evidence(evidence, ctx) do
     for {cid, e} <- Enum.sort(evidence),
         do:
-          "#{name(ctx, cid)}: matching rows #{if e.rows, do: "found", else: "none"}, link check #{tag(e.link_check)}"
+          "#{name(ctx, cid)}: matching rows #{if e.rows, do: "found", else: "none"}, link check #{link_check(e.link_check)}"
   end
+
+  # #1954: a link check that did not run names the reason it carries.
+  defp link_check({:not_run, reason}), do: "not_run (#{not_run(reason)})"
+  defp link_check(check), do: tag(check)
+
+  defp not_run(:no_rows), do: "no Native row in any first try"
+  defp not_run(:deadline), do: "deadline passed"
+  defp not_run({:stopped, reason}), do: "stopped #{tag(reason)}"
+
+  defp not_run({:picks, picks}) when is_list(picks),
+    do: "pick over its own first-try rows: " <> Enum.map_join(picks, ", ", &pick_entry/1)
+
+  defp not_run(reason), do: tag(reason)
+
+  defp pick_entry({index, pick}) when is_integer(index), do: "##{index} #{tag(pick)}"
+  defp pick_entry(entry), do: tag(entry)
 
   defp search(s, ctx) do
     head =

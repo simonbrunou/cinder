@@ -469,17 +469,20 @@ defmodule Cinder.Indexers.ParityRun do
 
   # Each indexer's kinds, `tvdb_search` and link check, read once after the first tries. A
   # stopped indexer, or any once the deadline has passed, is sent nothing more: it keeps every
-  # kind, its `tvdb_search` is nil and its link check is not run.
+  # kind, its `tvdb_search` is nil and its link check is not run, which names the stop and its
+  # reason, or else the deadline (#1954).
   defp engine_indexers(searches, ctx) do
     fetch_opts = Keyword.get(ctx.opts, :fetch_opts, [])
 
     Enum.map(ctx.indexers, fn indexer ->
       {caps, link_check} =
-        if Map.has_key?(ctx.stopped, indexer.id) or mono() >= ctx.deadline_at do
-          {IndexerSet.unread(Corpus.kinds()), :not_run}
-        else
-          {IndexerSet.caps(indexer, Corpus.kinds(), adapter_context(indexer, ctx)),
-           LinkCheck.check(indexer, searches, ctx.budget, fetch_opts)}
+        case not_sent(indexer, ctx) do
+          nil ->
+            {IndexerSet.caps(indexer, Corpus.kinds(), adapter_context(indexer, ctx)),
+             LinkCheck.check(indexer, searches, ctx.budget, fetch_opts)}
+
+          reason ->
+            {IndexerSet.unread(Corpus.kinds()), {:not_run, reason}}
         end
 
       %{
@@ -490,6 +493,15 @@ defmodule Cinder.Indexers.ParityRun do
         link_check: link_check
       }
     end)
+  end
+
+  # Why the run sends `indexer` nothing more, or nil: its stop first, then the deadline.
+  defp not_sent(indexer, ctx) do
+    cond do
+      Map.has_key?(ctx.stopped, indexer.id) -> {:stopped, Map.fetch!(ctx.stopped, indexer.id)}
+      mono() >= ctx.deadline_at -> :deadline
+      true -> nil
+    end
   end
 
   # The adapter context Native's searches hand an indexer (`Native.search_run/2`).

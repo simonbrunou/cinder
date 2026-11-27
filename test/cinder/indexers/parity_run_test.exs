@@ -265,6 +265,12 @@ defmodule Cinder.Indexers.ParityRunTest do
 
   defp same(title, size), do: fn _side, _n -> [{title, size}] end
 
+  # The report's reason line for `indexer`'s link check, whole.
+  defp assert_link_line(report, indexer, text) do
+    line = "  newznab nzb.example (##{indexer.id}) link check: #{text}"
+    assert line in String.split(report, "\n"), report
+  end
+
   defp inception, do: movie_fixture(%{imdb_id: "tt1375666", title: "Inception", year: 2010})
 
   defp nzb(pid, rows),
@@ -418,6 +424,70 @@ defmodule Cinder.Indexers.ParityRunTest do
     len = pad - String.length("#{pad}:")
     len = if String.length("#{len}:") + len == pad, do: len, else: len + 1
     open <> "#{len}:" <> String.duplicate("z", len) <> "e"
+  end
+
+  # --- a link check that does not run (#1954) ---
+
+  test "an indexer with no Native row in any search reads not_run with no_rows, and is not fetched",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert_link_line(report, indexer, "not_run (no Native row in any first try)")
+    # Native's one search, and no link fetch.
+    assert search_count("nzb.example") == 1
+  end
+
+  # The link check runs before any retry: a Native row that only the second try returns gives it
+  # no row, and the reason says first try.
+  test "a Native row only a retry returns leaves the link check at no_rows",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+
+    rows = fn
+      :native, 1 -> []
+      _side, _n -> [{@title, @size}]
+    end
+
+    world(%{"nzb.example" => nzb(7, rows)}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 1}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert report =~ "try 2: ok"
+    assert_link_line(report, indexer, "not_run (no Native row in any first try)")
+    # Native's two searches, and no link fetch.
+    assert search_count("nzb.example") == 2
+  end
+
+  # The first search's Native call answers no row, the second's one the caller's title guard
+  # drops: the reason lists the second search alone, by its index in the run.
+  test "an indexer whose own rows the caller picks nothing from reads not_run with each search's pick",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    movie_fixture(%{imdb_id: "tt0816692", title: "Interstellar", year: 2014})
+
+    rows = fn
+      _side, 1 -> []
+      _side, _n -> [{"Unrelated.Film.2001.1080p.WEB-DL-GRP", @size}]
+    end
+
+    world(%{"nzb.example" => nzb(7, rows)}, history)
+    prowlarr_api(history, statuses)
+
+    report = run!(counts: %{movie_imdb: 2}, indexers: [indexer.id])
+
+    assert_received {:result, :ok}
+    assert_link_line(report, indexer, "not_run (pick over its own first-try rows: #1 no_match)")
+    refute report =~ "Unrelated"
   end
 
   # --- the opts both sides get ---
@@ -738,6 +808,7 @@ defmodule Cinder.Indexers.ParityRunTest do
     assert_received {:result, :ok}
     assert report =~ "inconclusive budget"
     assert report =~ "Requests spent: newznab nzb.example (##{indexer.id}) 2"
+    assert_link_line(report, indexer, "not_run (stopped budget)")
     # Native goes first (seed 1) and spends both requests: the caps fetch and its search. So
     # Prowlarr's request would carry no id, and none is sent.
     assert search_count("nzb.example") == 1
@@ -889,6 +960,7 @@ defmodule Cinder.Indexers.ParityRunTest do
 
       assert_received {:result, :ok}
       assert report =~ "inconclusive rate_limited"
+      assert_link_line(report, indexer, "not_run (stopped rate_limited)")
       assert length(prowlarr_ids()) == 1
       refute report =~ @key
     end
@@ -974,7 +1046,40 @@ defmodule Cinder.Indexers.ParityRunTest do
 
     assert_received {:result, :ok}
     refute report =~ "Verdict: pass"
+    assert_link_line(report, indexer, "not_run (deadline passed)")
     assert search_count("nzb.example") == 0
+    assert prowlarr_ids() == []
+  end
+
+  # #1954: Native goes first (seed 1), and its caps fetch and search spend the allowance of 2, so
+  # Prowlarr's request is refused and the try stops the indexer. The second side then waits
+  # 2.1 s, past the 2 s deadline; the 2 s are headroom for the run to reach its first try.
+  test "an indexer the run stopped reads its stop, also once the deadline has passed",
+       %{history: history, statuses: statuses} do
+    indexer = :newznab |> indexer!("nzb.example") |> link!(7)
+    inception()
+    world(%{"nzb.example" => nzb(7, fn _side, _n -> [] end)}, history)
+    prowlarr_api(history, statuses)
+    calls = start_supervised!({Agent, fn -> 0 end}, id: :calls)
+
+    slow = fn kind, target, opts, source ->
+      pick = Picks.run(kind, target, opts, source)
+      if Agent.get_and_update(calls, &{&1 + 1, &1 + 1}) == 2, do: Process.sleep(2_100)
+      pick
+    end
+
+    report =
+      run!(
+        budget: 2,
+        deadline_s: 2,
+        picks: slow,
+        counts: %{movie_imdb: 1},
+        indexers: [indexer.id]
+      )
+
+    assert_received {:result, :ok}
+    assert_link_line(report, indexer, "not_run (stopped budget)")
+    assert search_count("nzb.example") == 1
     assert prowlarr_ids() == []
   end
 
@@ -1419,6 +1524,116 @@ defmodule Cinder.Indexers.ParityRunTest do
       # The same row with one request left is fetched, so the refusal above is the budget's.
       assert LinkCheck.check(indexer, [search], Budget.new([indexer.id], 1)) == :passed
       assert Cinder.CardigannFixtures.requests() == [{"t9.test", "/torrent/1", %{}}]
+    end
+
+    # #1954: search #0 holds only another indexer's row, so it gives no pick; in search #1 the
+    # caller picks the indexer's own row, which has no link; in search #2 the title guard drops
+    # its own row.
+    test "a link check whose pick has no link reads not_run with no_link, by the search's index" do
+      indexer = indexer!(:newznab, "nzb.example")
+      other = indexer!(:newznab, "other.example")
+
+      row = fn cid, url, title ->
+        %{
+          title: title,
+          size: @size,
+          download_url: url,
+          protocol: :usenet,
+          indexer_id: cid,
+          indexer_name: "nzb",
+          indexer_source: "native",
+          credentials_version: indexer.credentials_version,
+          published_at: ~U[2026-11-01 10:00:00Z],
+          category_ids: [2040],
+          # Newznab's `search_movie_query` asks free text (`requests/2` in `Newznab`).
+          query_origins: [:free_text]
+        }
+      end
+
+      search = fn rows ->
+        report = Report.put(Report.new(), {"native", indexer.id}, indexer.name, :asked)
+
+        %{
+          kind: :movie_title,
+          target: %{
+            context: %{
+              imdb_id: nil,
+              title: "Inception",
+              year: 2010,
+              aliases: [],
+              localized_titles: []
+            }
+          },
+          opts: [now: ~U[2026-11-25 10:00:00Z]],
+          tries: [
+            %{
+              native: %{
+                calls: [
+                  %{
+                    callback: :search_movie_query,
+                    args: ["Inception 2010", []],
+                    outcome: {:ok, rows, report}
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      end
+
+      link = "https://nzb.example/dl/1?apikey=#{key()}"
+      unrelated = "Unrelated.Film.2001.1080p.WEB-DL-GRP"
+
+      searches = [
+        search.([row.(other.id, link, @title)]),
+        search.([row.(indexer.id, nil, @title)]),
+        search.([row.(indexer.id, link, unrelated)])
+      ]
+
+      budget = Budget.new([indexer.id], 10)
+
+      assert LinkCheck.check(indexer, searches, budget) ==
+               {:not_run, {:picks, [{1, :no_link}, {2, :no_match}]}}
+
+      # The control: the same row with its link is fetched and passes.
+      route(%{"nzb.example" => fn _conn, _query -> Cinder.NzbFixture.minimal() end})
+
+      assert LinkCheck.check(
+               indexer,
+               [
+                 search.([row.(other.id, link, @title)]),
+                 search.([row.(indexer.id, link, @title)])
+               ],
+               budget,
+               plug: {Req.Test, Cinder.NewznabStub},
+               resolver: fn _host -> {:ok, [@public_address]} end
+             ) == :passed
+    end
+
+    test "a pick key that gives no row reads as a closed tag" do
+      wait = {[3], ~U[2026-11-25 10:00:00Z]}
+
+      table = [
+        {:no_match, :no_match},
+        {:no_language_match, :no_language_match},
+        {{:waiting, wait}, :waiting},
+        {{:season, []}, {:season, :none}},
+        {{:anime, [], wait}, {:anime, :none}},
+        {{:books, [], nil}, {:books, :none}},
+        {{:error, :raised}, {:error, :raised}},
+        {{:error, {:http_status, 500}}, {:error, {:http_status, 500}}},
+        {{:error, {:raw, "https://x.example/?apikey=#{@key}"}}, {:error, :raw}},
+        {{:release, {"Inception apikey=#{@key}", 1, {1}}}, :other},
+        {"https://x.example/?apikey=#{@key}", :other}
+      ]
+
+      wrong =
+        for {key, tag} <- table,
+            cell = {key, LinkCheck.pick_tag(key)},
+            cell != {key, tag},
+            do: cell
+
+      assert wrong == []
     end
 
     test "Prowlarr.restricted sends one indexerIds per allowed id, none outside it, and no request for no id",

@@ -8,11 +8,19 @@ defmodule Cinder.Indexers.ParityRun.LinkCheck do
   ## The row
 
   The searches are read in run order. In each, the first try's Native calls are cut to the
-  indexer's own rows and judged again by the search's caller (`Cinder.Indexers.Parity.Picks`):
-  the first search whose pick is a release, a season, an anime assignment or an accepted book
-  gives the row, the Native row of that indexer with the pick's title and size (the first
-  release of a season or an anime pick, the top accepted book). An indexer with no such row
-  answers `:not_run`.
+  indexer's own rows and judged again by the search's caller (`Cinder.Indexers.Parity.Picks`).
+  A search whose first try holds no Native row of the indexer is not judged. The row is the
+  first one, in search order, that a pick names: a search whose pick is a release, a season, an
+  anime assignment or an accepted book names the indexer's Native row with the pick's title and
+  size (the first release of a season or an anime pick, the top accepted book) and a link. A
+  pick with no such row names none, and the next search is read.
+
+  An indexer with no such row answers `{:not_run, reason}` (#1954): `:no_rows` when no search's
+  first try holds a Native row of it, else `{:picks, picks}`, one `{index, tag}` per search whose
+  first try held one, in run order, `index` its place in `searches` from 0. `tag` is `:no_link`
+  when the caller picked a row but none of the indexer's rows with that title and size has a
+  link, else the pick's key as `pick_tag/1` reduces it. The check runs before any retry, so it
+  reads first tries only.
 
   ## The fetch
 
@@ -49,35 +57,90 @@ defmodule Cinder.Indexers.ParityRun.LinkCheck do
   @nzb_bytes 20 * 1024 * 1024
   @torrent_bytes 10 * 1024 * 1024
 
+  @typedoc "Why a link check did not run. See the moduledoc."
+  @type not_run :: :no_rows | {:picks, [{non_neg_integer(), pick_tag()}]}
+
+  @typedoc "A pick key that gives no row to fetch, as a closed tag. See `pick_tag/1`."
+  @type pick_tag ::
+          :no_link
+          | :no_match
+          | :no_language_match
+          | :waiting
+          | {:season | :anime | :books, :none}
+          | {:error, atom() | {atom(), integer()}}
+          | :other
+
   @doc """
   The link check of `indexer` over `searches` (the run's searches, each with its `tries`):
-  `:passed`, `{:failed, tag}` or `:not_run`. `fetch_opts` joins the fetch options (a test's
-  `plug:` and `resolver:`).
+  `:passed`, `{:failed, tag}` or `{:not_run, reason}`. `fetch_opts` joins the fetch options (a
+  test's `plug:` and `resolver:`).
   """
   @spec check(ConfiguredIndexer.t(), [map()], Budget.t(), keyword()) ::
-          :passed | {:failed, term()} | :not_run
+          :passed | {:failed, term()} | {:not_run, not_run()}
   def check(%ConfiguredIndexer{} = indexer, searches, budget, fetch_opts \\ []) do
     case top_row(indexer.id, searches) do
-      nil -> :not_run
-      row -> fetch(indexer, row, budget, fetch_opts)
+      {:row, row} -> fetch(indexer, row, budget, fetch_opts)
+      {:not_run, reason} -> {:not_run, reason}
     end
   end
 
+  @doc """
+  A pick key (`Cinder.Indexers.Parity.Picks.key/2`) that gives no row to fetch, as a closed tag:
+  `:no_match` and `:no_language_match` stay, a group wait is `:waiting`, a season, anime or book
+  pick with nothing in it is `{kind, :none}`, an error keeps its tag (`Picks.tag/1`), and any
+  other key is `:other`. A tag never holds a title, a link or a wait's ids and time.
+  """
+  @spec pick_tag(term()) :: pick_tag()
+  def pick_tag(key) when key in [:no_match, :no_language_match], do: key
+  def pick_tag({:waiting, _wait}), do: :waiting
+  def pick_tag({:season, []}), do: {:season, :none}
+  def pick_tag({:anime, [], _wait}), do: {:anime, :none}
+  def pick_tag({:books, [], nil}), do: {:books, :none}
+  def pick_tag({:error, reason}), do: {:error, Picks.tag(reason)}
+  def pick_tag(_key), do: :other
+
   defp top_row(cid, searches) do
-    Enum.find_value(searches, fn
-      %{tries: [%{native: native} | _]} = search ->
-        calls = Enum.map(native.calls, &own_rows(&1, cid))
-        {key, _outcome} = Picks.replay(search, search.opts, calls)
-
-        with {title, size} <- picked(key) do
-          calls
-          |> Enum.flat_map(&(Rows.rows(&1.outcome) || []))
-          |> Enum.find(&(&1.title == title and (&1.size || 0) == size and &1.download_url))
-        end
-
-      _search ->
-        nil
+    searches
+    |> Enum.with_index()
+    |> Enum.reduce_while([], fn {search, index}, picks ->
+      case own_pick(search, cid) do
+        nil -> {:cont, picks}
+        {:row, row} -> {:halt, {:row, row}}
+        {:none, tag} -> {:cont, [{index, tag} | picks]}
+      end
     end)
+    |> case do
+      {:row, row} -> {:row, row}
+      [] -> {:not_run, :no_rows}
+      picks -> {:not_run, {:picks, Enum.reverse(picks)}}
+    end
+  end
+
+  # The caller's pick over the indexer's own rows of the search's first try: `{:row, row}`,
+  # `{:none, tag}`, or nil when the try holds no such row.
+  defp own_pick(%{tries: [%{native: native} | _]} = search, cid) do
+    calls = Enum.map(native.calls, &own_rows(&1, cid))
+
+    case Enum.flat_map(calls, &(Rows.rows(&1.outcome) || [])) do
+      [] -> nil
+      rows -> search |> Picks.replay(search.opts, calls) |> elem(0) |> row_of(rows)
+    end
+  end
+
+  defp own_pick(_search, _cid), do: nil
+
+  defp row_of(key, rows) do
+    case picked(key) do
+      nil -> {:none, pick_tag(key)}
+      {title, size} -> linked(rows, title, size)
+    end
+  end
+
+  defp linked(rows, title, size) do
+    case Enum.find(rows, &(&1.title == title and (&1.size || 0) == size and &1.download_url)) do
+      nil -> {:none, :no_link}
+      row -> {:row, row}
+    end
   end
 
   defp own_rows(call, cid),
