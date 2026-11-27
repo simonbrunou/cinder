@@ -62,7 +62,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
   with `{:wrong_type, path}`. A record key outside the schema, a collection key included, is
   ignored, as Prowlarr ignores an unknown key. The records hold the keys of the two `schema.json`
   files, plus `rows.default`, which the model reads; `download.selectors` holds the model's
-  `SelectorField` keys. The parsed definition holds no file name: #1667 keys copies by file name
+  `SelectorField` keys plus `remove`, which #1679 reads wherever a selector block sits and
+  Prowlarr's `SelectorField` lacks. The parsed definition holds no file name: #1667 keys copies by
+  file name
   and blob hash.
 
   After reading, the loader fills in what Prowlarr's `CleanIndexerDefinition` fills in. A file
@@ -78,25 +80,43 @@ defmodule Cinder.Indexers.Definitions.Loader do
   order, after the fixed-value slots that hold a value outside the schema
   (`{:unknown_value, slot}`, in `@unknown_slots` order). Switching a feature on is the job of the
   slice that builds it, and each such slice, like any change to what `load/1` answers, raises
-  the revision in `fingerprint/0`, under which #1667 stores results. The flags on are the field
-  filters `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0` names, which #1670 and #1677
-  built, the row filter `strdump`, a no-op, and what Cardigann slice (a) (#1671) needs for
-  Nyaa.si and Torrent9: an HTML search (`html_search`), `caps.allowrawsearch` (`raw_search`;
-  Cinder never sends a raw query, and a `$raw` input stays `raw_input`), `keywordsfilters`,
-  `case`, the `andmatch` row filter, `requestDelay`, the definition's own `followredirect`
-  (`follow_redirect`; one on a search path is `path_follow_redirect`; a `search.path` is
-  `search_path`, #1679's), a `categorymappings` entry marked `default` (`category_default`), and
-  settings of type `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`, and
-  the `download` block the grab runs (#1672): its `selectors`, with `testlinktorrent`. A
-  `download` block's `before` is `download_before`, its `infohash` `download_infohash`, a
-  `method: post` `download_post`, non-empty `headers` `download_headers` and a selector's
-  `usebeforeresponse` `download_use_before_response`, all #1679's. A field whose name holds `|`,
-  a modifier Prowlarr reads after the name, is `field_modifier`. #1678 switched on JSON and XML
-  search answers (`json_search`, `xml_search`) and pinned certificates (`certificates`), with
-  `jsonjoinarray` among the filters. Two codes stay off but are reported for less: `encoding`
-  only for a name `Cinder.Acquisition.Indexer.Cardigann.Charset.fetch/1` does not know, so the
-  nine legacy charsets and UTF-8 load, and `rows_count` only on a search whose paths are not all
-  JSON. Every other flag is off.
+  the revision in `fingerprint/0`, under which #1667 stores results.
+
+  The flags on are the field filters `Cinder.Acquisition.Indexer.Cardigann.Filters.supported/0`
+  names, which #1670 and #1677 built, the row filters `andmatch` and `strdump` (a no-op), and the
+  setting types `info`, `text`, `password`, `checkbox`, `select` and `info_flaresolverr`. Then,
+  by the slice that built them:
+
+  - Cardigann slice (a) (#1671): an HTML search (`html_search`), `caps.allowrawsearch`
+    (`raw_search`; Cinder never sends a raw query), `keywordsfilters`, `case`, `requestDelay`,
+    the definition's own `followredirect` (`follow_redirect`) and a `categorymappings` entry
+    marked `default` (`category_default`).
+  - #1672: the `download` block the grab runs, its `selectors` with `testlinktorrent`
+    (`download`).
+  - #1678: JSON and XML search answers (`json_search`, `xml_search`) and pinned certificates
+    (`certificates`), with `jsonjoinarray` among the filters.
+  - #1679: a POST search path (`search_post`), the legacy `search.path` (`search_path`), path
+    `categories` (`search_path_categories`), `search.headers` (`search_headers`), a `$raw` input
+    (`raw_input`), `allowEmptyInputs` (`allow_empty_inputs`), `preprocessingfilters`
+    (`preprocessing_filters`), `search.error` (`search_error`), a path's own `followredirect`
+    (`path_follow_redirect`), `caps.allowtvsearchimdb` (`tv_search_imdb`), a selector's
+    `remove` (`selector_remove`), and the `download` block's `before` (`download_before`),
+    `infohash` (`download_infohash`), `method: post` (`download_post`), non-empty `headers`
+    (`download_headers`) and a selector's `usebeforeresponse`
+    (`download_use_before_response`).
+
+  Every other flag is off. Some codes that are off are reported only for some uses:
+
+  - `encoding` only for a name `Cinder.Acquisition.Indexer.Cardigann.Charset.fetch/1` does not
+    know, so the nine legacy charsets and UTF-8 load;
+  - `rows_after` (`rows.after` above 0) and `rows_dateheaders` only on a search with an XML
+    path, since #1679 reads them on HTML pages only;
+  - `selector_remove_case` for a selector block that sets both `remove` and `case`;
+  - `download_before_pathselector` for a `before.pathselector`, and
+    `download_before_queryseparator` for a `before.queryseparator` other than `&`. No v11
+    definition at Prowlarr/Indexers `56b20b19` sets either.
+
+  A field whose name holds `|`, a modifier Prowlarr reads after the name, is `field_modifier`.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.Charset
@@ -112,7 +132,10 @@ defmodule Cinder.Indexers.Definitions.Loader do
   # 6: JSON and XML responses, `jsonjoinarray`, the legacy charsets and pinned certificates
   #    load (#1678), `rows.count` loads on a JSON-only search, and `LoadCheck` adds the JSON
   #    path, XML selector and certificate codes.
-  @revision 6
+  # 7: the remaining search and download keys load (#1679), `rows.count` loads on any search
+  #    and `LoadCheck` checks it on a JSON copy only, and `LoadCheck` renders a field selector
+  #    that reads `.Result` and checks a download selector's `remove`.
+  @revision 7
 
   @field_filters ~w(querystring timeparse dateparse regexp re_replace split replace trim prepend
                     append tolower toupper base64decode base64encode urldecode urlencode
@@ -228,41 +251,43 @@ defmodule Cinder.Indexers.Definitions.Loader do
               html_search: true,
               json_search: true,
               xml_search: true,
-              search_post: false,
-              search_path: false,
-              search_path_categories: false,
+              search_post: true,
+              search_path: true,
+              search_path_categories: true,
               query_separator: false,
               no_inherit_inputs: false,
-              search_headers: false,
-              raw_input: false,
+              search_headers: true,
+              raw_input: true,
               raw_search: true,
-              allow_empty_inputs: false,
+              allow_empty_inputs: true,
               keywords_filters: true,
-              preprocessing_filters: false,
-              search_error: false,
+              preprocessing_filters: true,
+              search_error: true,
               rows_after: false,
-              rows_count: false,
               rows_dateheaders: false,
               selector_case: true,
-              selector_remove: false,
+              selector_remove: true,
+              selector_remove_case: false,
               field_modifier: false
             ] ++
               Enum.map(@row_filters, &{{:row_filter, &1}, &1 in @built_row_filters}) ++
               Enum.map(@field_filters, &{{:filter, &1}, &1 in @built_filters}) ++
               [
                 download: true,
-                download_before: false,
-                download_infohash: false,
-                download_post: false,
-                download_headers: false,
-                download_use_before_response: false,
+                download_before: true,
+                download_before_pathselector: false,
+                download_before_queryseparator: false,
+                download_infohash: true,
+                download_post: true,
+                download_headers: true,
+                download_use_before_response: true,
                 request_delay: true,
                 follow_redirect: true,
-                path_follow_redirect: false,
+                path_follow_redirect: true,
                 encoding: false,
                 certificates: true,
                 category_default: true,
-                tv_search_imdb: false
+                tv_search_imdb: true
               ] ++
               Enum.map(@login_methods, &{{:login, &1}, false}) ++
               [login_captcha: false] ++
@@ -415,6 +440,7 @@ defmodule Cinder.Indexers.Definitions.Loader do
     selector_field: [
       {"selector", :selector, :string},
       {"attribute", :attribute, :string},
+      {"remove", :remove, :string},
       {"usebeforeresponse", :usebeforeresponse, {:bool, false}},
       {"filters", :filters, {:list, {:record, :filter}}}
     ]
@@ -823,15 +849,13 @@ defmodule Cinder.Indexers.Definitions.Loader do
     ]
     |> Enum.reject(&is_nil/1)
     |> Kernel.++(Enum.flat_map(search.paths, &path_uses/1))
-    |> Kernel.++(rows_uses(search.rows, json_only?(search.paths)))
+    |> Kernel.++(rows_uses(search.rows, xml_path?(search.paths)))
   end
 
-  # `rows.count` runs on a JSON page only (#1678): a search with no path, or one whose paths are
-  # not all JSON, still reports it.
-  defp json_only?([_ | _] = paths),
-    do: Enum.all?(paths, &match?(%{response: %{type: "json"}}, &1))
-
-  defp json_only?([]), do: false
+  # `rows.after` and `dateheaders` run on an HTML page and a JSON page ignores them, as
+  # Prowlarr's does (#1679); the XML path does not run them, so a search with an XML path still
+  # reports them.
+  defp xml_path?(paths), do: Enum.any?(paths, &match?(%{response: %{type: "xml"}}, &1))
 
   defp path_uses(path) do
     [
@@ -853,7 +877,9 @@ defmodule Cinder.Indexers.Definitions.Loader do
 
   defp raw_input?(inputs), do: List.keymember?(inputs, "$raw", 0)
 
-  defp rows_uses(rows, json_only?) do
+  # `rows.count` loads on any search: a JSON page reads it (#1678) and every other page ignores
+  # it, as Prowlarr's does (#1679).
+  defp rows_uses(rows, xml_path?) do
     filters =
       Enum.map(rows.filters, fn
         %{name: name} when name in @row_filters -> {:row_filter, name}
@@ -861,9 +887,8 @@ defmodule Cinder.Indexers.Definitions.Loader do
       end)
 
     [
-      if(rows.after > 0, do: :rows_after),
-      if(rows.count && not json_only?, do: :rows_count),
-      if(rows.dateheaders, do: :rows_dateheaders)
+      if(rows.after > 0 and xml_path?, do: :rows_after),
+      if(rows.dateheaders && xml_path?, do: :rows_dateheaders)
     ]
     |> Enum.reject(&is_nil/1)
     |> Kernel.++(filters)
@@ -874,28 +899,46 @@ defmodule Cinder.Indexers.Definitions.Loader do
   defp download_uses(download) do
     [
       :download,
-      if(download.before, do: :download_before),
       if(download.infohash, do: :download_infohash),
       if(download.method == "post", do: :download_post),
       if(download.headers != [], do: :download_headers),
       if(Enum.any?(download.selectors, & &1.usebeforeresponse),
         do: :download_use_before_response
       )
+      | before_uses(download.before)
     ]
     |> Enum.reject(&is_nil/1)
+  end
+
+  defp before_uses(nil), do: []
+
+  defp before_uses(before) do
+    [
+      :download_before,
+      if(before.pathselector, do: :download_before_pathselector),
+      if(before.queryseparator != "&", do: :download_before_queryseparator)
+    ]
   end
 
   # Every field filter list, `case` block and `remove` in the definition, wherever its selector
   # block sits. `search.rows.filters` holds row filters, which `rows_uses/2` reads.
   defp walk(map, path) when is_map(map) do
-    Enum.flat_map(map, fn {key, value} ->
-      key_uses(key, value, path) ++ walk(value, [key | path])
-    end)
+    remove_case_use(map) ++
+      Enum.flat_map(map, fn {key, value} ->
+        key_uses(key, value, path) ++ walk(value, [key | path])
+      end)
   end
 
   defp walk(list, path) when is_list(list), do: Enum.flat_map(list, &walk(&1, path))
   defp walk({key, value}, path) when is_binary(key), do: walk(value, path)
   defp walk(_value, _path), do: []
+
+  # A selector block with `remove` and `case`: Prowlarr matches the case keys after the removal,
+  # which Cinder does not build (#1679), so it stays off.
+  defp remove_case_use(%{remove: remove, case: [_ | _]}) when is_binary(remove),
+    do: [:selector_remove_case]
+
+  defp remove_case_use(_map), do: []
 
   defp key_uses(:filters, filters, [:rows, :search]) when is_list(filters), do: []
 

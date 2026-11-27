@@ -301,7 +301,7 @@ defmodule Cinder.Indexers.ParserWorkerBoundsTest do
 
           <<size::32, payload::binary-size(size)>> = File.read!(capture)
 
-          {:run, "<td>x</td>", rows, _fields, marks, nil, 20_000} =
+          {:run, "<td>x</td>", rows, _fields, marks, nil, _extras, 20_000} =
             :erlang.binary_to_term(payload)
 
           [_all, token] = Regex.run(~r/\Atd\[cinder-([0-9a-f]{32})-r-c0\]\z/, rows)

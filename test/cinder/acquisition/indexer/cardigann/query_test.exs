@@ -55,4 +55,57 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.QueryTest do
     # "жанр" is E6 E0 ED F0, "Аниме" C0 ED E8 EC E5; "✓" has no windows-1251 byte.
     assert query(url) =~ "%E6%E0%ED%F0=%C0%ED%E8%EC%E5%20%3F"
   end
+
+  defp pages(encoding, text, edit) do
+    {:ok, definition} =
+      nyaa_like(&(&1 |> Map.put("encoding", encoding) |> edit.())) |> bytes() |> Loader.load()
+
+    assert definition.unsupported == []
+    config = %{base_url: nyaa_base(), values: %{}}
+
+    {:ok, planned} =
+      Query.plan(definition, config, {:search_tv_query, text, categories: [5070]}, @now)
+
+    for {:ok, %{pages: pages}} <- planned, page <- pages, do: page
+  end
+
+  defp one_path(path), do: &put_in(&1, ["search", "paths"], [path])
+
+  # The `dotnet_encode` row and the POST test's `$raw` body ran in `dotnet fsi` (SDK 8.0.427,
+  # .NET 8.0.33) on 2026-11-27: `WebUtility.UrlEncode(text)`, then for `$raw` Prowlarr's
+  # `GetQueryString` pass, `encoding.GetString(WebUtility.UrlEncodeToBytes(encoding.GetBytes(v),
+  # 0, n))` with windows-1251 from `CodePagesEncodingProvider`.
+  test "a POST path's form body goes out in the definition's encoding, its URL with no query" do
+    post = %{
+      "path" => "/search",
+      "method" => "post",
+      "inputs" => obj([{"q", "{{ .Keywords }}"}, {"$raw", "x={{ .Keywords }}"}])
+    }
+
+    assert [page] = pages("windows-1251", "Дюна", one_path(post))
+    assert page.method == :post
+    assert page.url == nyaa_base() <> "search"
+    # The plain value once, in windows-1251. The `$raw` value twice: the template's
+    # `WebUtility.UrlEncode` writes UTF-8 whatever the definition's encoding, then the query
+    # builder encodes that text again.
+    assert page.body ==
+             "f=0&c=0_0&s=id&o=desc&q=%C4%FE%ED%E0&x=%25D0%2594%25D1%258E%25D0%25BD%25D0%25B0"
+  end
+
+  test "a $raw key keeps its brackets percent-encoded, so the URL still parses" do
+    raw = %{"path" => "/", "inputs" => obj([{"$raw", "kat[]=1&filter[a][]=2&a#b=3"}])}
+
+    assert [page] = pages("UTF-8", "x", one_path(raw))
+
+    assert URI.parse(page.url).query ==
+             "f=0&c=0_0&s=id&o=desc&kat%5B%5D=1&filter%5Ba%5D%5B%5D=2&a%23b=3"
+
+    assert {:ok, _uri} = URI.new(page.url)
+  end
+
+  # Ran in `dotnet fsi`, as the note above the POST test says.
+  test "dotnet_encode/2 leaves -_.!*() and letters, writes + for a space and upper-case hex" do
+    assert Query.dotnet_encode("Spider-Man (2002)! ~x*_.'é/") ==
+             "Spider-Man+(2002)!+%7Ex*_.%27%C3%A9%2F"
+  end
 end

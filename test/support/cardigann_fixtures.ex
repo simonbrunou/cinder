@@ -496,7 +496,11 @@ defmodule Cinder.CardigannFixtures do
   takes the conn and its query parameters and answers HTML (a 200 `text/html` page), `{status,
   body}`, `{status, content_type, body}`, `{:redirect, status, location}`,
   `{:transport, reason}` or a conn. Each request sends
-  the test process `{:cardigann_request, host, path, query, headers}` first.
+  the test process `{:cardigann_request, host, path, query, headers}` first, then
+  `{:cardigann_wire, host, method, path, query_string, body}`: the method, the query string and
+  the body as they came on the wire (#1679's POST and `$raw` tests). Req's test step decodes a
+  form body as UTF-8 first, so a form body whose percent-encoded bytes are not UTF-8 never reaches
+  the stub.
   """
   def route(routes) do
     test_pid = self()
@@ -504,10 +508,18 @@ defmodule Cinder.CardigannFixtures do
     Req.Test.stub(Cinder.CardigannStub, fn conn ->
       conn = query_params(conn)
       [host | _] = Plug.Conn.get_req_header(conn, "host")
+      # Req's test step parses a form body before the stub runs, so the bytes come from its
+      # adapter's state.
+      {_adapter, %{raw_body: body}} = conn.adapter
 
       send(
         test_pid,
         {:cardigann_request, host, conn.request_path, conn.query_params, conn.req_headers}
+      )
+
+      send(
+        test_pid,
+        {:cardigann_wire, host, conn.method, conn.request_path, conn.query_string, body}
       )
 
       fun = Map.get(routes, host) || flunk("no route for #{host}")
@@ -547,6 +559,23 @@ defmodule Cinder.CardigannFixtures do
   def requests do
     receive do
       {:cardigann_request, host, path, query, _headers} -> [{host, path, query} | requests()]
+      {:cardigann_wire, _host, _method, _path, _query_string, _body} -> requests()
+    after
+      0 -> []
+    end
+  end
+
+  @doc """
+  Every request the stub received so far, as `{host, method, path, query_string, body}`, in
+  order; drops the `:cardigann_request` messages.
+  """
+  def wire do
+    receive do
+      {:cardigann_wire, host, method, path, query_string, body} ->
+        [{host, method, path, query_string, body} | wire()]
+
+      {:cardigann_request, _host, _path, _query, _headers} ->
+        wire()
     after
       0 -> []
     end

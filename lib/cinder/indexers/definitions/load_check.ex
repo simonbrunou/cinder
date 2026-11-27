@@ -10,24 +10,31 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
   - when the copy has no search path, or one whose response is HTML (no `response`, or a type
     other than `json` and `xml`): `search.rows` (its `selector`, `remove` and `case` keys, and
-    those of `dateheaders` and `count`), each `search.fields` entry's `selector`, `remove` and
-    `case` keys, and each `search.error` entry's `selector` and `message` selector. A JSON or XML
+    those of `dateheaders`; `count` is read on a JSON page only), each `search.fields` entry's
+    `selector`, `remove` and `case` keys, and each `search.error` entry's `selector` and `message` selector. A JSON or XML
     copy's selectors there are paths for another reader (#1678);
   - `login`: `form`, `test.selector`, `captcha.selector`, each `error` entry's `selector` and
     `message` selector, and every `selectorinputs` and `getselectorinputs` selector;
-  - `download`: each `selectors` entry, `before.pathselector` and `infohash`'s `hash` and `title`.
+  - `download`: each `selectors` entry, `before.pathselector` and `infohash`'s `hash` and
+    `title`, then the `remove` of each `selectors` entry and of `hash` and `title` (#1679).
 
   A rows or field selector that holds `{{` is a template the search renders with its variables
-  first (#1671): one that reads `.Result` gets `{:selector, :result_template}` and is not
-  checked further; any other is rendered twice, every search variable blank and then every one
-  set (`Cinder.Acquisition.Indexer.Cardigann.Variables`), and each rendering that is not blank is
-  checked as a selector. A template that does not render gets `{:selector, :template}`. A
-  `download.selectors` entry that holds `{{` is a template the grab renders with its own
-  variables first (#1672): it is rendered twice, every grab variable blank and then every one
-  set (`Variables.download/3`: the settings and the link's `.DownloadUri.*` names, each
-  `.DownloadUri.Query.<key>` it names included), each rendering checked the same way. One that
-  does not render, as one that reads `.Result` or `.Keywords`, gets `{:selector, :template}`.
-  Any other selector that holds `{{` gets that code from the gate.
+  first (#1671). A rows selector that reads `.Result` gets `{:selector, :result_template}` and is
+  not checked further. A field selector that reads `.Result` renders per row in a later worker
+  round (#1679, `Cinder.Acquisition.Indexer.Cardigann.Rows`): on a copy whose every search path
+  answers HTML and whose chain `Rows.result_rounds/1` allows, it is rendered twice, every search
+  variable and every `.Result.<field>` blank, then every one set; otherwise it gets
+  `{:selector, :result_template}`. Any other rows or field template is rendered twice, every
+  search variable blank and then every one set
+  (`Cinder.Acquisition.Indexer.Cardigann.Variables`). Each rendering that is not blank is
+  checked as a selector, and a template that does not render gets `{:selector, :template}`. A
+  `download.selectors` entry or an `infohash` selector that holds `{{` is a template the grab
+  renders with its own variables first (#1672, #1679): it is rendered twice, every grab variable
+  blank and then every one set (`Variables.download/3`: the settings and the link's
+  `.DownloadUri.*` names, each `.DownloadUri.Query.<key>` it names included), each rendering
+  checked the same way. One that does not render, as one that reads `.Result` or `.Keywords`,
+  gets `{:selector, :template}`. Any other selector that holds `{{` gets that code from the
+  gate.
 
   Each passes through `Cinder.Indexers.Selector.compile/2`, and those that pass run in one worker
   (`Cinder.Indexers.ParserWorker.check_selectors/2`). Each problem adds its code to the copy's
@@ -63,7 +70,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     `JsonPath.parse/1` does not read. A selector that holds `{{` is checked as it renders, as a
     rows or field selector above is, and one that does not render gets the code too;
   - `{:xml_selector, name}` or `{:xml_selector, :invalid}` for each rows selector, field
-    selector and field `case` key of a copy with an XML search path that
+    selector, field `case` key and field `remove` (#1679) of a copy with an XML search path that
     `Cinder.Acquisition.Indexer.Cardigann.XmlSelector.compile/2` refuses, the first refusal of
     each selector, each code once in the order found; a template is checked as it renders, and
     one that does not render is `{:xml_selector, :invalid}`;
@@ -72,14 +79,16 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   The answer is `Loader.load/1`'s with those codes added. The selector check raised
   `Loader.fingerprint/0`'s revision to 2, the pattern check to 3, the layout check, with the
   features #1671 switched on, to 4, and the download selector templates, with the download block
-  #1672 switched on, to 5, and the JSON, XML and certificate checks, with what #1678 switched
-  on, to 6, for #1667 to store the answer under.
+  #1672 switched on, to 5, the JSON, XML and certificate checks, with what #1678 switched on,
+  to 6, and the `.Result` field renderings and the download `remove` checks, with what #1679
+  switched on, to 7, for #1667 to store the answer under.
   """
 
   alias Cinder.Acquisition.Indexer.Cardigann.{
     BoundedRegex,
     DotnetDate,
     JsonPath,
+    Rows,
     Template,
     Variables,
     XmlSelector
@@ -196,6 +205,7 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
       [search.rows.selector || ""]
       |> Kernel.++(Enum.map(fields, & &1.selector))
       |> Kernel.++(for field <- fields, {key, _value} <- field.case || [], do: key)
+      |> Kernel.++(Enum.map(fields, & &1.remove))
       |> Enum.reject(&is_nil/1)
       |> Enum.flat_map(&xml_refusals(&1, definition))
       |> Enum.uniq()
@@ -295,6 +305,23 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     end
   end
 
+  # A field selector that reads `.Result` renders per row in a later worker round on an HTML
+  # page (#1679): it is rendered with every search variable and every `.Result.<field>` blank,
+  # then with every one set. On a copy with a JSON or XML path, which renders it once, or past
+  # the rounds `Rows.result_rounds/1` allows, it stays `:result_template`.
+  defp expand({:result_template, selector}, definition) do
+    search = definition.search
+
+    if html_only?(search) and Rows.result_rounds(search.fields) != :too_many do
+      renderings(selector, [
+        Map.merge(Variables.blank(definition), results(search.fields, nil)),
+        Map.merge(Variables.filled(definition), results(search.fields, "x"))
+      ])
+    else
+      [{:outcome, :result_template}]
+    end
+  end
+
   defp expand({:download_template, selector}, definition) do
     renderings(selector, [
       Variables.download(definition, selector, nil),
@@ -303,6 +330,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   end
 
   defp expand(selector, _definition), do: [selector]
+
+  defp results(fields, value),
+    do: Map.new(fields, fn {name, _field} -> {".Result." <> name, value} end)
 
   defp renderings(selector, %{} = definition),
     do: renderings(selector, [Variables.blank(definition), Variables.filled(definition)])
@@ -370,7 +400,10 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   # `{:template, selector}` and a download selector that holds one as
   # `{:download_template, selector}`; public for its test.
   @spec selectors(map()) ::
-          [String.t() | {:template, String.t()} | {:download_template, String.t()}]
+          [
+            String.t()
+            | {:template | :result_template | :download_template, String.t()}
+          ]
   def selectors(definition) do
     search = if html_search?(definition.search), do: search_selectors(definition.search), else: []
 
@@ -388,11 +421,14 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     end)
   end
 
+  defp html_only?(%{paths: paths}),
+    do:
+      Enum.all?(paths, &(not match?(%{response: %{type: type}} when type in ["json", "xml"], &1)))
+
   defp search_selectors(search) do
     rendered_block(search.rows) ++
       block(search.rows && search.rows.dateheaders) ++
-      block(search.rows && search.rows.count) ++
-      Enum.flat_map(search.fields, fn {_name, field} -> rendered_block(field) end) ++
+      Enum.flat_map(search.fields, fn {_name, field} -> field_block(field) end) ++
       Enum.flat_map(search.error, &error_selectors/1)
   end
 
@@ -408,8 +444,12 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
 
   defp download_selectors(nil), do: []
 
-  # A `selectors` entry renders as a template with the grab's variables first (#1672).
+  # A `selectors` entry renders as a template with the grab's variables first (#1672). Each
+  # block's `remove` is a plain selector, which the grab does not render (#1679).
   defp download_selectors(download) do
+    infohash = download.infohash && [download.infohash.hash, download.infohash.title]
+    blocks = download.selectors ++ Enum.reject(infohash || [], &is_nil/1)
+
     Enum.map(download.selectors, fn %{selector: selector} ->
       if is_binary(selector) and String.contains?(selector, "{{"),
         do: {:download_template, selector},
@@ -417,10 +457,17 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
     end) ++
       [
         download.before && download.before.pathselector && download.before.pathselector.selector,
-        download.infohash && download.infohash.hash && download.infohash.hash.selector,
-        download.infohash && download.infohash.title && download.infohash.title.selector
-      ]
+        download_template(download.infohash && download.infohash.hash),
+        download_template(download.infohash && download.infohash.title)
+      ] ++ Enum.map(blocks, & &1.remove)
   end
+
+  # An `infohash` selector renders with the grab's variables too (#1679).
+  defp download_template(%{selector: selector}) when is_binary(selector) do
+    if String.contains?(selector, "{{"), do: {:download_template, selector}, else: selector
+  end
+
+  defp download_template(_block), do: nil
 
   defp error_selectors(error), do: [error.selector | block(error.message)]
 
@@ -438,4 +485,12 @@ defmodule Cinder.Indexers.Definitions.LoadCheck do
   end
 
   defp rendered_block(block), do: block(block)
+
+  defp field_block(%{selector: selector} = field) when is_binary(selector) do
+    if Rows.result_selector?(field),
+      do: [{:result_template, selector} | tl(block(field))],
+      else: rendered_block(field)
+  end
+
+  defp field_block(field), do: rendered_block(field)
 end

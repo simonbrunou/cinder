@@ -41,10 +41,13 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       "getselectorinputs" => %{"g" => %{"selector" => "login-get"}}
     },
     "download" => %{
-      "selectors" => [%{"selector" => "dl-one"}, %{"selector" => "dl-two"}],
+      "selectors" => [
+        %{"selector" => "dl-one", "remove" => "dl-one-x"},
+        %{"selector" => "dl-two"}
+      ],
       "before" => %{"path" => "/b", "pathselector" => %{"selector" => "dl-before"}},
       "infohash" => %{
-        "hash" => %{"selector" => "dl-hash"},
+        "hash" => %{"selector" => "dl-hash", "remove" => "dl-hash-x"},
         "title" => %{"selector" => "dl-title"}
       }
     }
@@ -87,7 +90,8 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
   defp slot_paths(_value, _path), do: []
 
   @login_and_download ~w(login-form login-test login-captcha login-error login-message
-                         login-input login-get dl-one dl-two dl-before dl-hash dl-title)
+                         login-input login-get dl-one dl-two dl-before dl-hash dl-title
+                         dl-one-x dl-hash-x)
 
   describe "selectors/1" do
     test "collects every place of an HTML search, then login, then download" do
@@ -96,11 +100,12 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       {search, rest} = Enum.split(selectors, length(selectors) - length(@login_and_download))
       assert rest == @login_and_download
 
+      # `rows.count` is read on a JSON page only (#1679), so `rows-count` is not among them.
       assert Enum.sort(search) ==
-               Enum.sort(~w(rows rows-x rows-k rows-date rows-count f f-x f-k f-size s-error
+               Enum.sort(~w(rows rows-x rows-k rows-date f f-x f-k f-size s-error
                             s-message))
 
-      assert Enum.take(search, 5) == ~w(rows rows-x rows-k rows-date rows-count)
+      assert Enum.take(search, 4) == ~w(rows rows-x rows-k rows-date)
       assert Enum.take(search, -2) == ~w(s-error s-message)
     end
 
@@ -441,15 +446,64 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
       assert {:ok, %{unsupported: [{:selector, :structure}]}} = LoadCheck.check(yaml(copy))
     end
 
-    test "a selector template that reads .Result reads its own code" do
+    # #1679 plans a field selector that reads `.Result` in a later worker round on an HTML page.
+    test "a field selector template that reads .Result is checked as it renders, and loads" do
       copy =
         put_in(@base, ["search", "fields"], %{
           "a" => %{"selector" => "td"},
           "b" => %{"selector" => "{{ if .Result.a }}td{{ else }}th{{ end }}"}
         })
 
-      assert {:ok, %{unsupported: [{:selector, :result_template}]}} =
-               LoadCheck.check(yaml(copy))
+      assert {:ok, %{unsupported: []}} = LoadCheck.check(yaml(copy))
+
+      # Each rendering reaches the gate: a broken one under `.Result.a` set reads its code.
+      broken =
+        put_in(
+          copy,
+          ["search", "fields", "b", "selector"],
+          "{{ if .Result.a }}td[{{ else }}th{{ end }}"
+        )
+
+      assert {:ok, %{unsupported: [_code]}} = LoadCheck.check(yaml(broken))
+    end
+
+    test "a .Result selector keeps its code on the rows, past the round cap, or beside an XML path" do
+      result = "{{ if .Result.a }}td{{ else }}th{{ end }}"
+
+      on_rows =
+        put_in(@base, ["search", "rows", "selector"], "{{ if .Result.a }}tr{{ else }}tr{{ end }}")
+
+      # e reads d, d reads c, c reads b, b reads a: four rounds after the first.
+      chain =
+        put_in(@base, ["search", "fields"], %{
+          "a" => %{"selector" => "td"},
+          "b" => %{"selector" => result},
+          "c" => %{"selector" => String.replace(result, ".Result.a", ".Result.b")},
+          "d" => %{"selector" => String.replace(result, ".Result.a", ".Result.c")},
+          "e" => %{"selector" => String.replace(result, ".Result.a", ".Result.d")}
+        })
+
+      three = update_in(chain, ["search", "fields"], &Map.delete(&1, "e"))
+
+      # An HTML path beside an XML one: the XML path renders the selector once.
+      xml =
+        @base
+        |> put_in(["search", "paths"], [
+          %{"path" => "/"},
+          %{"path" => "rss", "response" => %{"type" => "xml"}}
+        ])
+        |> put_in(["search", "fields"], %{
+          "a" => %{"selector" => "td"},
+          "b" => %{"selector" => result}
+        })
+
+      for copy <- [on_rows, chain, xml] do
+        assert {:ok, %{unsupported: unsupported}} = LoadCheck.check(yaml(copy))
+        assert {:selector, :result_template} in unsupported
+      end
+
+      # The control: three rounds load.
+      assert {:ok, %{unsupported: []}} = LoadCheck.check(yaml(three))
     end
 
     test "a selector template that does not render reads as a template" do
@@ -730,8 +784,9 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
     end
 
     # docs/agents/testing.md: a reader of untrusted input never raises. A JSON copy and an XML
-    # copy fill every slot the three checks read (`rows.count` loads in a JSON-only copy alone),
-    # then each slot takes each of seven value shapes in turn.
+    # copy fill every slot the three checks read, with a field `remove` in the XML one, and an HTML
+    # copy holds a field selector that reads `.Result` (#1679); then each slot takes each of seven
+    # value shapes in turn.
     test "raises on none of seven value shapes in any slot the three checks read" do
       json =
         @base
@@ -765,15 +820,27 @@ defmodule Cinder.Indexers.Definitions.LoadCheckTest do
           "fields" => %{
             "title" => %{"selector" => "title"},
             "seeders" => %{"selector" => "[name=seeders]", "attribute" => "value"},
-            "free" => %{"selector" => "description:contains(Free)", "case" => %{"b" => "1"}}
+            "free" => %{"selector" => "description:contains(Free)", "case" => %{"b" => "1"}},
+            "size" => %{"selector" => "size", "remove" => "b"}
           }
         })
 
-      assert {check_codes(json), check_codes(xml)} == {[], []}
+      html =
+        Map.put(@base, "search", %{
+          "paths" => [%{"path" => "/"}],
+          "rows" => %{"selector" => "tr"},
+          "fields" => %{
+            "title" => %{"selector" => "td.t"},
+            "_sel" => %{"selector" => "td.sel"},
+            "size" => %{"selector" => "{{ .Result._sel }}"}
+          }
+        })
+
+      assert {check_codes(json), check_codes(xml), check_codes(html)} == {[], [], []}
 
       problems =
         for(
-          copy <- [json, xml],
+          copy <- [json, xml, html],
           path <- slot_paths(copy, []),
           value <- [nil, "x", ["x"], [nil], [%{}], %{}, %{"a" => nil}],
           do: {copy, path, value}

@@ -76,18 +76,48 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Variables do
 
   @doc """
   The texts of a `download` block that can hold a template, in file order: each selector's
-  `selector` and each of its filters' arguments that is a binary. `[]` for no block.
+  `selector` and each of its filters' arguments that is a binary, then the same of `infohash`'s
+  `hash` and `title`, then `before`'s `path` and each of its input values (#1679). `[]` for no
+  block. The secret reference check reads them; the headers are not among them, since they go
+  only to the definition's own hosts.
   """
   @spec download_texts(map() | nil) :: [String.t()]
   def download_texts(nil), do: []
 
   def download_texts(download) do
-    for selector <- download.selectors,
-        text <-
-          [selector.selector] ++
-            for(filter <- selector.filters || [], arg <- List.wrap(filter.args), do: arg),
-        is_binary(text),
-        do: text
+    infohash = download.infohash || %{}
+    before = download.before || %{}
+
+    blocks =
+      download.selectors ++ Enum.reject([infohash[:hash], infohash[:title]], &is_nil/1)
+
+    selector_texts =
+      for block <- blocks,
+          text <-
+            [block.selector] ++
+              for(filter <- block.filters || [], arg <- List.wrap(filter.args), do: arg),
+          do: text
+
+    before_texts = [before[:path] | for({_key, value} <- before[:inputs] || [], do: value)]
+
+    Enum.filter(selector_texts ++ before_texts, &is_binary/1)
+  end
+
+  @doc """
+  The texts a grab of `definition` renders: `download_texts/1`, then the first value of each
+  header the grab sends (`download.headers` when the definition sets any, else
+  `search.headers`). A grab names each `.DownloadUri.Query.<key>` they read.
+  """
+  @spec grab_texts(map()) :: [String.t()]
+  def grab_texts(definition) do
+    headers =
+      case definition.download do
+        %{headers: [_ | _] = headers} -> headers
+        _none -> definition.search.headers || []
+      end
+
+    download_texts(definition.download) ++
+      for {_name, [value | _]} <- headers, is_binary(value), do: value
   end
 
   @doc """

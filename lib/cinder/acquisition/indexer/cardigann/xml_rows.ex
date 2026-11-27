@@ -82,7 +82,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.XmlRows do
 
     with {:ok, rows} <- selector(definition.search.rows.selector, variables, now, "#{token}-r"),
          {:ok, planned} <- plan_fields(fields, variables, now, token) do
-      selectors = [rows | Enum.flat_map(planned, &[&1.selector | &1.cases])]
+      selectors = [rows | Enum.flat_map(planned, &[&1.selector | &1.cases ++ &1.removes])]
 
       marks =
         for s <- selectors,
@@ -110,22 +110,30 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.XmlRows do
   end
 
   defp plan_field(%{selector: nil}, _variables, _now, _token),
-    do: {:ok, %{selector: nil, attribute: nil, cases: [], keys: []}}
+    do: {:ok, %{selector: nil, attribute: nil, cases: [], keys: [], removes: []}}
 
   defp plan_field(field, variables, now, token) do
     keys = Enum.map(field.case || [], &elem(&1, 0))
 
     with {:ok, selector} <- selector(field.selector, variables, now, token),
-         {:ok, cases} <- case_selectors(keys, token) do
-      {:ok, %{selector: selector, attribute: field.attribute, cases: cases, keys: keys}}
+         {:ok, cases} <- compiled_list(keys, "#{token}-k"),
+         {:ok, removes} <- compiled_list(List.wrap(field.remove), "#{token}-x") do
+      {:ok,
+       %{
+         selector: selector,
+         attribute: field.attribute,
+         cases: cases,
+         keys: keys,
+         removes: removes
+       }}
     end
   end
 
-  defp case_selectors(keys, token) do
-    keys
+  defp compiled_list(selectors, token) do
+    selectors
     |> Enum.with_index()
     |> Enum.reduce_while({:ok, []}, fn {key, j}, {:ok, acc} ->
-      case compiled(key, "#{token}-k#{j}") do
+      case compiled(key, "#{token}#{j}") do
         {:ok, selector} -> {:cont, {:ok, [selector | acc]}}
         error -> {:halt, error}
       end
@@ -283,6 +291,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.XmlRows do
     field
     |> Map.put(:found, matches(tree, field.selector, id_attribute))
     |> Map.put(:case_found, Enum.map(field.cases, &matches(tree, &1, id_attribute)))
+    |> Map.put(:remove_found, Enum.map(field.removes, &matches(tree, &1, id_attribute)))
   end
 
   # One selector's matches: their numbers in document order and each number's element.
@@ -303,8 +312,22 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.XmlRows do
     case within(field.found, row, Map.fetch!(ends, row)) do
       nil -> nil
       id when field.keys != [] -> case_key(field, id, Map.fetch!(ends, id))
-      id -> read(Map.fetch!(field.found.nodes, id), field.attribute)
+      id -> read(Map.fetch!(field.found.nodes, id), field.attribute, removed(field, id, ends))
     end
+  end
+
+  # `remove` (#1679): the numbers of the element's descendants a `remove` selector matches,
+  # whose text its text content then leaves out; the element itself stays.
+  defp removed(%{remove_found: []}, _id, _ends), do: MapSet.new()
+
+  defp removed(field, id, ends) do
+    last = Map.fetch!(ends, id)
+
+    for found <- field.remove_found,
+        n <- Tuple.to_list(found.ids),
+        n > id and n <= last,
+        into: MapSet.new(),
+        do: n
   end
 
   # The element itself when it matched, else its first matching descendant.
@@ -333,11 +356,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.XmlRows do
     |> Enum.find_value(fn {key, found} -> if within(found, id, last), do: {:case, key} end)
   end
 
-  defp read({_name, attributes, _children}, attribute) when is_binary(attribute),
+  defp read({_name, attributes, _children}, attribute, _removed) when is_binary(attribute),
     do: :proplists.get_value(attribute, attributes, nil)
 
-  defp read(node, nil), do: node |> text() |> IO.iodata_to_binary()
+  defp read(node, nil, removed), do: node |> text(removed) |> IO.iodata_to_binary()
 
-  defp text({_name, _attributes, children}), do: Enum.map(children, &text/1)
-  defp text(text) when is_binary(text), do: text
+  # Every element carries its number first (`number/3`).
+  defp text({_name, [{_id, id} | _], children}, removed) do
+    if MapSet.size(removed) > 0 and MapSet.member?(removed, String.to_integer(id)),
+      do: [],
+      else: Enum.map(children, &text(&1, removed))
+  end
+
+  defp text(text, _removed) when is_binary(text), do: text
 end

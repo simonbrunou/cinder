@@ -13,9 +13,44 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   - none: an HTML page. Every selector runs in a `Cinder.Indexers.ParserWorker`: the rows
     selector and each field's selector, rendered first with the search variables, go in as one
     plan, and per-row values come out. A field written as `text` has no selector in the plan.
-    The worker gets the smaller of 30 s and the time left before the search deadline;
+    Each field's `remove` is taken out of a copy of its element before the value is read. With
+    `rows.after` above 0 (#1679), each group of a row and the `after` rows below it reads as one
+    row, the group's rows emptied into the first, and a last group short of rows merges what it
+    has. With `rows.dateheaders`, the worker also reads, for each row, the header the walk of
+    Prowlarr's parser finds: the first element the header selector reads a value from, trying
+    each element's previous element sibling, else its parent's previous element sibling, from
+    the row up. All the workers of one page
+    share the smaller of 30 s and the time left before the search deadline;
   - `json`: `Cinder.Acquisition.Indexer.Cardigann.JsonRows`, in the search process;
   - `xml`: `Cinder.Acquisition.Indexer.Cardigann.XmlRows`, in the search process.
+
+  On an HTML or XML page, `search.preprocessingfilters` run first over the decoded text, in the
+  definition's charset, as Prowlarr's `ParseResponse` runs them (#1679). A regex limit or the
+  filter-chain cap there reads as a page with no rows, partial with that kind; any other failure
+  is `:definition_error`. A text longer than that cap, 64 KiB, gets no filter and reads as
+  partial `:filter_output_cap`: a regex filter runs in the search process, and over a whole
+  page its time grows with the square of the page's size.
+
+  ## Selectors that read `.Result`
+
+  A field selector whose template reads `.Result.<name>`, as keepfriends' and pterclub's do,
+  is left out of the first worker's plan (#1679). After it, each round renders such selectors
+  per row with that row's values of the fields before the first one pending, checks each
+  distinct rendering with `Cinder.Indexers.Selector.compile/2`, and asks one more worker for
+  them on the same page, rows and merge. A row whose rendering fails, or that the check or the
+  worker refuses, reads nil for that field. A page takes at most `max_result_rounds/0` rounds
+  after the first and `max_result_selectors/0` distinct renderings per field and round; past
+  either the page is `:definition_error`, and a round whose row count differs from the first's
+  makes it `:parser_failed`. `Cinder.Indexers.Definitions.LoadCheck` refuses a chain past the
+  rounds at load time. Prowlarr renders the selector per row in one pass.
+
+  ## The worker's input
+
+  No secret goes into the parser worker's input (`docs/agents/architecture.md` "The parser
+  worker is not a security boundary"). A plan whose rendered selectors, or a preprocessed page
+  whose text, hold a secret setting's value that the page as the site answered does not hold
+  (`Cinder.Acquisition.Indexer.Cardigann.Fetch.worker_secret?/3`) reaches no worker, first
+  plan and `.Result` rounds alike: the page is `:definition_error`.
 
   ## Fields
 
@@ -52,7 +87,13 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   - `category_ids`: the value split on `,`, each part trimmed and mapped through
     `categorymappings` (the site id in any case) to every standard category it names, each once;
     nil when none maps;
-  - `published_at`: `Cinder.Acquisition.Indexer.Cardigann.DotnetDate.from_unknown/2`;
+  - `published_at`: `Cinder.Acquisition.Indexer.Cardigann.DotnetDate.from_unknown/2`. When
+    it is nil on an HTML page and the definition sets `rows.dateheaders`, the row's date
+    header runs as a field run with `optional` off, its filters included, and its value through
+    `from_unknown/2`. A header with no value, or one whose filter fails, drops the row unless
+    the header is `optional`, and a value `from_unknown/2` cannot read drops it either way,
+    as Prowlarr's parser does. Prowlarr walks on to an earlier header when a filter fails;
+    Cinder reads that header as none;
   - `protocol` `:torrent`, `download_url_origin` and `tvdb_id` nil.
 
   Seeders, leechers, grabs and volume factors are read only as `.Result` values. The page's
@@ -65,6 +106,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
     Fetch,
     Filters,
     JsonRows,
+    Magnet,
     Query,
     Size,
     Template,
@@ -72,9 +114,14 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   }
 
   alias Cinder.Acquisition.Indexer.Newznab.Items
-  alias Cinder.Indexers.ParserWorker
+  alias Cinder.Indexers.{ParserWorker, Selector}
+
+  @preprocess_cap Template.output_cap()
 
   @worker_ms 30_000
+  @max_result_rounds 3
+  @max_result_selectors 64
+  @result_name ~r/\.Result\.([A-Za-z0-9_-]+)/
 
   @type page :: %{
           rows: [map()],
@@ -115,21 +162,80 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
     charset = Charset.of_definition(definition)
     text = Charset.decode(body, charset)
 
-    with {:ok, values} <- values(text, definition, variables, deadline_at, request, response) do
-      read_rows(values, definition, variables, uri, query_text, request, charset)
+    case values(text, definition, variables, deadline_at, request, response) do
+      {:ok, values} ->
+        header = if html?(response), do: definition.search.rows.dateheaders
+        read_rows(values, definition, variables, uri, query_text, request, charset, header)
+
+      {:error, {:preprocessing, kind}} ->
+        {:ok, %{rows: [], count: 0, partial: kind, missing: []}}
+
+      {:error, _reason} = error ->
+        error
     end
   end
+
+  # Only the HTML worker walks to a date header; a JSON or XML page reads none.
+  defp html?(%{type: type}) when type in ["json", "xml"], do: false
+  defp html?(_response), do: true
 
   defp values(text, definition, variables, _deadline_at, request, %{type: "json"} = response),
     do: JsonRows.values(text, definition, variables, request.now, response)
 
-  defp values(text, definition, variables, _deadline_at, request, %{type: "xml"}),
-    do: XmlRows.values(text, definition, variables, request.now)
-
-  defp values(html, definition, variables, deadline_at, request, _html_response) do
-    with {:ok, plan} <- plan(definition, variables, request.now),
-         do: run(html, plan, deadline_at)
+  defp values(text, definition, variables, _deadline_at, request, %{type: "xml"}) do
+    with {:ok, xml} <- preprocess(text, definition, variables, request),
+         do: XmlRows.values(xml, definition, variables, request.now)
   end
+
+  defp values(text, definition, variables, deadline_at, request, _html_response) do
+    # One parse budget for every worker the page takes, `.Result` rounds included.
+    deadlines = {deadline_at, min(System.monotonic_time(:millisecond) + @worker_ms, deadline_at)}
+
+    with {:ok, html} <- preprocess(text, definition, variables, request),
+         {:ok, plan} <- plan(definition, variables, request.now),
+         :ok <- worker_input(text, [html, plan], request),
+         {:ok, rows} <- run(html, plan, deadlines) do
+      page = %{html: html, plan: plan, deadlines: deadlines, site: text, request: request}
+
+      result_rounds(
+        rows,
+        page,
+        definition,
+        variables,
+        request,
+        MapSet.new(plan.fields, & &1.name)
+      )
+    end
+  end
+
+  # `search.preprocessingfilters` over the decoded HTML or XML text, under the filter chain's
+  # output cap, as Prowlarr's `ParseResponse` runs them before it parses (#1679). A limit reads
+  # as a page with no rows and that partial kind, as a field's limit does, so the call goes on;
+  # any other failure is `:definition_error`. A text past that cap gets no filter: `BoundedRegex`
+  # re-checks the UTF-8 from each match to the text's end, so a regex that matches often takes
+  # time that grows with the square of the text's size.
+  defp preprocess(text, %{search: %{preprocessingfilters: [_ | _]}}, _variables, _request)
+       when byte_size(text) > @preprocess_cap,
+       do: {:error, {:preprocessing, :filter_output_cap}}
+
+  defp preprocess(
+         text,
+         %{search: %{preprocessingfilters: [_ | _] = filters}} = definition,
+         variables,
+         request
+       ) do
+    charset = Charset.of_definition(definition)
+
+    case Filters.apply(text, filters, variables, request.now, encoding: charset) do
+      {:ok, text} -> {:ok, text}
+      {:error, reason} -> preprocessing_failure(Query.failure(reason))
+    end
+  end
+
+  defp preprocess(text, _definition, _variables, _request), do: {:ok, text}
+
+  defp preprocessing_failure(:definition_error), do: {:error, :definition_error}
+  defp preprocessing_failure(kind), do: {:error, {:preprocessing, kind}}
 
   # --- the worker ---
 
@@ -137,26 +243,42 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
     rows = definition.search.rows
 
     with {:ok, rows_selector} <- render(rows.selector, variables, now),
-         {:ok, fields} <- plan_fields(definition.search.fields, variables, now) do
-      {:ok, %{rows: rows_selector, fields: fields}}
+         {:ok, fields} <- plan_fields(definition.search.fields, variables, now),
+         {:ok, dateheader} <- plan_dateheader(rows.dateheaders, variables, now) do
+      {:ok,
+       %{rows: rows_selector, fields: fields, after: rows.after || 0, dateheader: dateheader}}
     end
+  end
+
+  defp plan_dateheader(nil, _variables, _now), do: {:ok, nil}
+
+  defp plan_dateheader(%{selector: nil} = header, _variables, _now),
+    do: {:ok, worker_field(:dateheader, nil, header)}
+
+  defp plan_dateheader(header, variables, now) do
+    with {:ok, selector} <- render(header.selector, variables, now),
+         do: {:ok, worker_field(:dateheader, selector, header)}
+  end
+
+  defp worker_field(name, selector, field) do
+    %{
+      name: name,
+      selector: selector,
+      attribute: field.attribute,
+      remove: List.wrap(field.remove),
+      case: Enum.map(field.case || [], &elem(&1, 0))
+    }
   end
 
   defp plan_fields(fields, variables, now) do
     fields
-    |> Enum.reject(fn {_name, field} -> field.text != nil or field.selector == nil end)
+    |> Enum.reject(fn {_name, field} ->
+      field.text != nil or field.selector == nil or result_selector?(field)
+    end)
     |> Enum.reduce_while({:ok, []}, fn {name, field}, {:ok, acc} ->
       case render(field.selector, variables, now) do
         {:ok, selector} ->
-          entry = %{
-            name: name,
-            selector: selector,
-            attribute: field.attribute,
-            remove: List.wrap(field.remove),
-            case: Enum.map(field.case || [], &elem(&1, 0))
-          }
-
-          {:cont, {:ok, [entry | acc]}}
+          {:cont, {:ok, [worker_field(name, selector, field) | acc]}}
 
         error ->
           {:halt, error}
@@ -177,44 +299,229 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
     end
   end
 
-  defp run(html, plan, deadline_at) do
-    left_ms = deadline_at - System.monotonic_time(:millisecond)
+  # A preprocessing filter or a selector template can write a secret setting's value into the
+  # worker's input; that fails the page as a definition error.
+  defp worker_input(site, input, request) do
+    if Fetch.worker_secret?(site, input, request), do: {:error, :definition_error}, else: :ok
+  end
+
+  # `deadline_at` is the search's, `page_at` the page's parse budget, never later than it. A
+  # worker the search deadline cuts is `:deadline`; one the page budget cuts `:parser_failed`.
+  defp run(html, plan, {deadline_at, page_at}) do
+    left_ms = page_at - System.monotonic_time(:millisecond)
 
     if left_ms <= 0 do
-      {:error, :deadline}
+      {:error, if(page_at == deadline_at, do: :deadline, else: :parser_failed)}
     else
       worker_ms = min(@worker_ms, left_ms)
       :telemetry.execute([:cinder, :cardigann, :parse], %{deadline_ms: worker_ms}, %{})
 
       case ParserWorker.run(html, plan, deadline_ms: worker_ms) do
         {:ok, rows} -> {:ok, rows}
-        {:error, :timeout} when left_ms <= @worker_ms -> {:error, :deadline}
+        {:error, :timeout} when page_at == deadline_at -> {:error, :deadline}
         {:error, _failure} -> {:error, :parser_failed}
       end
     end
   end
 
+  # --- selectors that read `.Result` ---
+
+  @doc """
+  Whether `field`'s selector template reads an earlier field's value (`.Result.<name>`), as
+  keepfriends' and pterclub's do (#1679): such a field is planned per row after the fields
+  before it, in a later worker round on the same page (`result_rounds/6`).
+  """
+  @spec result_selector?(map()) :: boolean()
+  def result_selector?(%{text: nil, selector: selector}) when is_binary(selector),
+    do: Regex.match?(@result_name, selector)
+
+  def result_selector?(_field), do: false
+
+  @doc """
+  How many worker rounds after the first `fields` take, by `result_rounds/6`'s rule, or
+  `:too_many` past `max_result_rounds/0`. `Cinder.Indexers.Definitions.LoadCheck` reads it.
+  """
+  @spec result_rounds([{String.t(), map()}]) :: non_neg_integer() | :too_many
+  def result_rounds(fields), do: count_rounds(fields, done_names(fields), 0)
+
+  defp count_rounds(fields, done, rounds) do
+    case pending(fields, done) do
+      [] -> rounds
+      _pending when rounds >= @max_result_rounds -> :too_many
+      pending -> count_rounds(fields, MapSet.union(done, plannable(fields, pending)), rounds + 1)
+    end
+  end
+
+  @doc "The most worker rounds a page takes after its first for `.Result` selectors."
+  @spec max_result_rounds() :: pos_integer()
+  def max_result_rounds, do: @max_result_rounds
+
+  @doc "The most distinct renderings one `.Result` selector may take on one page."
+  @spec max_result_selectors() :: pos_integer()
+  def max_result_selectors, do: @max_result_selectors
+
+  defp done_names(fields),
+    do: for({name, field} <- fields, not result_selector?(field), into: MapSet.new(), do: name)
+
+  defp pending(fields, done),
+    do: for({name, field} <- fields, result_selector?(field), name not in done, do: name)
+
+  # The pending fields this round plans: the first, and each later one whose selector reads
+  # only fields before the first, or fields after itself, which read nil there as a later
+  # field's value reads nil when Cinder renders a template of the row.
+  defp plannable(fields, [first | _] = pending) do
+    at = fields |> Enum.with_index() |> Map.new(fn {{name, _field}, i} -> {name, i} end)
+    by_name = Map.new(fields)
+
+    for name <- pending,
+        Enum.all?(read_names(by_name[name].selector), fn read ->
+          read_at = Map.get(at, read)
+          read_at == nil or read_at < at[first] or read_at >= at[name]
+        end),
+        into: MapSet.new(),
+        do: name
+  end
+
+  defp read_names(selector),
+    do: for([_whole, name] <- Regex.scan(@result_name, selector), uniq: true, do: name)
+
+  # Each round renders the planned fields' selectors per row, with that row's values of the
+  # fields before the first pending one, gates each distinct rendering with
+  # `Cinder.Indexers.Selector.compile/2`, and asks one more worker for those selectors on the
+  # same page, with the same rows and merge. A row whose rendering fails, or that the gate or
+  # lexbor refuses, reads nil for that field. A field with more than `max_result_selectors/0`
+  # renderings, a chain past `max_result_rounds/0` rounds, or a round whose row count differs from
+  # the first's, is an error.
+  defp result_rounds(rows, page, definition, variables, request, done, round \\ 1) do
+    fields = definition.search.fields
+
+    case pending(fields, done) do
+      [] ->
+        {:ok, rows}
+
+      _pending when round > @max_result_rounds ->
+        {:error, :definition_error}
+
+      [first | _] = pending ->
+        planned = plannable(fields, pending)
+        by_name = Map.new(fields)
+        names = Enum.filter(pending, &MapSet.member?(planned, &1))
+        prefix = Enum.take_while(fields, fn {name, _field} -> name != first end)
+        charset = Charset.of_definition(definition)
+        seeded = seeded(variables, fields)
+
+        rendered =
+          Enum.map(rows, fn row ->
+            vars = row_vars(prefix, row, seeded, request.now, charset)
+            Map.new(names, &{&1, rendered_selector(by_name[&1].selector, vars, request.now)})
+          end)
+
+        with {:ok, distinct} <- distinct_selectors(rendered, names),
+             {:ok, answers} <- round_answers(distinct, by_name, page, length(rows)) do
+          result_rounds(
+            merge_round(rows, rendered, answers, names, distinct),
+            page,
+            definition,
+            variables,
+            request,
+            MapSet.union(done, planned),
+            round + 1
+          )
+        end
+    end
+  end
+
+  defp row_vars(prefix, row, seeded, now, charset) do
+    case fields(prefix, Map.new(row), seeded, now, charset) do
+      {:ok, vars} -> vars
+      {:dropped, _kind} -> nil
+    end
+  end
+
+  defp merge_round(rows, rendered, answers, names, distinct) do
+    [rows, rendered, answers]
+    |> Enum.zip()
+    |> Enum.map(fn {row, selectors, answer} ->
+      row ++ Enum.map(names, &{&1, round_value(&1, selectors[&1], distinct, answer)})
+    end)
+  end
+
+  defp seeded(variables, fields),
+    do: Map.merge(variables, Map.new(fields, fn {name, _field} -> {".Result." <> name, nil} end))
+
+  defp rendered_selector(_template, nil, _now), do: nil
+
+  defp rendered_selector(template, vars, now) do
+    with {:ok, selector} <- Template.render(template, vars, now),
+         {:ok, _compiled} <- Selector.compile(selector, "gate"),
+         do: selector,
+         else: (_failed -> nil)
+  end
+
+  defp distinct_selectors(rendered, names) do
+    distinct =
+      Map.new(names, fn name ->
+        selectors = rendered |> Enum.map(& &1[name]) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+        {name, selectors |> Enum.with_index() |> Map.new()}
+      end)
+
+    if Enum.any?(distinct, fn {_name, selectors} ->
+         map_size(selectors) > @max_result_selectors
+       end),
+       do: {:error, :definition_error},
+       else: {:ok, distinct}
+  end
+
+  defp round_answers(distinct, by_name, page, count) do
+    round_fields =
+      for {name, selectors} <- distinct,
+          {selector, j} <- selectors,
+          do: worker_field({name, j}, selector, by_name[name])
+
+    if round_fields == [] do
+      {:ok, List.duplicate(%{}, count)}
+    else
+      plan = %{rows: page.plan.rows, fields: round_fields, after: page.plan.after, lenient: true}
+
+      with :ok <- worker_input(page.site, plan, page.request),
+           {:ok, answers} <- run(page.html, plan, page.deadlines) do
+        round_rows(answers, count)
+      end
+    end
+  end
+
+  defp round_rows(answers, count) when length(answers) == count,
+    do: {:ok, Enum.map(answers, &Map.new/1)}
+
+  defp round_rows(_answers, _count), do: {:error, :parser_failed}
+
+  defp round_value(_name, nil, _distinct, _answer), do: nil
+  defp round_value(name, selector, distinct, answer), do: answer[{name, distinct[name][selector]}]
+
   # --- the fields ---
 
-  defp read_rows(values, definition, variables, uri, query_text, request, charset) do
+  defp read_rows(values, definition, variables, uri, query_text, request, charset, header) do
     now = request.now
     fields = definition.search.fields
 
-    seeded =
-      Map.merge(variables, Map.new(fields, fn {name, _field} -> {".Result." <> name, nil} end))
-
+    seeded = seeded(variables, fields)
     andmatch? = andmatch?(definition, query_text)
     mappings = Query.mappings(definition)
     private? = definition.type == "private"
 
-    one_row = fn results ->
-      keep?(results, andmatch?, query_text) && row(results, uri, mappings, private?, request)
+    one_row = fn results, worker_values ->
+      with true <- keep?(results, andmatch?, query_text),
+           %{} = release <- row(results, uri, mappings, private?, request) do
+        dated(release, header, worker_values[:dateheader], results, now, charset)
+      end
     end
 
     {rows, missing, partial} =
       Enum.reduce(values, {[], [], nil}, fn row_values, {rows, missing, partial} ->
-        case fields(fields, Map.new(row_values), seeded, now, charset) do
-          {:ok, results} -> {rows, missing, partial} |> add_row(one_row.(results))
+        worker_values = Map.new(row_values)
+
+        case fields(fields, worker_values, seeded, now, charset) do
+          {:ok, results} -> {rows, missing, partial} |> add_row(one_row.(results, worker_values))
           {:dropped, kind} -> {rows, missing, partial || kind}
         end
       end)
@@ -228,8 +535,41 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
      }}
   end
 
-  # A row andmatch drops, one missing a required field, or a release row.
+  # `dateheaders` (#1679): a release whose date reads nil takes the date of the header the
+  # worker found before its row, through the block's own text, `case`, filters and
+  # `DotnetDate.from_unknown/2`, as Prowlarr's `ParseResponse` does after the row filters. No
+  # header drops the row unless the block is `optional`; a header whose date does not parse
+  # drops it either way, as Prowlarr's exception does. A filter that fails reads as no header,
+  # where Prowlarr walks on to the next candidate. A limit drops the row with its kind.
+  defp dated(release, nil, _worker_value, _results, _now, _charset), do: release
+
+  defp dated(%{published_at: %DateTime{}} = release, _header, _value, _results, _now, _charset),
+    do: release
+
+  defp dated(release, header, worker_value, results, now, charset) do
+    case field_value(%{header | optional: false}, worker_value, results, now, charset) do
+      {:ok, nil} ->
+        if header.optional, do: release, else: false
+
+      {:ok, value} ->
+        header_dated(release, value, now)
+
+      {:dropped, kind} ->
+        {:dropped, kind}
+    end
+  end
+
+  defp header_dated(release, value, now) do
+    case DotnetDate.from_unknown(value, now) do
+      {:ok, time} -> %{release | published_at: time}
+      :error -> false
+    end
+  end
+
+  # A row andmatch or its date header drops, one missing a required field, or a release row.
   defp add_row(acc, false), do: acc
+
+  defp add_row({rows, missing, partial}, {:dropped, kind}), do: {rows, missing, partial || kind}
 
   defp add_row({rows, missing, partial}, {:missing, field}),
     do: {rows, [field | missing], partial}
@@ -390,12 +730,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Rows do
   defp infohash_magnet(_hash, _title, true = _private?), do: nil
   defp infohash_magnet(_hash, nil, _private?), do: nil
 
-  defp infohash_magnet(hash, title, false) when is_binary(hash) do
-    case String.trim(hash) do
-      "" -> nil
-      hash -> "magnet:?xt=urn:btih:" <> hash <> "&dn=" <> URI.encode_www_form(title)
-    end
-  end
+  defp infohash_magnet(hash, title, false) when is_binary(hash),
+    do: Magnet.from_infohash(hash, title)
 
   defp infohash_magnet(_hash, _title, _private?), do: nil
 

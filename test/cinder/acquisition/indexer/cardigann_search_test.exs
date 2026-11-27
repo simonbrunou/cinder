@@ -133,6 +133,8 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
       assert spaced() == [{indexer.id, 3500}]
     end
 
+    # A page's workers share one 30 s budget (#1679's `.Result` rounds), so the first gets 30 s
+    # less the milliseconds spent before it starts.
     test "a page's parser worker gets 30 s, or less when the search deadline is nearer" do
       nyaa!()
       test_pid = self()
@@ -152,7 +154,8 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
 
       # Native's own 90 s deadline leaves more than the worker's 30 s.
       assert {:ok, [_row], _report} = Native.search_tv_query("frieren", categories: [5070])
-      assert_received {:parse, 30_000}
+      assert_received {:parse, full}
+      assert full in 29_000..30_000
 
       Repo.delete_all(IndexerStatus)
       ConfigCase.put_env(Native, clock: fn -> @now end, deadline_ms: 5_000)
@@ -1385,15 +1388,26 @@ defmodule Cinder.Acquisition.Indexer.CardigannSearchTest do
   end
 
   describe "the running copy and the Test" do
-    # A `download` block with `selectors` loads since #1672; `method: post` is #1679's.
+    # #1679 builds every `download` key but `before.pathselector` and a custom
+    # `before.queryseparator`, which no v11 definition sets.
     test "a copy that reads not supported is not asked and its Test sends nothing" do
-      post = fn definition -> put_in(definition, ["download", "method"], "post") end
-      [indexer] = setup!([{"t9.yml", torrent9_like(post)}], [{"t9.yml", torrent9_base(), %{}}])
+      code = :download_before_pathselector
+
+      path_selector = fn definition ->
+        put_in(definition, ["download", "before"], %{
+          "path" => "thanks.php",
+          "pathselector" => %{"selector" => "a.thanks", "attribute" => "href"}
+        })
+      end
+
+      [indexer] =
+        setup!([{"t9.yml", torrent9_like(path_selector)}], [{"t9.yml", torrent9_base(), %{}}])
+
       route(%{"t9.test" => fn _conn, _query -> torrent9_page([]) end})
 
       assert {:ok, [], report} = Native.search_movie_query("dune", [])
-      assert outcomes(report) == %{indexer.id => {:not_asked, {:not_supported, :download_post}}}
-      assert Native.test_indexer(indexer.id) == {:error, {:not_supported, :download_post}}
+      assert outcomes(report) == %{indexer.id => {:not_asked, {:not_supported, code}}}
+      assert Native.test_indexer(indexer.id) == {:error, {:not_supported, code}}
       assert requests() == []
     end
 

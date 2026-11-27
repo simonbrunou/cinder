@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
   @moduledoc """
   Plans one seam call against one Cardigann definition (#1671; #1618 points 8 to 10 and 13):
-  which queries it asks, with which variables, and the GET URL of each search path. Pure: no
-  request, no process.
+  which queries it asks, with which variables, and the request of each search path: its method,
+  URL, form body and headers. Pure: no request, no process.
 
   ## Which queries
 
@@ -38,18 +38,33 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
 
   ## Paths
 
-  Each search path, in file order: the path template rendered with each value URL-encoded in
-  UTF-8 (spaces as `%20`) and resolved against the base URL, then the search inputs followed by
-  the path's own, each rendered and left out when blank, appended as a query string. Each
-  input's name and value are written in the definition's charset
-  (`Cinder.Acquisition.Indexer.Cardigann.Charset.of_definition/1`, #1678) and each byte outside
-  RFC 3986's unreserved set is percent-encoded, so a `windows-1251` definition sends `А` as
-  `%C0`. An input name in both lists is sent twice, search value first,
-  as Prowlarr's `GetRequest` sends it. Two paths that render one URL send it once, with the
-  first path's `response`. The keyword filters run in the definition's charset too.
+  Each search path, in file order, the legacy `search.path` last (the loader appends it). A path
+  with `categories` runs as `path_categories/2` says, with its own `.Categories`; one the call's
+  categories skip is left out, and a query whose every path is left out sends nothing (#1679).
+
+  The path template is rendered with each value URL-encoded in UTF-8 (spaces as `%20`) and
+  resolved against the base URL. Then come the search inputs followed by the path's own (only
+  the path's under `inheritinputs: false`), each rendered and left out when blank unless
+  `search.allowEmptyInputs` is on. A `$raw` input renders with each value encoded as .NET's
+  `WebUtility.UrlEncode` encodes it (`dotnet_encode/2`), then splits into pairs on `&` and `=`,
+  a pair with an empty key skipped (Prowlarr's `GetRequest`). Each input's name and value are
+  written in the definition's charset
+  (`Cinder.Acquisition.Indexer.Cardigann.Charset.of_definition/1`,
+  #1678) and each byte outside RFC 3986's unreserved set is percent-encoded, so a
+  `windows-1251` definition sends `А` as `%C0`; a `$raw` pair is written as `encode_pairs/2`
+  says. An input name in both lists is sent twice, search value first, as Prowlarr's
+  `GetRequest` sends it. The pairs are a query string, after `?` or `&`, for a GET, and the form
+  body of a path whose `method` is `post` (#1679). The keyword filters run in the definition's
+  charset too.
+
+  Each page also holds the rendered `search.headers`
+  (`Cinder.Acquisition.Indexer.Cardigann.Headers.search/3`)
+  and the path's own `followredirect`. A GET whose URL an earlier path already sends, GET or
+  POST, is sent once, with the first path's `response`, as Prowlarr's list of URLs holds both;
+  every POST path is sent.
   """
 
-  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Filters, Template, Variables}
+  alias Cinder.Acquisition.Indexer.Cardigann.{Charset, Filters, Headers, Template, Variables}
   alias Cinder.Acquisition.Indexer.Newznab.Caps
 
   @movie_category 2000
@@ -156,8 +171,20 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
           andmatch: String.t() | nil
         }
 
-  @typedoc "One GET of a query: its URL and its search path's `response` record, nil for none."
-  @type page :: %{url: String.t(), response: map() | nil}
+  @typedoc """
+  One request of a query: its URL, its method, its form body (nil on a GET), the rendered
+  `search.headers`, the path's own `followredirect` (nil when unset), its search path's
+  `response` record (nil for none), and the variables its templates read.
+  """
+  @type page :: %{
+          url: String.t(),
+          method: :get | :post,
+          body: String.t() | nil,
+          site_headers: [{String.t(), String.t()}],
+          follow_redirects?: boolean() | nil,
+          response: map() | nil,
+          variables: Template.variables()
+        }
 
   @doc """
   The queries one seam call asks, in order: `{:ok, entries}` with at least one, each
@@ -174,9 +201,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
           site_ids != [],
           do: Map.put(ask, :site_ids, site_ids)
 
-    case asks do
+    # A query whose every path its categories skip sends nothing.
+    entries =
+      asks
+      |> Enum.map(&planned(definition, config, &1, now))
+      |> Enum.reject(&match?({:ok, %{pages: []}}, &1))
+
+    case entries do
       [] -> {:not_asked, :caps}
-      asks -> {:ok, Enum.map(asks, &planned(definition, config, &1, now))}
+      entries -> {:ok, entries}
     end
   end
 
@@ -369,7 +402,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
        %{
          origin: ask.origin,
          variables: variables,
-         pages: Enum.uniq_by(pages, & &1.url),
+         pages: pages,
          andmatch: andmatch(ask)
        }}
     end
@@ -436,15 +469,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
   def failure(:filter_output_cap), do: :filter_output_cap
   def failure(_reason), do: :definition_error
 
-  # --- the URLs ---
+  # --- the requests ---
 
+  # Each path that runs, in file order, as Prowlarr's `GetRequest` builds it. A GET whose URL an
+  # earlier path of the query, GET or POST, already uses is left out; a POST always goes.
   defp pages(definition, base_url, variables, now) do
-    charset = Charset.of_definition(definition)
-
     Enum.reduce_while(definition.search.paths, {:ok, []}, fn path, {:ok, acc} ->
-      case url(definition.search.inputs, path, base_url, variables, now, charset) do
-        {:ok, url} -> {:cont, {:ok, [%{url: url, response: path.response} | acc]}}
-        {:error, _reason} = error -> {:halt, error}
+      case path_categories(path.categories, variables[".Categories"]) do
+        :skip -> {:cont, {:ok, acc}}
+        {:ok, categories} -> add_page(definition, path, base_url, variables, categories, now, acc)
       end
     end)
     |> case do
@@ -453,27 +486,111 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
     end
   end
 
-  defp url(search_inputs, path, base_url, variables, now, charset) do
-    with {:ok, rendered} <- render(path.path, variables, now, modifier: &encode/1),
-         {:ok, inputs} <- inputs(search_inputs ++ path.inputs, variables, now),
-         {:ok, uri} <- resolve(base_url, rendered) do
-      {:ok, uri |> with_inputs(inputs, charset) |> URI.to_string()}
+  defp add_page(definition, path, base_url, variables, categories, now, acc) do
+    charset = Charset.of_definition(definition)
+    path_variables = Map.put(variables, ".Categories", categories)
+
+    case page(definition, path, base_url, path_variables, now, charset) do
+      {:ok, page} -> {:cont, {:ok, if(repeated?(page, acc), do: acc, else: [page | acc])}}
+      {:error, _reason} = error -> {:halt, error}
     end
   end
 
-  defp inputs(inputs, variables, now) do
-    Enum.reduce_while(inputs, {:ok, []}, fn {key, template}, {:ok, acc} ->
-      case render(template || "", variables, now) do
-        {:ok, value} ->
-          {:cont, {:ok, if(String.trim(value) == "", do: acc, else: [{key, value} | acc])}}
+  # Prowlarr's list of URLs holds the POST paths' too, so a GET to one is skipped as well.
+  defp repeated?(%{method: :get, url: url}, pages),
+    do: Enum.any?(pages, &match?(%{url: ^url}, &1))
 
-        error ->
-          {:halt, error}
+  defp repeated?(_post, _pages), do: false
+
+  @doc """
+  The `.Categories` of a search path whose `categories` list is `list`, for a call whose mapped
+  site ids are `mapped`, as Prowlarr's `GetRequest` reads it: `{:ok, categories}` when the path
+  runs, else `:skip`. With no list, or no mapped id (a Test with no default mapping), the path
+  runs with `mapped`. Otherwise it runs when `mapped` meets the list, or, when the list starts
+  with `"!"`, when it does not; either way with the ids of `mapped` that the list holds, in
+  `mapped`'s order, so a `"!"` path runs with none.
+  """
+  @spec path_categories([String.t()], [String.t()]) :: {:ok, [String.t()]} | :skip
+  def path_categories([], mapped), do: {:ok, mapped}
+  def path_categories(_list, []), do: {:ok, []}
+
+  def path_categories([first | _] = list, mapped) do
+    held = Enum.filter(mapped, &(&1 in list))
+    meets? = held != []
+    runs? = if first == "!", do: not meets?, else: meets?
+    if runs?, do: {:ok, held}, else: :skip
+  end
+
+  defp page(definition, path, base_url, variables, now, charset) do
+    inputs = if path.inheritinputs, do: definition.search.inputs ++ path.inputs, else: path.inputs
+    allow_empty? = definition.search.allow_empty_inputs
+    method = if String.downcase(path.method || "") == "post", do: :post, else: :get
+
+    with {:ok, rendered} <- render(path.path, variables, now, modifier: &encode/1),
+         {:ok, pairs} <- pairs(inputs, variables, now, allow_empty?),
+         {:ok, headers} <- headers(definition, variables, now),
+         {:ok, uri} <- resolve(base_url, rendered) do
+      encoded = encode_pairs(pairs, charset)
+
+      {url, body} =
+        if method == :get,
+          do: {uri |> with_query(encoded) |> URI.to_string(), nil},
+          else: {URI.to_string(uri), encoded}
+
+      {:ok,
+       %{
+         url: url,
+         method: method,
+         body: body,
+         site_headers: headers,
+         follow_redirects?: path.followredirect,
+         response: path.response,
+         variables: variables
+       }}
+    end
+  end
+
+  defp headers(definition, variables, now) do
+    case Headers.search(definition, variables, now) do
+      {:ok, headers} -> {:ok, headers}
+      {:error, reason} -> {:error, failure(reason)}
+    end
+  end
+
+  # Each input as `{key, value}`, or `{:raw, key, value}` for a pair of a `$raw` input, in order.
+  defp pairs(inputs, variables, now, allow_empty?) do
+    Enum.reduce_while(inputs, {:ok, []}, fn {key, template}, {:ok, acc} ->
+      case input_pairs(key, template || "", variables, now, allow_empty?) do
+        {:ok, pairs} -> {:cont, {:ok, Enum.reverse(pairs, acc)}}
+        error -> {:halt, error}
       end
     end)
     |> case do
       {:ok, pairs} -> {:ok, Enum.reverse(pairs)}
       error -> error
+    end
+  end
+
+  # A `$raw` input renders with each value URL-encoded as .NET's `WebUtility.UrlEncode` encodes it
+  # in UTF-8, then splits on `&` and each part on its first `=`; a part with an empty key is
+  # skipped, an empty value kept (Prowlarr's `GetRequest`).
+  defp input_pairs("$raw", template, variables, now, _allow_empty?) do
+    with {:ok, rendered} <- render(template, variables, now, modifier: &dotnet_encode/1) do
+      pairs =
+        for part <- String.split(rendered, "&"),
+            [key | value] = String.split(part, "=", parts: 2),
+            key != "",
+            do: {:raw, key, Enum.join(value)}
+
+      {:ok, pairs}
+    end
+  end
+
+  defp input_pairs(key, template, variables, now, allow_empty?) do
+    with {:ok, value} <- render(template, variables, now) do
+      if String.trim(value) == "" and not allow_empty?,
+        do: {:ok, []},
+        else: {:ok, [{key, value}]}
     end
   end
 
@@ -484,10 +601,17 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
     end
   end
 
-  # Prowlarr's `WebUtility.UrlEncode`, then `+` as `%20`.
+  # A path template's URL-encoding modifier: `URI.encode_www_form/1`, then `+` as `%20`. It keeps
+  # `~` and encodes `!*()`, where .NET's `WebUtility.UrlEncode` (`dotnet_encode/2`) does the
+  # reverse.
   defp encode(value), do: value |> URI.encode_www_form() |> String.replace("+", "%20")
 
-  defp resolve(base_url, path) do
+  @doc """
+  `path` resolved against `base_url`, an http(s) URL, or `{:error, :definition_error}` when
+  either does not parse.
+  """
+  @spec resolve(String.t() | nil, String.t()) :: {:ok, URI.t()} | {:error, :definition_error}
+  def resolve(base_url, path) do
     with {:ok, base} <- URI.new(base_url || ""),
          true <- base.scheme in ["http", "https"] and is_binary(base.host),
          {:ok, _ref} <- URI.new(path) do
@@ -497,16 +621,58 @@ defmodule Cinder.Acquisition.Indexer.Cardigann.Query do
     end
   end
 
-  defp with_inputs(uri, [], _charset), do: uri
+  @doc """
+  `pairs` as a query string or form body in `charset`: each key and value written in `charset`
+  and every byte outside RFC 3986's unreserved set percent-encoded. A `{:raw, key, value}` pair
+  of a `$raw` input keeps its key as the template wrote it, with only the bytes a query cannot
+  hold percent-encoded, as Prowlarr writes its key; its value, already URL-encoded by the
+  template, is encoded again in `charset` as Prowlarr's `GetQueryString` does, by
+  `dotnet_encode/2`'s rule, so the site decodes it once to the template's encoded text.
+  """
+  @spec encode_pairs([{String.t(), String.t()} | {:raw, String.t(), String.t()}], Charset.t()) ::
+          String.t()
+  def encode_pairs(pairs, charset) do
+    Enum.map_join(pairs, "&", fn
+      {:raw, key, value} ->
+        URI.encode(Charset.encode(key, charset), &raw_key_char?/1) <>
+          "=" <>
+          dotnet_encode(value, charset)
 
-  defp with_inputs(uri, inputs, charset) do
-    query =
-      inputs
-      |> Enum.map(fn {key, value} ->
-        {Charset.encode(key, charset), Charset.encode(value, charset)}
-      end)
-      |> URI.encode_query(:rfc3986)
-
-    %{uri | query: if(uri.query in [nil, ""], do: query, else: uri.query <> "&" <> query)}
+      {key, value} ->
+        value(key, charset) <> "=" <> value(value, charset)
+    end)
   end
+
+  defp value(text, charset),
+    do: URI.encode(Charset.encode(text, charset), &URI.char_unreserved?/1)
+
+  # The bytes a query holds as they are; `[`, `]` and `#` are encoded, since `URI.new/1` refuses
+  # them in a query.
+  defp raw_key_char?(char), do: URI.char_unreserved?(char) or char in ~c"!$'()*+,;:@/?%"
+
+  @doc """
+  `text` written in `charset` (UTF-8 by default) and URL-encoded as .NET's
+  `WebUtility.UrlEncode` encodes it: ASCII letters, digits and `-_.!*()` as they are, a space as
+  `+`, every other byte as `%` and two upper-case hex digits.
+  """
+  @spec dotnet_encode(String.t(), Charset.t()) :: String.t()
+  def dotnet_encode(text, charset \\ :utf8),
+    do: for(<<byte <- Charset.encode(text, charset)>>, into: "", do: dotnet_byte(byte))
+
+  defp dotnet_byte(?\s), do: "+"
+
+  defp dotnet_byte(byte)
+       when byte in ?a..?z or byte in ?A..?Z or byte in ?0..?9 or byte in ~c"-_.!*()",
+       do: <<byte>>
+
+  defp dotnet_byte(byte), do: "%" <> Base.encode16(<<byte>>)
+
+  @doc """
+  `uri` with `query`, a query string, appended: after `?`, or after `&` when `uri` has a query.
+  """
+  @spec with_query(URI.t(), String.t()) :: URI.t()
+  def with_query(uri, ""), do: uri
+
+  def with_query(uri, query),
+    do: %{uri | query: if(uri.query in [nil, ""], do: query, else: uri.query <> "&" <> query)}
 end

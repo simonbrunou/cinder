@@ -177,12 +177,12 @@ defmodule Mix.Tasks.Cinder.Definitions.Canary do
       now: now
     }
 
-    with {:ok, body, uri} <- Fetch.get(first.url, request),
+    with {:ok, body, uri} <- Fetch.send_page(first, request),
          {:ok, page} <-
            Rows.read(
              body,
              definition,
-             planned.variables,
+             first.variables,
              uri,
              planned.andmatch,
              deadline_at,

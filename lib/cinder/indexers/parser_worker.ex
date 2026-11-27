@@ -57,7 +57,8 @@ defmodule Cinder.Indexers.ParserWorker do
 
   ## The plan
 
-  `%{rows: selector, fields: [field]}`, each field `%{name:, selector:, attribute:, remove:,
+  `%{rows: selector, fields: [field]}`, with optional `after`, `dateheader` and `lenient` keys
+  (#1679, see `run/3`), each field `%{name:, selector:, attribute:, remove:,
   case:}`: `selector` nil reads the row itself, and otherwise matches the row itself first, then
   its first descendant, as Prowlarr's `dom.Matches(sel) ? dom : QuerySelector(dom, sel)` does;
   `attribute` nil reads the text, with every descendant that a `remove` selector matches taken out
@@ -102,7 +103,7 @@ defmodule Cinder.Indexers.ParserWorker do
   @type plan :: %{rows: String.t(), fields: [field()]}
   @type value :: String.t() | {:case, String.t()} | nil
   @type failure :: :crash | :timeout | :memory | :output_too_large
-  @type where :: :rows | {:field, non_neg_integer()}
+  @type where :: :rows | {:field, non_neg_integer()} | :dateheader
 
   @doc "The answer cap in bytes: past it the worker is killed and the answer is `:output_too_large`."
   @spec max_output_bytes() :: pos_integer()
@@ -148,27 +149,60 @@ defmodule Cinder.Indexers.ParserWorker do
   reaches: every field selector when no row matches, a field's `case` keys and `remove` selectors
   when its selector found nothing, the `case` keys after one that matched, and `remove` selectors
   on a field with a `case` key or an attribute. A selector that crashes lexbor answers `:crash`.
+
+  The plan's optional keys are #1679's. `after: n` above 0 reads each group of a row and the `n`
+  rows below it as one row: the group's later rows are emptied into the first, which is read on
+  that merged tree, and a last group short of rows merges what it has. `dateheader: field`
+  appends a `{:dateheader, value}` pair to each row: the field read on the first element, from
+  the row's previous element sibling, else its parent's previous element sibling, up the tree,
+  that gives a value, or nil. A dateheader selector the gate or lexbor refuses answers
+  `{:error, {:refused, :dateheader}}`. `lenient: true` reads nil for a field whose selector
+  lexbor refuses, in place of that error.
   """
   @spec run(binary(), plan(), keyword()) ::
           {:ok, [[{String.t(), value()}]]} | {:error, failure() | {:refused, where()}}
   def run(html, %{rows: rows, fields: fields} = plan, opts) when is_binary(html) do
     deadline_ms = Keyword.fetch!(opts, :deadline_ms)
     token = new_token()
+    after_rows = Map.get(plan, :after, 0)
+    dateheader = Map.get(plan, :dateheader)
 
     # Each compiled selector's marker tag names its place: "r" the rows, "f<i>" field i's
-    # selector, "x<i>-<j>" its j-th `remove` selector, "k<i>-<j>" its j-th `case` key.
+    # selector, "x<i>-<j>" its j-th `remove` selector, "k<i>-<j>" its j-th `case` key. The
+    # date header is field `length(fields)`.
     with {:ok, rows_compiled} <- compile_at(rows, token, "r", :rows),
-         {:ok, compiled_fields} <- compile_fields(fields, token) do
-      marks = marks([rows_compiled | Enum.flat_map(compiled_fields, &elem(&1, 1))])
+         {:ok, compiled_fields} <- compile_fields(fields ++ List.wrap(dateheader), token) do
+      field_marks = marks(Enum.flat_map(compiled_fields, &elem(&1, 1)))
+      worker_fields = Enum.map(compiled_fields, fn {field, _compiled} -> field end)
+      {worker_fields, worker_dateheader} = Enum.split(worker_fields, length(fields))
+      restructure? = after_rows > 0 or dateheader != nil
+
+      number_attribute =
+        if restructure? or Enum.any?(fields ++ List.wrap(dateheader), &(&1.remove != [])),
+          do: "cinder-#{token}-n"
+
+      extras = %{
+        lenient: Map.get(plan, :lenient, false),
+        after: after_rows,
+        dateheader: List.first(worker_dateheader),
+        row_marks: rows_compiled.needles,
+        field_marks: field_marks,
+        head_attribute: "cinder-#{token}-h"
+      }
 
       input =
-        {:run, html, rows_compiled.selector,
-         Enum.map(compiled_fields, fn {field, _compiled} -> field end), marks,
-         if(Enum.any?(fields, &(&1.remove != [])), do: "cinder-#{token}-n"), deadline_ms}
+        {:run, html, rows_compiled.selector, worker_fields, rows_compiled.needles ++ field_marks,
+         number_attribute, extras, deadline_ms}
 
       with {:ok, answer} <- start(input, deadline_ms, opts) do
         read_rows(answer, plan)
       end
+    else
+      {:error, {:refused, {:field, i}}} when i == length(fields) ->
+        {:error, {:refused, :dateheader}}
+
+      error ->
+        error
     end
   end
 
@@ -390,13 +424,25 @@ defmodule Cinder.Indexers.ParserWorker do
 
   defp read_rows(<<?X, 0::32>>, _plan), do: {:error, {:refused, :rows}}
 
-  defp read_rows(<<?X, index::32>>, %{fields: fields}) when index <= length(fields),
+  defp read_rows(<<?X, index::32>>, plan) when index <= length(plan.fields),
     do: {:error, {:refused, {:field, index - 1}}}
 
-  # A row of a plan with no fields takes no bytes, so the count alone is bounded here.
-  defp read_rows(<<?R, count::32, width::32, values::binary>>, %{fields: fields})
+  defp read_rows(<<?X, index::32>>, %{dateheader: %{}} = plan)
+       when index == length(plan.fields) + 1,
+       do: {:error, {:refused, :dateheader}}
+
+  defp read_rows(<<?R, count::32, width::32, values::binary>>, plan) do
+    fields = plan.fields ++ List.wrap(Map.get(plan, :dateheader))
+    read_rows(count, width, values, fields)
+  end
+
+  defp read_rows(_answer, _plan), do: {:error, :crash}
+
+  # A row of a plan with no fields takes no bytes, so the count alone is bounded here. The date
+  # header's value is each row's last, under the name `:dateheader`.
+  defp read_rows(count, width, values, fields)
        when width == length(fields) and (width > 0 or count <= @max_output_bytes) do
-    names = Enum.map(fields, & &1.name)
+    names = Enum.map(fields, &Map.get(&1, :name, :dateheader))
 
     with {:ok, flat} <- read_values(values, count * width, []),
          {:ok, flat} <- resolve_cases(flat, fields) do
@@ -411,7 +457,7 @@ defmodule Cinder.Indexers.ParserWorker do
     end
   end
 
-  defp read_rows(_answer, _plan), do: {:error, :crash}
+  defp read_rows(_count, _width, _values, _fields), do: {:error, :crash}
 
   defp read_values(<<>>, 0, acc), do: {:ok, Enum.reverse(acc)}
   defp read_values(_rest, 0, _acc), do: :error
@@ -500,21 +546,47 @@ defmodule Cinder.Indexers.ParserWorker do
     end)
   end
 
-  defp answer({:run, html, rows, fields, marks, number_attribute, _deadline_ms}) do
+  defp answer({:run, html, rows, fields, marks, number_attribute, extras, _deadline_ms})
+       when extras.after == 0 and extras.dateheader == nil do
     document = html |> LazyHTML.from_document() |> mark(marks, number_attribute)
 
     rows =
       document
       |> query(rows, 0)
-      |> Enum.map(fn row ->
-        fields
-        |> Enum.with_index(1)
-        |> Enum.map(fn {field, where} -> field_value(row, field, number_attribute, where) end)
-      end)
+      |> Enum.map(fn row -> row_values(row, fields, number_attribute, extras.lenient) end)
 
-    width = length(fields)
-    values = for row <- rows, value <- row, do: encode_value(value)
-    IO.iodata_to_binary([?R, <<length(rows)::32, width::32>>, values])
+    encode_rows(rows, length(fields))
+  catch
+    :throw, {__MODULE__, :refused, where} -> <<?X, where::32>>
+  end
+
+  # `rows.after` and `dateheaders` (#1679): the rows run on a rebuilt tree. Every element is
+  # numbered; with `after` the rows are queried first with only their own needles marked, each
+  # group's head gets the next `after` rows' child nodes appended and those rows are emptied
+  # (they stay in the tree, as in Prowlarr), then the fields' needles are marked on the merged
+  # tree and the heads are found again by the attribute each got. A head that ended up inside
+  # another group's moved nodes is not found again, so it reads as no row.
+  defp answer({:run, html, rows, fields, marks, number, extras, _deadline_ms}) do
+    tree = html |> LazyHTML.from_document() |> LazyHTML.to_tree()
+    pass_marks = if extras.after > 0, do: extras.row_marks, else: marks
+    {numbered, _text, _next} = mark_nodes(tree, pass_marks, number, 0)
+    document = LazyHTML.from_tree(numbered)
+    found = query(document, rows, 0)
+
+    {document, tree, rows} =
+      if extras.after > 0,
+        do: merged(numbered, LazyHTML.attribute(found, number), extras, number),
+        else: {document, numbered, found}
+
+    width = length(fields) + if(extras.dateheader, do: 1, else: 0)
+    header = dateheader_reader(document, tree, extras.dateheader, number, width)
+
+    rows
+    |> Enum.map(fn row ->
+      values = row_values(row, fields, number, extras.lenient)
+      if header, do: values ++ [header.(row)], else: values
+    end)
+    |> encode_rows(width)
   catch
     :throw, {__MODULE__, :refused, where} -> <<?X, where::32>>
   end
@@ -529,6 +601,160 @@ defmodule Cinder.Indexers.ParserWorker do
 
     <<?C, length(items)::32, :binary.list_to_bin(verdicts)::binary>>
   end
+
+  defp row_values(row, fields, number_attribute, lenient?) do
+    fields
+    |> Enum.with_index(1)
+    |> Enum.map(fn {field, where} ->
+      lenient_value(row, field, number_attribute, where, lenient?)
+    end)
+  end
+
+  # A lenient plan (a `.Result` round, #1679, whose selectors a page's text rendered) reads a
+  # selector lexbor refuses as nil for that field, where any other plan refuses the whole plan.
+  defp lenient_value(row, field, number_attribute, where, false),
+    do: field_value(row, field, number_attribute, where)
+
+  defp lenient_value(row, field, number_attribute, where, true) do
+    field_value(row, field, number_attribute, where)
+  catch
+    :throw, {__MODULE__, :refused, _where} -> nil
+  end
+
+  defp encode_rows(rows, width) do
+    values = for row <- rows, value <- row, do: encode_value(value)
+    IO.iodata_to_binary([?R, <<length(rows)::32, width::32>>, values])
+  end
+
+  defp merged(tree, row_numbers, extras, number) do
+    groups = Enum.chunk_every(row_numbers, extras.after + 1)
+    moved = Map.new(groups, fn [head | rest] -> {head, rest} end)
+    emptied = groups |> Enum.flat_map(&tl/1) |> MapSet.new()
+    children = moved_children(tree, number, emptied, %{})
+    rebuilt = rebuild(tree, number, %{moved: moved, emptied: emptied, children: children}, extras)
+    {marked, _text, _next} = mark_nodes(rebuilt, extras.field_marks, nil, 0)
+    document = LazyHTML.from_tree(marked)
+    {document, marked, query(document, "[#{extras.head_attribute}]", 0)}
+  end
+
+  # The child nodes of each emptied row, by its number, as the tree had them.
+  defp moved_children(nodes, number, emptied, acc) when is_list(nodes),
+    do: Enum.reduce(nodes, acc, &moved_children(&1, number, emptied, &2))
+
+  defp moved_children({tag, attributes, children}, number, emptied, acc) when is_binary(tag) do
+    acc = moved_children(children, number, emptied, acc)
+
+    case List.keyfind(attributes, number, 0) do
+      {_name, n} -> if MapSet.member?(emptied, n), do: Map.put(acc, n, children), else: acc
+      nil -> acc
+    end
+  end
+
+  defp moved_children(_other, _number, _emptied, acc), do: acc
+
+  defp rebuild(nodes, number, merge, extras) when is_list(nodes),
+    do: Enum.map(nodes, &rebuild(&1, number, merge, extras))
+
+  defp rebuild({tag, attributes, children}, number, merge, extras) when is_binary(tag) do
+    n = with {_name, n} <- List.keyfind(attributes, number, 0), do: n
+
+    cond do
+      MapSet.member?(merge.emptied, n) ->
+        {tag, attributes, []}
+
+      Map.has_key?(merge.moved, n) ->
+        appended = Enum.flat_map(merge.moved[n], &Map.get(merge.children, &1, []))
+
+        {tag, attributes ++ [{extras.head_attribute, ""}],
+         rebuild(children, number, merge, extras) ++ appended}
+
+      true ->
+        {tag, attributes, rebuild(children, number, merge, extras)}
+    end
+  end
+
+  defp rebuild(other, _number, _merge, _extras), do: other
+
+  # `dateheaders`: a function from a row to the value of the first element before it that the
+  # date header block reads, walking as Prowlarr's `ParseResponse` walks: the previous element
+  # sibling, else the parent's previous element sibling, from each element tried. An element
+  # qualifies when its selector matches it or a descendant and its attribute or `case` key is
+  # found. Each element is tried at most once and each walk's answer is kept for the elements
+  # it passed, so the walks stay linear in the page.
+  defp dateheader_reader(_document, _tree, nil, _number, _width), do: nil
+
+  defp dateheader_reader(document, tree, field, number, where) do
+    {parents, previous} = tree_index(tree, number)
+
+    elements =
+      document |> query("[#{number}]", 0) |> Map.new(&{hd(LazyHTML.attribute(&1, number)), &1})
+
+    memo = :ets.new(:dateheader, [:set, :private])
+
+    step = fn n ->
+      Map.get(previous, n) ||
+        with(p when p != nil <- Map.get(parents, n), do: Map.get(previous, p))
+    end
+
+    fn row ->
+      [n] = LazyHTML.attribute(row, number)
+      walk(step.(n), step, elements, field, number, where, memo, [])
+    end
+  end
+
+  defp walk(nil, _step, _elements, _field, _number, _where, memo, passed),
+    do: remember(memo, passed, nil)
+
+  defp walk(n, step, elements, field, number, where, memo, passed) do
+    case :ets.lookup(memo, n) do
+      [{^n, value}] ->
+        remember(memo, passed, value)
+
+      [] ->
+        value = field_value(Map.fetch!(elements, n), field, number, where)
+
+        if is_nil(value),
+          do: walk(step.(n), step, elements, field, number, where, memo, [n | passed]),
+          else: remember(memo, [n | passed], value)
+    end
+  end
+
+  defp remember(memo, passed, value) do
+    :ets.insert(memo, Enum.map(passed, &{&1, value}))
+    value
+  end
+
+  # Each numbered element's parent's number and previous element sibling's number.
+  defp tree_index(tree, number) do
+    {parents, previous, _last} = index_nodes(tree, number, nil, {%{}, %{}, nil})
+    {parents, previous}
+  end
+
+  defp index_nodes(nodes, number, parent, {parents, previous, _last}) when is_list(nodes) do
+    {parents, previous, _last} =
+      Enum.reduce(nodes, {parents, previous, nil}, fn node, acc ->
+        index_node(node, number, parent, acc)
+      end)
+
+    {parents, previous, nil}
+  end
+
+  defp index_node({tag, attributes, children}, number, parent, {parents, previous, last})
+       when is_binary(tag) do
+    case List.keyfind(attributes, number, 0) do
+      {_name, n} ->
+        parents = if parent, do: Map.put(parents, n, parent), else: parents
+        previous = if last, do: Map.put(previous, n, last), else: previous
+        {parents, previous, _} = index_nodes(children, number, n, {parents, previous, nil})
+        {parents, previous, n}
+
+      nil ->
+        {parents, previous, _} = index_nodes(children, number, parent, {parents, previous, nil})
+        {parents, previous, last}
+    end
+  end
+
+  defp index_node(_other, _number, _parent, acc), do: acc
 
   defp runs?(document, selector) do
     _ = LazyHTML.query(document, selector)

@@ -22,7 +22,10 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
 
   - a query whose keyword filters hit a regex limit or the filter-chain cap sends nothing, and
     one whose templates fail sends nothing either (`:definition_error`). The others still run;
-  - otherwise its search paths go out in order, each GET holding the indexer's slot
+  - a query whose every search path its categories skip sends nothing and reads as not asked
+    for its caps (#1679);
+  - otherwise its search paths go out in order, each request, a GET or a POST
+    (`Cinder.Acquisition.Indexer.Cardigann.Query`'s "Paths"), holding the indexer's slot
     (`Cinder.Acquisition.Indexer.leased/4`) with the definition's `requestDelay` as the slot's
     spacing when it is above 2 s (at most 60 s), and its redirect hops inside the same slot
     (`Cinder.Acquisition.Indexer.Cardigann.Fetch`). The page is read inside the slot too
@@ -32,7 +35,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
   - its rows are tagged with its origin and capped at 1,000 across its pages.
 
   Each answer is recorded in `Cinder.Acquisition.IndexerSource.Native.IndexerStatus`: `:success`
-  for a page that reads, then the page's partial kind when a field hit a limit; the failure
+  for a page that reads, then the page's partial kind when a field or a preprocessing filter
+  hit a limit; the failure
   class or tag otherwise. A keyword-filter limit is recorded as its partial kind and a
   `:definition_error` as a failure.
 
@@ -122,8 +126,7 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
           follow_redirects?: definition.followredirect == true,
           secrets: Map.values(secret_values),
           secret_referenced?: referenced?(search_texts(definition.search), secret_values),
-          link_secret_referenced?:
-            referenced?(field_texts(definition.search.fields), secret_values),
+          link_secret_referenced?: referenced?(field_texts(definition.search), secret_values),
           download_secret_referenced?:
             referenced?(Variables.download_texts(definition.download), secret_values),
           credential_hosts:
@@ -174,17 +177,21 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
 
   defp input_texts(inputs), do: for({_key, value} <- inputs || [], do: value)
 
-  # The templates of the row fields: a template that reads a secret can put it in a row's link.
-  defp field_texts(fields) do
+  # The templates of the row fields and the preprocessing filters: a template that reads a
+  # secret can put it in a row's link, and a preprocessing filter can write it into the page.
+  defp field_texts(search) do
+    preprocessing =
+      for filter <- search.preprocessingfilters || [], arg <- List.wrap(filter.args), do: arg
+
     texts =
-      for {_name, field} <- fields,
+      for {_name, field} <- search.fields,
           text <-
             [field.text, field.default] ++
               for({_key, value} <- field.case || [], do: value) ++
               for(filter <- field.filters || [], arg <- List.wrap(filter.args), do: arg),
           do: text
 
-    Enum.filter(texts, &is_binary/1)
+    Enum.filter(preprocessing ++ texts, &is_binary/1)
   end
 
   defp delay_ms(delay) when is_number(delay) and delay > 2,
@@ -286,12 +293,12 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     now = now()
     request = copy.request.(context, now)
 
-    with {:ok, body, uri} <- Fetch.get(page.url, request),
+    with {:ok, body, uri} <- Fetch.send_page(page, request),
          {:ok, page} <-
            Rows.read(
              body,
              copy.definition,
-             planned.variables,
+             page.variables,
              uri,
              planned.andmatch,
              context.deadline_at,
@@ -347,8 +354,8 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
         when value: term()
   def test(%ConfiguredIndexer{} = indexer, context, record) do
     with {:ok, copy} <- copy(indexer),
-         {:ok, page, variables} <- Query.test_plan(copy.definition, copy.config, now()) do
-      fun = fn -> record.(test_answer(copy, page, variables, context)) end
+         {:ok, page, _variables} <- Query.test_plan(copy.definition, copy.config, now()) do
+      fun = fn -> record.(test_answer(copy, page, context)) end
       Indexer.leased(indexer, context, fun, gate: false, delay_ms: copy.delay_ms)
     else
       {:not_supported, feature} -> {:not_run, {:not_asked, {:not_supported, feature}}}
@@ -356,15 +363,15 @@ defmodule Cinder.Acquisition.Indexer.Cardigann do
     end
   end
 
-  defp test_answer(copy, test_page, variables, context) do
+  defp test_answer(copy, test_page, context) do
     request = copy.request.(context, now())
 
-    with {:ok, body, uri} <- Fetch.get(test_page.url, request),
+    with {:ok, body, uri} <- Fetch.send_page(test_page, request),
          {:ok, page} <-
            Rows.read(
              body,
              copy.definition,
-             variables,
+             test_page.variables,
              uri,
              nil,
              context.deadline_at,
