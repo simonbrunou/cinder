@@ -572,11 +572,12 @@ defmodule Cinder.Indexers do
   end
 
   # The hosts the indexer sends a credential to today, as the adapter's request for it reads
-  # them, those named as text: none when the request sends no secret.
+  # them at Native's clock, the time a search renders it at, those named as text: none when the
+  # request sends no secret.
   defp sent_today(id) do
     with {:ok, indexer} <- fetch_with_secrets(id),
          {:ok, %{request: request}} <- Cardigann.copy(indexer),
-         %{secrets: [_ | _], credential_hosts: hosts} <- request.(%{}, DateTime.utc_now()) do
+         %{secrets: [_ | _], credential_hosts: hosts} <- request.(%{}, Native.now()) do
       MapSet.filter(hosts, &is_binary/1)
     else
       _sends_nowhere -> MapSet.new()
