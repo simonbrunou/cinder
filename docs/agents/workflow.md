@@ -179,6 +179,18 @@ These bind a sentence in any doc, moduledoc, comment, test name or changelog fra
   `proxy-ioprio` option gives its threads the reader's I/O priority. The third re-check found
   that `nice -n 10` adds 10 to the caller's niceness: 31 minutes from the first finding to the
   last fix.
+- A claim about what Prowlarr does, such as which queries it sends an indexer or which history
+  entries it writes, holds for the Prowlarr version prod runs. Read that version's source before
+  you write the claim. To print the version, send these lines on the stdin of
+  `~/Projects/homelab-stacks/scripts/cinder-rpc`, which prints nothing the script returns:
+  `{:ok, c} = Cinder.Indexers.ProwlarrApi.connection()`,
+  `{:ok, s} = Cinder.Indexers.ProwlarrApi.get(c, "/api/v1/system/status")` and
+  `IO.puts(s["version"])`. Then
+  `git clone --depth 1 --branch v<version> https://github.com/Prowlarr/Prowlarr.git` into a
+  `/var/tmp` folder fetches the source. On #1933 the triage asked how the version prod runs
+  treats a TVDB search for an indexer whose caps lack `tvdbid`. That version was 3.1.0.5799, and
+  `Fetch(TvSearchCriteria)` in its `src/NzbDrone.Core/Indexers/HttpIndexerBase.cs` answered it.
+  Finding the version and its tag took the thread three calls.
 - A sentence about an HTTP library's default timeout (Req, Finch, Mint) needs a run with
   `retry: false`: a connect timeout against a host that drops connection attempts, such as
   `192.0.2.1`, and a receive timeout against `Cinder.Test.SilentServer`. On #828 the first draft
