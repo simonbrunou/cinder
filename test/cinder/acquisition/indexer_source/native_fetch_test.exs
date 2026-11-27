@@ -434,6 +434,20 @@ defmodule Cinder.Acquisition.IndexerSource.NativeFetchTest do
       assert DateTime.diff(until, now) in 600..601
     end
 
+    # A pinned clock far from the wall clock is the case: once the wall clock plus the stated
+    # wait passes the pinned clock plus 24 hours, a limit end counted from the wall clock passes
+    # the cap the record counts from the pinned one (#1932).
+    test "HTTP 429 with Retry-After: 600 counts the limit's end from Native's clock" do
+      ConfigCase.put_env(Native, clock: fn -> ~U[2000-01-01 00:00:00Z] end)
+      indexer = lan_indexer!()
+      link_answers(fn _conn -> {429, [{"retry-after", "600"}], ""} end)
+
+      assert {:error, {:indexer_limit, ~U[2000-01-01 00:10:00Z]}} =
+               fetch(indexer, "#{@lan}/getnzb/1")
+
+      assert %{backoff: :limit, backoff_until: ~U[2000-01-01 00:10:00Z]} = status(indexer)
+    end
+
     test "Prowlarr's 429 \"Indexer is disabled till\" starts a failure backoff ending at its Retry-After; a passing Test ends it" do
       indexer = indexer!(:newznab, "prowlarr.example", %{base_url: "https://prowlarr.example"})
       body = error(429, "Indexer is disabled till 2026-11-26 12:00:00 due to recent failures")

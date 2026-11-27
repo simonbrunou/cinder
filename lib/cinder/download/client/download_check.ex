@@ -46,9 +46,10 @@ defmodule Cinder.Download.Client.DownloadCheck do
   | Any other status | `{tag, status}` | `{tag, status}` |
 
   `until` is `NewznabAnswer.limit_until/2` of the wait the answer stated, so the limit ends 1 min
-  to 24 h after the check. An indexer sign from another host never reads as the indexer's own,
-  so a redirect target cannot fail or limit a healthy indexer. `Cinder.Download.GrabFailure`
-  says what `Cinder.Download` does with each reason.
+  to 24 h after the check. The check counts a wait from the `:now` option, a `DateTime`, and
+  from the wall clock without one. An indexer sign from another host never reads as the
+  indexer's own, so a redirect target cannot fail or limit a healthy indexer.
+  `Cinder.Download.GrabFailure` says what `Cinder.Download` does with each reason.
   """
 
   alias Cinder.Acquisition.Indexer
@@ -112,7 +113,8 @@ defmodule Cinder.Download.Client.DownloadCheck do
         if answer.status == 200 and file?(body) do
           {{:ok, body}, nil}
         else
-          {reason, class} = sort(answer, Keyword.fetch!(opts, :error_tag), DateTime.utc_now())
+          now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+          {reason, class} = sort(answer, Keyword.fetch!(opts, :error_tag), now)
           {{:error, reason}, class}
         end
 

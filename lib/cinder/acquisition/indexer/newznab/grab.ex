@@ -26,10 +26,10 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Grab do
   ## What the grab records
 
   `Cinder.Acquisition.IndexerSource.Native.IndexerStatus.record/3`, at Native's clock
-  (`Cinder.Acquisition.IndexerSource.Native.now/0`) once the check answered, for the configured
-  indexer as Native read it before the fetch, so the answer of a fetch that started under another
-  `config_version`, or for an indexer deleted meanwhile, is dropped. The first row that matches
-  the client's answer wins:
+  (`Cinder.Acquisition.IndexerSource.Native.now/0`) read once before the check, which counts a
+  stated wait from that same reading (#1932), for the configured indexer as Native read it
+  before the fetch, so the answer of a fetch that started under another `config_version`, or for
+  an indexer deleted meanwhile, is dropped. The first row that matches the client's answer wins:
 
   | Client's answer | Recorded |
   |---|---|
@@ -78,11 +78,12 @@ defmodule Cinder.Acquisition.Indexer.Newznab.Grab do
           keyword()
         ) :: {:ok, binary()} | {:magnet, String.t()} | {:error, term()}
   def checked_and_recorded(%ConfiguredIndexer{} = indexer, fetched, from_source, opts) do
-    {checked, class} = DownloadCheck.check_classified(fetched, opts)
+    now = Native.now()
+    {checked, class} = DownloadCheck.check_classified(fetched, Keyword.put(opts, :now, now))
 
     case recorded(checked, fetched, class, from_source) do
       nil -> :ok
-      answer -> IndexerStatus.record(indexer, answer, Native.now())
+      answer -> IndexerStatus.record(indexer, answer, now)
     end
 
     checked
